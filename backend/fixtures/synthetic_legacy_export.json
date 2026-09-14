@@ -2,7 +2,7 @@
   "app": "solcor-percurso",
   "kind": "assign",
   "updatedAt": "2026-01-01T00:00:00.000Z",
-  "_note": "Dados inteiramente fictícios, moldados na forma do export legado (files/atribuicoes.json) só para testar a importação em staging. Nenhum nome, morada, email ou coordenada aqui corresponde a um cliente ou projeto real.",
+  "_note": "Dados inteiramente fictícios, moldados na forma do export legado (files/atribuicoes.json) só para testar a importação em staging. Nenhum nome, morada, email ou coordenada aqui corresponde a um cliente ou projeto real. O campo 'power' usa o formato de texto livre do export real ('165,56 kWp'), não um número limpo — ver app/migration/staging.py:_parse_power_kwp.",
   "projects": {
     "synth_p001": {
       "name": "Instalação Fictícia Quinta do Exemplo",
@@ -10,7 +10,18 @@
       "contact": "Cliente Fictício A",
       "email": "cliente.ficticio.a@example.invalid",
       "coords": {"lat": 38.7, "lon": -9.1},
-      "power": 10.5
+      "power": "10,50 kWp",
+      "role": "instalador",
+      "equip": "Inversor Fictício X1, 12 painéis fictícios",
+      "injecao": "Injeção total fictícia",
+      "om": "Contrato O&M fictício de 2 anos",
+      "assum": "Pressupostos comerciais fictícios: tarifa X, consumo Y",
+      "startDate": "2026-02-10",
+      "clickupStatus": "em execução",
+      "upacRegisto": "UPAC-SYNTH-0001",
+      "m2mCard": "M2M-SYNTH-0001",
+      "upacConnDate": "2026-03-01",
+      "anoAdjudicacao": "2026"
     },
     "synth_p002": {
       "name": "Instalação Fictícia Armazém Beta",
@@ -18,7 +29,7 @@
       "contact": null,
       "email": null,
       "coords": null,
-      "power": 22.0
+      "power": null
     },
     "synth_p003": {
       "name": "Instalação Fictícia Quinta do Exemplo",
@@ -26,7 +37,7 @@
       "contact": "Cliente Fictício C (possível duplicado de synth_p001)",
       "email": "cliente.ficticio.c@example.invalid",
       "coords": {"lat": 38.71, "lon": -9.11},
-      "power": 10.5
+      "power": "10,50 kWp"
     }
   }
 }

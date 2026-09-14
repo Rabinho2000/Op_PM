@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from typing import Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.types import CHAR, TypeDecorator
 
@@ -60,7 +60,8 @@ def _make_engine():
     settings = get_settings()
     url = settings.database_url
     connect_args = {}
-    if url.startswith("sqlite"):
+    is_sqlite = url.startswith("sqlite")
+    if is_sqlite:
         connect_args["check_same_thread"] = False
         # garante que a pasta ./data existe antes do SQLite tentar abrir o ficheiro
         if ":memory:" not in url:
@@ -68,7 +69,26 @@ def _make_engine():
 
             db_path = url.split("///")[-1]
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    return create_engine(url, connect_args=connect_args, future=True)
+    new_engine = create_engine(url, connect_args=connect_args, future=True)
+
+    if is_sqlite:
+        # Recipe padrão do SQLAlchemy para SAVEPOINTs funcionarem
+        # corretamente com o pysqlite: por omissão o pysqlite gere as suas
+        # próprias transações de forma a interferir com begin_nested(). Só
+        # tem efeito em SQLite — nunca em PostgreSQL. Usado por
+        # tests/conftest.py para isolar cada teste numa transação que é
+        # sempre desfeita no fim, mesmo que o código testado chame
+        # `session.commit()` várias vezes (como app/migration/staging.py
+        # faz de propósito).
+        @event.listens_for(new_engine, "connect")
+        def _sqlite_disable_pysqlite_transaction_control(dbapi_connection, connection_record):
+            dbapi_connection.isolation_level = None
+
+        @event.listens_for(new_engine, "begin")
+        def _sqlite_emit_explicit_begin(conn):
+            conn.exec_driver_sql("BEGIN")
+
+    return new_engine
 
 
 engine = _make_engine()

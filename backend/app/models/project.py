@@ -11,6 +11,20 @@ Princípios (ver docs/ARCHITECTURE_PROPOSAL.md e docs/DECISIONS.md):
 - Projetos incompletos (sem PM, sem email, sem coordenadas — 112/194/108 dos
   295 projetos legados, respetivamente) são preservados tal como estão; a
   incompletude se lê pelos campos a NULL, nunca é um motivo de exclusão.
+- Nenhum registo em `projects` é escrito diretamente por uma migração —
+  passa sempre por `app/migration/staging.py` (ingestão → staging →
+  resolução de conflitos → promoção explícita). Ver docs/DECISIONS.md D-005.
+
+Fonte de verdade por campo (resumo — tabela completa em
+docs/ARCHITECTURE_PROPOSAL.md secção "Fonte de verdade por campo"):
+- Identidade/atribuição (`name`, `client_*`, `address`, `lat`/`lon`,
+  `power_kwp`, `pm_person_id`, `start_date`, os campos legados abaixo):
+  **Op_PM** — importados uma vez do export legado, depois editados na
+  plataforma.
+- `clickup_status_mirror`: **ClickUp** — Op_PM só espelha, nunca escreve
+  de volta.
+- Custo real (`cost_lines` com `source_system='financial'`): **Financial**.
+- Email/eventos reais: **Microsoft Graph** (ver `app/adapters/graph`).
 """
 from __future__ import annotations
 
@@ -27,6 +41,7 @@ from app.models.base import TimestampMixin, UUIDPk
 class Project(UUIDPk, TimestampMixin, Base):
     __tablename__ = "projects"
 
+    # --- Identidade/atribuição — fonte de verdade: Op_PM ---
     name: Mapped[str] = mapped_column(String(512), nullable=False)
     client_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     client_contact: Mapped[str | None] = mapped_column(String(256), nullable=True)
@@ -35,6 +50,11 @@ class Project(UUIDPk, TimestampMixin, Base):
     lat: Mapped[float | None] = mapped_column(Float, nullable=True)
     lon: Mapped[float | None] = mapped_column(Float, nullable=True)
     power_kwp: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # O export legado guarda a potência como texto livre (ex. "165,56 kWp"),
+    # não um número limpo — power_kwp acima é o melhor esforço de extração
+    # numérica feito por app/migration/staging.py; power_raw preserva o
+    # valor original sempre, mesmo quando a extração falha.
+    power_raw: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     pm_person_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("people.id"), nullable=True
@@ -44,8 +64,23 @@ class Project(UUIDPk, TimestampMixin, Base):
     )
 
     start_date: Mapped[dt.date | None] = mapped_column(nullable=True)
-    # Espelho só-de-leitura do estado no ClickUp — nunca escrito de volta
-    # para o ClickUp a partir daqui. Fonte de verdade: ClickUp.
+
+    # --- Campos legados adicionais (IDF em solcor-gestao.html) — fonte de
+    # verdade: Op_PM, importados verbatim do export legado por
+    # app/migration/staging.py. Tipados como texto (não Date/Integer) de
+    # propósito: os formatos reais desses campos no export legado não foram
+    # confirmados nesta fase — ver docs/DECISIONS.md. ---
+    role: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    equipment_notes: Mapped[str | None] = mapped_column(Text, nullable=True)  # legado: "equip"
+    injection_notes: Mapped[str | None] = mapped_column(Text, nullable=True)  # legado: "injecao"
+    om_notes: Mapped[str | None] = mapped_column(Text, nullable=True)  # legado: "om"
+    commercial_assumptions: Mapped[str | None] = mapped_column(Text, nullable=True)  # legado: "assum"
+    upac_registration: Mapped[str | None] = mapped_column(String(128), nullable=True)  # legado: "upacRegisto"
+    m2m_card: Mapped[str | None] = mapped_column(String(128), nullable=True)  # legado: "m2mCard"
+    upac_connection_date_raw: Mapped[str | None] = mapped_column(String(64), nullable=True)  # legado: "upacConnDate"
+    award_year_raw: Mapped[str | None] = mapped_column(String(16), nullable=True)  # legado: "anoAdjudicacao"
+
+    # --- Espelho só-de-leitura — fonte de verdade: ClickUp ---
     clickup_status_mirror: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -140,9 +175,16 @@ class ProjectHistory(UUIDPk, Base):
     changed_by_person_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("people.id"), nullable=True
     )
-    # ui | import_legacy | clickup | financial | ai | system
+    # ui | import_legacy | clickup | financial | ai | migration_rollback | system
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     note: Mapped[str] = mapped_column(Text, default="")
+    # Preenchido só quando a alteração vem de uma promoção/rollback de
+    # migração — permite a `rollback_promotion` encontrar exatamente as
+    # entradas de histórico que essa promoção gerou, sem adivinhar por
+    # texto. Ver app/migration/staging.py.
+    related_staging_record_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("staging_project_records.id"), nullable=True
+    )
     changed_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

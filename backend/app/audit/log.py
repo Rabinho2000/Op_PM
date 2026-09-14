@@ -23,6 +23,7 @@ def record_project_change(
     source: str,
     changed_by_person_id: UUID | None = None,
     note: str = "",
+    related_staging_record_id: UUID | None = None,
 ) -> ProjectHistory:
     if old_value == new_value:
         # Não gravar "alterações" que não mudam nada — corrige, por desenho,
@@ -38,6 +39,7 @@ def record_project_change(
         changed_by_person_id=changed_by_person_id,
         source=source,
         note=note,
+        related_staging_record_id=related_staging_record_id,
         changed_at=dt.datetime.now(dt.timezone.utc),
     )
     db.add(entry)
