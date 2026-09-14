@@ -1,11 +1,13 @@
-// Cliente da API. Fase 1: autenticação real via Microsoft Entra ID ainda
-// não pode ser wired aqui — precisa de um tenant/app registration reais,
-// que este repositório não tem (ver docs/OPEN_QUESTIONS.md). Por isso o
-// frontend continua a usar o mecanismo de desenvolvimento
-// (X-Dev-User-Email), o mesmo que o backend só aceita em local/test — ver
-// app/security/current_user.py. Nenhuma chave/segredo de integração
-// (Claude, Graph, ClickUp, Financial, Entra) é colocada aqui: essas só
-// existem no backend.
+// Cliente da API. Fase 1 (D-031): login real via Microsoft Entra ID
+// (MSAL, ver src/auth/msal.ts) já está implementado — quando há uma conta
+// MSAL ativa, todo o pedido leva `Authorization: Bearer <access token da
+// API>`. O mecanismo de desenvolvimento (X-Dev-User-Email) continua a
+// existir só para local/test (ver src/auth/msal.ts:devLoginEnabled e
+// app/security/current_user.py no backend) e nunca é enviado ao mesmo
+// tempo que um Bearer token — os dois caminhos são mutuamente exclusivos,
+// tal como no backend. Nenhuma chave/segredo de integração (Claude, Graph,
+// ClickUp, Financial, Entra) é colocada aqui: essas só existem no backend.
+import { SessionExpiredError, getActiveMsalAccount, getApiAccessToken, logoutFromMicrosoft } from "../auth/msal";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const DEV_USER_STORAGE_KEY = "op_pm_dev_user_email";
@@ -35,6 +37,37 @@ export function clearDevUser(): void {
   }
 }
 
+// true quando há uma sessão MSAL real ativa — App.tsx/NavBar.tsx usam
+// isto (em vez de espreitar o MSAL diretamente) para decidir o que
+// mostrar, mantendo um único ponto de verdade sobre "qual sessão está
+// ativa" nesta camada.
+export function hasActiveSession(): boolean {
+  return getActiveMsalAccount() !== null || getDevUser() !== null;
+}
+
+export function getSessionDisplayName(): string | null {
+  const account = getActiveMsalAccount();
+  if (account) return account.username || account.name || "sessão Microsoft";
+  return getDevUser();
+}
+
+// Termina a sessão atual, seja ela qual for — nunca deixa as duas por
+// engano (ex. um login de desenvolvimento antigo esquecido em
+// localStorage depois de mudar para login real).
+export async function logoutCurrentSession(): Promise<void> {
+  const account = getActiveMsalAccount();
+  clearDevUser();
+  if (account) {
+    await logoutFromMicrosoft(); // navega para fora da app (postLogoutRedirectUri)
+  }
+}
+
+function redirectToExpiredSession(): void {
+  if (typeof window === "undefined") return;
+  if (window.location.pathname === "/login") return;
+  window.location.assign("/login?sessionExpired=1");
+}
+
 class ApiError extends Error {
   status: number;
   detail: string;
@@ -46,13 +79,40 @@ class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const devUser = getDevUser();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...(devUser ? { "X-Dev-User-Email": devUser } : {}),
     ...(init?.headers as Record<string, string> | undefined),
   };
+
+  const usingMsal = getActiveMsalAccount() !== null;
+  if (usingMsal) {
+    let token: string | null;
+    try {
+      // Renovação silenciosa: acquireTokenSilent (dentro de
+      // getApiAccessToken) tenta sempre usar/renovar o token em cache
+      // primeiro, sem qualquer interação visível ao utilizador.
+      token = await getApiAccessToken();
+    } catch (err) {
+      if (err instanceof SessionExpiredError) {
+        redirectToExpiredSession();
+      }
+      throw err;
+    }
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  } else {
+    const devUser = getDevUser();
+    if (devUser) headers["X-Dev-User-Email"] = devUser;
+  }
+
   const res = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
+
+  if (res.status === 401 && usingMsal) {
+    // O backend recusou o token (ex. revogado, ou utilizador nunca
+    // provisionado) mesmo depois de uma renovação silenciosa bem-sucedida
+    // — trata como sessão expirada em vez de repetir o pedido às cegas.
+    redirectToExpiredSession();
+  }
+
   if (!res.ok) {
     let detail = res.statusText;
     try {

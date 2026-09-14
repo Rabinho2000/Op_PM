@@ -1,19 +1,19 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import NavBar from "./components/NavBar";
-import { getDevUser } from "./api/client";
+import { hasActiveSession } from "./api/client";
 import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
 import ProjectDetail from "./pages/ProjectDetail";
 import ProjectsList from "./pages/ProjectsList";
 import ReconciliationQueue from "./pages/ReconciliationQueue";
 
-// Fase 1: primeira interface web funcional — login (mecanismo de
-// desenvolvimento, ver src/pages/Login.tsx), lista de projetos com
+// Fase 1: interface web funcional — login (real via Microsoft Entra ID
+// quando configurado, ou o mecanismo de desenvolvimento em local/test —
+// ver src/pages/Login.tsx e src/auth/msal.ts), lista de projetos com
 // filtros, detalhe/edição autorizada, histórico, e fila de reconciliação
-// de PM. Autenticação real via Entra ID fica para quando o tenant/app
-// registration estiverem disponíveis (ver docs/OPEN_QUESTIONS.md).
+// de PM.
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  if (!getDevUser()) {
+  if (!hasActiveSession()) {
     return <Navigate to="/login" replace />;
   }
   return <>{children}</>;

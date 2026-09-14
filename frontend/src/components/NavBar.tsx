@@ -1,13 +1,23 @@
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { clearDevUser, getDevUser } from "../api/client";
+import { getSessionDisplayName, logoutCurrentSession } from "../api/client";
 
 export default function NavBar() {
   const navigate = useNavigate();
-  const email = getDevUser();
+  const [loggingOut, setLoggingOut] = useState(false);
+  const displayName = getSessionDisplayName();
 
-  function handleLogout() {
-    clearDevUser();
-    navigate("/login");
+  async function handleLogout() {
+    setLoggingOut(true);
+    try {
+      // Para uma sessão Microsoft real isto navega para fora da app
+      // (logoutRedirect); para o login de desenvolvimento, limpa e
+      // regressa ao ecrã de login localmente.
+      await logoutCurrentSession();
+      navigate("/login");
+    } finally {
+      setLoggingOut(false);
+    }
   }
 
   return (
@@ -26,9 +36,9 @@ export default function NavBar() {
       <Link to="/projects">Projetos</Link>
       <Link to="/reconciliation">Reconciliação de PM</Link>
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.75rem" }}>
-        <span style={{ color: "#666" }}>{email}</span>
-        <button onClick={handleLogout} style={{ padding: "0.25rem 0.75rem" }}>
-          Sair
+        <span style={{ color: "#666" }}>{displayName}</span>
+        <button onClick={handleLogout} disabled={loggingOut} style={{ padding: "0.25rem 0.75rem" }}>
+          {loggingOut ? "A sair…" : "Sair"}
         </button>
       </div>
     </nav>
