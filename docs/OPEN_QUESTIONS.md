@@ -11,19 +11,27 @@
 ### 1. Tenant Microsoft 365 / Entra ID
 
 **Impacto:** o backend já valida tokens Entra ID reais (`app/security/entra_auth.py`,
-D-024) e o frontend já tem o ecrã de login pronto para MSAL.js (D-027) —
-mas sem um tenant/app registration reais, ninguém consegue emitir um
-token de verdade para testar isto ponta-a-ponta, e a Fase 3 (Graph real —
-email/calendário) também não pode avançar. É a única peça que falta para
-fechar a autenticação real; nada no código precisa de ser reescrito
-quando isto existir.
+D-024, reforçado em D-029 — `oid` obrigatório, tenant/scp/`nbf`
+validados, JIT linking configurável e auditado, validador cacheado) e o
+frontend já tem o login MSAL real implementado e ligado (D-031 —
+Authorization Code + PKCE, access token para a API, renovação silenciosa,
+logout) — mas sem um tenant/app registration reais, ninguém consegue
+emitir um token de verdade nem preencher `VITE_ENTRA_CLIENT_ID`/
+`VITE_ENTRA_TENANT_ID`/`VITE_ENTRA_API_SCOPE` para testar isto
+ponta-a-ponta, e a Fase 3 (Graph real — email/calendário) também não pode
+avançar. É a única peça que falta para fechar a autenticação real; nada
+no código precisa de ser reescrito quando isto existir — só configurado.
 
 **Decisão necessária:** confirmar que existe um tenant Microsoft 365
-administrável, com alguém capaz de registar uma aplicação (app
-registration) e conceder consentimento de administrador para os âmbitos
-necessários (Mail.Send, Calendars.ReadWrite, Files.ReadWrite, etc.), e
-fornecer `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID` (e, se necessário,
-`ENTRA_CLIENT_SECRET` para fluxos confidenciais).
+administrável, com alguém capaz de registar duas aplicações (app
+registrations) — uma SPA pública para o frontend (MSAL.js, Authorization
+Code + PKCE, sem client secret) e uma API para o backend expor o âmbito
+`access_as_user` — conceder consentimento de administrador para os
+âmbitos necessários no backend (Mail.Send, Calendars.ReadWrite,
+Files.ReadWrite, etc., quando a Fase 3 avançar), e fornecer
+`ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID`/`ENTRA_REQUIRED_SCOPE` (backend) e
+`VITE_ENTRA_CLIENT_ID`/`VITE_ENTRA_TENANT_ID`/`VITE_ENTRA_API_SCOPE`
+(frontend — ver `frontend/.env.example`).
 
 **Recomendação por defeito:** nenhuma — depende inteiramente de recursos
 que só a organização tem.
@@ -209,6 +217,17 @@ com o Chefe de Operações só a "carimbar" a decisão final na fila).
 
 ## Podem ser decididas mais tarde
 
+- **Atualização major de `vite` (5→8) e `react-router-dom` (6→7).**
+  `npm audit` no frontend reporta 4 vulnerabilidades (3 moderadas, 1
+  alta) sem correção dentro do intervalo semver instalado — só resolvidas
+  com um salto de versão maior, uma alteração significativa e fora do
+  âmbito da revisão de hardening que as identificou (D-031). Nenhuma é
+  exploratória à distância no código deste repositório tal como está hoje
+  (`esbuild`/`vite` — só afeta quem tem o servidor de desenvolvimento
+  exposto; `react-router-dom` — open-redirect, relevante sobretudo com
+  entrada de utilizador não confiável nas rotas, que esta app não tem
+  ainda). Decidir quando fazer esta migração (e testar as mudanças de
+  API do `react-router-dom` v7) antes de um primeiro deployment público.
 - Fornecedor do serviço de mapas/rotas.
 - Modelo específico do Claude a usar em produção (a interface já é
   agnóstica ao modelo — `Settings.claude_model`).

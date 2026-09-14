@@ -604,15 +604,224 @@ reconciliação vazia a renderizar sem erros, logout a limpar a sessão.
 
 ## Âmbito deliberadamente deixado de fora da Fase 1
 
-- Autenticação real ponta-a-ponta (MSAL.js no frontend) — pendente do
-  tenant Microsoft 365 (pergunta bloqueante nº 1).
 - Endpoints de workflow (`project_stage_progress`/`project_subtask_progress`)
   — só os campos de identidade do `Project` são editáveis via API nesta
   fase; progresso de checklist fica para quando o workflow (fases/etapas)
   ganhar a sua própria UI.
 - Ingestão real de projetos via API (D-026, decisão deliberada).
-- Restrição de campos por perfil dentro de um projeto (ex.: um PM só
-  poder editar campos de "progresso", não de "identidade") — hoje
-  `can_edit_project` é tudo-ou-nada por projeto, não por campo.
 - Testes de UI automatizados (Playwright/Cypress) — validação desta fase
-  foi manual, via navegador, documentada acima.
+  e da revisão de hardening seguinte (D-028 a D-031) foi manual, via
+  navegador, documentada acima e abaixo.
+
+> As duas lacunas identificadas nesta lista na versão anterior deste
+> documento — "restrição de campos por perfil" e "autenticação real
+> ponta-a-ponta (MSAL.js)" — foram fechadas pela revisão de hardening a
+> seguir (D-028 e D-031, respetivamente). O tenant Microsoft 365 real
+> continua por confirmar (pergunta bloqueante nº 1) — D-031 deixa o login
+> real MSAL implementado e configurável, mas sem um `VITE_ENTRA_CLIENT_ID`/
+> `VITE_ENTRA_TENANT_ID`/`VITE_ENTRA_API_SCOPE` reais para lhe dar
+> credenciais, o botão fica visivelmente desativado.
+
+## Revisão de hardening da Fase 1 (antes de iniciar a Fase 2)
+
+As decisões D-028 a D-031 documentam a revisão de hardening pedida
+explicitamente antes de avançar para a Fase 2 (a partir do commit
+`401ebf6`) — nenhuma liga qualquer integração real (Entra ID, Graph,
+ClickUp, Financial e Claude continuam todos em modo mock/fallback) nem
+migra qualquer um dos 295 projetos reais.
+
+## D-028 — Permissões de edição de projeto: lista explícita de campos por perfil, aplicada no servidor
+
+**Decisão:** `project.edit_all` (Chefe de Operações/Administrador) continua
+a poder alterar qualquer campo de `ProjectUpdate`. Quem só tem
+`project.edit_own_progress` (PM, no seu próprio projeto) fica limitado a
+uma lista explícita — `PM_EDITABLE_PROJECT_FIELDS` em
+`app/security/project_fields.py` (`lat`, `lon`, `power_kwp`, `power_raw`,
+`start_date`, `role`, `equipment_notes`, `injection_notes`, `om_notes`,
+`commercial_assumptions`, `upac_connection_date_raw`, `award_year_raw`,
+`notes`) — nunca pode tocar em `name`, `client_name`, `client_contact`,
+`client_email`, `address`, `pm_person_id`, `is_active`,
+`upac_registration` ou `m2m_card` (`ADMIN_ONLY_PROJECT_FIELDS`, a mesma
+lista documentada por oposição, para nunca haver um campo "esquecido" no
+meio).
+
+**Desenho deliberado — allowlist, não denylist:** `PM_EDITABLE_PROJECT_FIELDS`
+é a lista que importa; `ADMIN_ONLY_PROJECT_FIELDS` existe só para um teste
+confirmar que as duas juntas cobrem exatamente `ProjectUpdate.model_fields`
+(nenhum campo esquecido de um lado ou do outro). Um campo novo adicionado
+a `ProjectUpdate` no futuro e esquecido nesta lista fica automaticamente
+só para quem tem `project.edit_all` — nunca editável por omissão.
+
+**Aplicado inteiramente no servidor**, independentemente do frontend:
+`update_project()` (`app/services/projects.py`) calcula
+`disallowed_fields = alterações pedidas − PM_EDITABLE_PROJECT_FIELDS`
+depois de confirmar que o ator pode editar o projeto mas antes de
+escrever qualquer campo — um pedido com um único campo fora da lista é
+rejeitado por inteiro (nenhum efeito secundário parcial), com a mensagem
+a nomear os campos recusados.
+
+**Testes (`tests/test_project_field_permissions.py`, 12 casos):**
+disjunção e cobertura total das duas listas contra `ProjectUpdate`; PM
+edita um campo permitido (200); PM tenta cada campo administrativo
+individualmente (403, parametrizado); PM tenta reatribuir `pm_person_id`
+(403); pedido misto (um campo permitido + um proibido) rejeitado por
+inteiro, confirmado sem qualquer alteração na BD nem entrada de
+histórico; Chefe de Operações edita campos administrativos (200); PM
+tenta editar um projeto que não é seu, mesmo só com campos permitidos
+(403).
+
+## D-029 — Reforço da autenticação Entra ID: `oid` obrigatório, tenant/scp/`nbf` validados, JIT linking configurável e auditado, validador cacheado
+
+**Decisão:**
+
+- **`oid` obrigatório, nunca `sub` como identidade persistente** — um
+  token sem `oid` (ou com `oid` vazio) é sempre recusado; `sub` deixou de
+  ser sequer consultado para identidade (`REQUIRED_CLAIMS` inclui `oid`).
+- **Tenant, issuer, audience, assinatura, expiração e `nbf`** — issuer/
+  audience/assinatura/`exp` já eram validados desde D-024; `nbf`, quando
+  presente, é validado pelo comportamento por omissão do PyJWT (nunca
+  desativado); `tid` é comparado a `ENTRA_TENANT_ID` quando este está
+  configurado (sem tenant configurado, `tid` não é verificado —
+  comportamento existente, preservado deliberadamente).
+- **Só tokens delegados** — `_validate_delegated_token` exige a claim
+  `scp` não vazia; um token só com `roles` (aplicação, não delegado) é
+  recusado. `ENTRA_REQUIRED_SCOPE`, quando configurado, tem de aparecer
+  literalmente em `scp`.
+- **JIT linking por email configurável, desligado por omissão fora de
+  local/test** — `Settings.entra_jit_link_by_email` (`bool | None`);
+  `resolved_entra_jit_link_by_email()` devolve o valor explícito se
+  definido, senão `True` em local/test e `False` em staging/produção. Uma
+  ligação automática bem-sucedida grava sempre uma entrada em
+  `AuthAuditLog` (evento `jit_link_by_email`, com o `oid` de origem).
+- **Validador e cliente JWKS cacheados no processo** —
+  `get_token_validator` passou a devolver uma instância partilhada via
+  `functools.lru_cache` (chave: issuer/audience/jwks_url/tenant_id/
+  required_scope), tanto para o validador real (que usa `PyJWKClient`,
+  cujo cache HTTP das chaves passa a ser reaproveitado entre pedidos) como
+  para o mock — nunca um `PyJWKClient` novo por pedido.
+
+**Nova tabela `auth_audit_log`** (`AuthAuditLog`, append-only, sem
+`updated_at`) — migração `67150240f450`.
+
+**Testes (`tests/test_auth_entra_hardening.py`, 15 casos):** token sem
+`oid` (com/sem `sub`) recusado; `nbf` no futuro recusado, no passado
+aceite; token sem `scp` recusado como token de aplicação; âmbito
+configurado a corresponder aceite, a não corresponder recusado; tenant
+errado recusado quando configurado, correto aceite, sem verificação
+quando não configurado; ligação JIT grava auditoria; JIT desligado
+recusa um utilizador por ligar e não altera `entra_object_id`; JIT
+desligado por omissão em staging (e ligado por omissão em local),
+substituível explicitamente; validador é a mesma instância para
+configurações equivalentes, instância diferente para `required_scope`
+diferente.
+
+## D-030 — Migração: `target_project_id` validado contra os candidatos detetados, ligação a projeto arbitrário exige permissão + nota
+
+**Decisão:** `resolve_conflict(..., action="link_existing")` passou a
+validar `target_project_id` contra `resolve_candidate_project_ids()` — o
+conjunto de projetos que o sistema detetou automaticamente como
+candidatos para este registo (por nome, na ingestão). Ligar a um projeto
+fora desse conjunto exige `allow_target_outside_candidates=True` **e**
+uma nota não vazia; sem as duas coisas, `resolve_conflict` recusa com
+`ValueError`, mesmo chamado diretamente sem passar pela API (defesa em
+profundidade deliberada — a decisão de permitir isto é da API, mas o
+valor por omissão do serviço continua a recusar).
+
+A API (`POST /api/migration/staging-records/{id}/resolve-conflict`)
+verifica isto antes de chamar o serviço: se o alvo estiver fora dos
+candidatos, exige a nova permissão `migration.link_arbitrary_project`
+(403 sem ela — só concedida ao Administrador por omissão, não ao Chefe de
+Operações) e uma nota não vazia (400 sem ela) antes de passar
+`allow_target_outside_candidates=True` ao serviço.
+
+**Bug encontrado e corrigido durante a implementação:** um candidato
+detetado dentro do mesmo lote de importação (duplicado por nome, D-017)
+fica registado como `"batch:<id_externo>"` até o registo irmão ser
+promovido — só nesse momento é que existe um `Project` real para essa
+referência. Uma primeira versão desta validação filtrava esses
+candidatos "batch:" fora do conjunto válido em vez de os resolver,
+partindo silenciosamente o fluxo legítimo já testado em
+`test_resolve_conflict_then_promote_links_to_target_project`. Corrigido
+com `resolve_candidate_project_ids()` — usada tanto pelo serviço como
+pela API, para nunca haver duas lógicas divergentes sobre o que conta
+como candidato válido — que traduz `"batch:<id>"` para o `Project` real
+via `ProjectExternalId`, quando este já existe.
+
+**Testes (`tests/test_migration_target_validation.py`, 7 casos, mais o
+teste de regressão já existente em `test_staging_persistence.py`):**
+alvo fora dos candidatos recusado por omissão; aceite com
+`allow_target_outside_candidates=True` + nota; nota vazia continua
+recusada mesmo com a flag; um candidato "batch:" já promovido resolve
+corretamente e não exige a permissão especial; Chefe de Operações sem a
+permissão recebe 403 pela API; Administrador com a permissão mas sem nota
+recebe 400; Administrador com permissão + nota liga com sucesso, promove,
+e a reversão (`rollback_promotion`) continua a funcionar normalmente —
+ação sempre auditada e reversível, tal como pedido.
+
+## D-031 — Login real MSAL no frontend (Authorization Code + PKCE), configurável, login de desenvolvimento claramente separado
+
+**Decisão:** `frontend/src/auth/msal.ts` usa `@azure/msal-browser`
+diretamente (`PublicClientApplication`) — sem `@azure/msal-react`, para
+manter a mesma forma de módulo singleton já usada em `api/client.ts`, sem
+introduzir Context/Provider só para isto. O MSAL browser só suporta
+Authorization Code + PKCE para SPAs desde a v2 — não há "implicit flow"
+para desativar, é sempre PKCE.
+
+- **Nunca o ID token como autorização** — `acquireTokenSilent`/
+  `loginRedirect` pedem sempre um âmbito dedicado à API
+  (`VITE_ENTRA_API_SCOPE`, ex. `api://<client-id-da-api>/access_as_user`);
+  só `result.accessToken` sai deste módulo, nunca `result.idToken`.
+- **`Authorization: Bearer <token>` em todos os pedidos** —
+  `api/client.ts:request()` decide por sessão (nunca por pedido): havendo
+  uma conta MSAL ativa, todo o pedido leva o Bearer token; senão, cai
+  para `X-Dev-User-Email` se houver um utilizador de desenvolvimento —
+  os dois nunca são enviados ao mesmo tempo, tal como o backend só aceita
+  um dos dois caminhos por `AUTH_ENABLED` (nunca ambos).
+- **Renovação silenciosa** — cada pedido chama `acquireTokenSilent`
+  (dentro de `getApiAccessToken()`), que o MSAL já resolve com o token em
+  cache ou renovado silenciosamente sem qualquer interação visível;
+  só levanta `SessionExpiredError` quando o MSAL confirma
+  `InteractionRequiredAuthError` (refresh token expirado/revogado, MFA
+  adicional exigido).
+- **Logout e sessão expirada** — `logoutCurrentSession()` chama
+  `logoutRedirect()` para uma sessão MSAL real (ou só limpa o
+  `localStorage` para uma sessão de desenvolvimento); um `401` do backend
+  numa sessão MSAL, ou uma `SessionExpiredError` do MSAL, redirecionam
+  sempre para `/login?sessionExpired=1` em vez de repetir o pedido às
+  cegas ou deixar a app num estado inconsistente.
+- **Login de desenvolvimento claramente separado** —
+  `devLoginEnabled` (`src/auth/msal.ts`) fica ligado por omissão em
+  `vite dev`/testes (`import.meta.env.DEV`) e desligado por omissão num
+  build de produção, substituível só por `VITE_ENABLE_DEV_LOGIN`
+  explícito; o ecrã de login (`src/pages/Login.tsx`) só renderiza essa
+  secção quando `devLoginEnabled` é true, sempre visualmente separada
+  (aviso "Apenas desenvolvimento/testes", nunca disponível em
+  staging/produção — mesma regra que o backend já aplicava do lado do
+  servidor).
+
+**Sem tenant/app registration reais** (pergunta bloqueante nº 1 — por
+resolver), `VITE_ENTRA_CLIENT_ID`/`VITE_ENTRA_TENANT_ID`/
+`VITE_ENTRA_API_SCOPE` ficam vazios por omissão; `isEntraConfigured` fica
+`false` e o botão "Entrar com Microsoft" aparece desativado com uma
+explicação — nunca inventa credenciais nem finge uma sessão real.
+
+**Dependência nova:** `@azure/msal-browser` (`^5.21.0`).
+
+**Vulnerabilidades npm revistas, não corrigidas nesta revisão:**
+`npm audit` reporta 4 vulnerabilidades (3 moderadas, 1 alta) em `vite`
+(via `esbuild`, servidor de desenvolvimento) e `react-router-dom`
+(open-redirect via `\` em `<Link>`/`useNavigate`) — nenhuma tem correção
+dentro do intervalo semver já instalado (`npm outdated` confirma "Wanted"
+= "Current" para ambos); a única correção disponível é um salto de versão
+maior (`vite` 5→8, `react-router-dom` 6→7), uma alteração desnecessária e
+potencialmente disruptiva para uma revisão de hardening focada noutra
+coisa. Registado como risco pendente (ver `docs/OPEN_QUESTIONS.md`) em
+vez de forçado com `npm audit fix --force`.
+
+**Validado manualmente ponta-a-ponta** (backend + frontend a correr
+localmente, sem tenant Entra real): ecrã de login sem erros de consola
+com a configuração MSAL vazia (placeholder), botão "Entrar com Microsoft"
+visivelmente desativado com a explicação, secção de desenvolvimento
+separada por um divisor visual; login de desenvolvimento continua
+funcional ponta-a-ponta (entrar, `NavBar` a mostrar a sessão, listagem de
+projetos a carregar, logout a limpar a sessão e devolver a `/login`).
