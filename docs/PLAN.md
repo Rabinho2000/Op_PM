@@ -96,6 +96,59 @@ mock/fallback). Ver `docs/DECISIONS.md` D-017 a D-021 para o detalhe.
   SQLite; migração de hardening testada em `upgrade`→`downgrade`→`upgrade`;
   nenhuma integração real ativada; documentos atualizados.
 
+## Fase 0 — Revisão técnica final (IMPLEMENTADA, antes da Fase 1)
+
+Pedida explicitamente como última revisão do commit da revisão de
+hardening acima, antes de considerar a Fase 0 encerrada. Ver
+`docs/DECISIONS.md` D-022/D-023.
+
+- **Objetivo:** corrigir um bug real encontrado na revisão anterior
+  (`conftest.py` mascarava o job `backend-postgres` do CI como SQLite) e
+  fechar uma lacuna real de segurança de dados (promoção silenciosa de
+  projeto com PM não resolvido).
+- **Correções:**
+  1. `tests/conftest.py` deixou de sobrescrever `DATABASE_URL`
+     incondicionalmente — só gere um SQLite temporário quando a variável
+     não está definida (D-022).
+  2. Verificação explícita e obrigatória do dialect ligado
+     (`EXPECTED_DB_DIALECT`, `pytest.exit` se divergir +
+     `tests/test_database_dialect.py`) nos dois jobs de CI (D-022).
+  3. Reconciliação de PM como etapa explícita antes da promoção de
+     projetos — `app/migration/people_reconciliation.py`
+     (`reconcile_pm_names`/`resolve_person_reconciliation`), mais o
+     bloqueio `pm_unresolved` em `ingest_export`/`resolve_conflict` e a
+     barreira final, não contornável, em `promote_staging_record` (D-023).
+  4. Correção de três contradições documentais (`AUTH_ENABLED` no
+     rollback da Fase 1, `GraphAdapter` associado à fase errada, árvore
+     de dependências entre fases incompleta) — ver mais abaixo.
+- **Tentativa real de validação local contra PostgreSQL:** instalado
+  Python 3.12 e o pacote `pgserver` (PostgreSQL embebido, sem Docker, sem
+  serviço de sistema); bloqueado por um problema confirmado do
+  PostgreSQL-para-Windows com o nome de utilizador local não-ASCII deste
+  computador (`FATAL: invalid byte sequence for encoding "UTF8"` no
+  `initdb`, independente do diretório ou de `--locale`) — não é um
+  problema do código deste repositório; documentado em D-021. A suite
+  PostgreSQL fica validada pela primeira vez no GitHub Actions.
+- **Entidades:** `person_reconciliation_items` (nova);
+  `staging_project_records` ganha `pm_name_raw`,
+  `candidate_person_ids_json`, `pm_explicitly_unassigned`.
+- **Integrações:** nenhuma — continuam todas mock/fallback.
+- **Testes:** `tests/test_people_reconciliation.py` (16 testes, novo);
+  `tests/test_database_dialect.py` (2 testes, novo); ajuste a um teste
+  pré-existente em `tests/test_staging_persistence.py` que passou a
+  exercer também o bloqueio por PM. Suite completa a passar em SQLite
+  (72 passed, 2 skipped — os skips são os testes de dialect quando
+  `EXPECTED_DB_DIALECT` não está definido, o caso local normal).
+- **Riscos:** ver "Riscos técnicos e operacionais" mais abaixo.
+- **Rollback:** reverter para o commit anterior a esta revisão — nenhuma
+  integração real foi tocada, nenhum dado real existe ainda.
+- **Critérios de conclusão:** `pytest -q` a passar por completo em SQLite;
+  migrações `upgrade`→`downgrade`→`upgrade` validadas; `npm run build` do
+  frontend sem erros; contradições documentais corrigidas; job
+  `backend-postgres` do CI corrigido para não poder passar silenciosamente
+  contra SQLite (validação real da execução fica para o primeiro push ao
+  GitHub Actions, fora do alcance desta sessão local).
+
 ## Fase 1 — Autenticação real e primeiros endpoints CRUD
 
 - **Objetivo:** ligar Microsoft Entra ID a sério (substituir o mecanismo de
@@ -104,8 +157,10 @@ mock/fallback). Ver `docs/DECISIONS.md` D-017 a D-021 para o detalhe.
 - **Entidades:** `projects`, `project_stage_progress`,
   `project_subtask_progress`, `project_history` (endpoints de leitura e
   escrita, sempre gerando entrada de histórico).
-- **Integrações:** Entra ID (`AUTH_ENABLED=true`, `GraphAdapter` continua em
-  fallback até à Fase 2).
+- **Integrações:** Entra ID — substitui a validação `NotImplementedError`
+  atual (D-012) por validação real de token OIDC, e só depois define
+  `AUTH_ENABLED=true`; `GraphAdapter` continua em fallback local até à
+  Fase 3, que é quem o liga a sério (ver "Dependências entre fases").
 - **Testes:** testes de integração da API (não só de serviço), teste de que
   um token inválido/expirado é rejeitado, teste de que toda a escrita gera
   histórico.
@@ -113,8 +168,14 @@ mock/fallback). Ver `docs/DECISIONS.md` D-017 a D-021 para o detalhe.
   `OPEN_QUESTIONS.md`) — sem isso, esta fase fica bloqueada na parte de
   autenticação (mas os endpoints CRUD podem avançar sob o mecanismo de
   desenvolvimento entretanto).
-- **Rollback:** manter `AUTH_ENABLED=false` como via de recuperação até a
-  integração Entra ID estar validada em staging.
+- **Rollback:** em `local`/`test`, manter `AUTH_ENABLED=false` (mecanismo de
+  desenvolvimento) como via de recuperação enquanto a integração Entra ID
+  não estiver pronta. **Nunca em `staging`/`production`** — aí
+  `AUTH_ENABLED=false` está bloqueado estruturalmente pela validação de
+  arranque (D-020); a app simplesmente não arranca com essa combinação. Na
+  prática isto significa que só se promove esta fase para staging depois
+  de a integração Entra ID real estar a funcionar — não há um "voltar
+  atrás" para staging/produção sem autenticação real, por desenho.
 - **Critérios de conclusão:** um utilizador real autentica-se via Entra ID;
   `/me` reflete os seus papéis reais; criar/editar um projeto sintético via
   API gera uma entrada de `project_history` correta.
@@ -123,20 +184,31 @@ mock/fallback). Ver `docs/DECISIONS.md` D-017 a D-021 para o detalhe.
 
 - **Objetivo:** migrar os dados reais do repositório do código legado
   (`files/atribuicoes.json`, fora deste repositório público) para a base de
-  dados de staging, resolver a fila de conflitos manualmente, e só depois
-  aplicar em produção.
-- **Entidades:** todas as tocadas por `app/migration/staging.py` —
-  `projects`, `project_external_ids`, `import_batches`,
-  `staging_project_records`.
-- **Integrações:** nenhuma nova — reutiliza `ingest_export`/
-  `resolve_conflict`/`promote_staging_record` já implementados e testados.
+  dados de staging, resolver a fila de conflitos manualmente (incluindo a
+  fila de reconciliação de PMs), e só depois promover para produção.
+- **Passo 0, obrigatório, antes de qualquer `ingest_export` real:**
+  `app.migration.people_reconciliation.reconcile_pm_names` sobre o payload
+  real, para que a fila `person_reconciliation_items` já esteja parcialmente
+  resolvida quando a ingestão começar — reduz o número de projetos que
+  ficam bloqueados por `pm_unresolved` logo à primeira (ver D-023).
+- **Entidades:** todas as tocadas por `app/migration/staging.py` e
+  `app/migration/people_reconciliation.py` — `projects`,
+  `project_external_ids`, `import_batches`, `staging_project_records`,
+  `person_reconciliation_items`.
+- **Integrações:** nenhuma nova — reutiliza `reconcile_pm_names`/
+  `ingest_export`/`resolve_conflict`/`promote_staging_record`/
+  `retry_pm_resolution` já implementados e testados.
 - **Testes:** contagem de projetos migrados == 295 (ou o número real no
   momento da migração); amostragem de campos antes/depois; nenhum registo
-  `staging_project_records.status='conflict'` fica sem revisão antes de
-  qualquer promoção.
+  `staging_project_records.status='conflict'` (nome ou PM) fica sem revisão
+  antes de qualquer promoção; nenhum `person_reconciliation_items.status='pending'`
+  fica esquecido sem decisão.
 - **Riscos:** divergências já documentadas entre `atribuicoes.json` e
   exports de PM no repositório legado precisam de resolução manual antes
-  desta fase — ver a análise desse repositório.
+  desta fase — ver a análise desse repositório. Os 8 PMs históricos do
+  legado (D-003) provavelmente geram vários itens de reconciliação
+  logo na primeira ingestão real — orçamentar tempo de revisão humana para
+  isso, não assumir que a maioria resolve automaticamente.
 - **Rollback:** `ingest_export` primeiro sempre (nunca toca em `projects`);
   cada `promote_staging_record` é revertível individualmente via
   `rollback_promotion`, com auditoria completa; backup da base de dados
@@ -238,19 +310,26 @@ mock/fallback). Ver `docs/DECISIONS.md` D-017 a D-021 para o detalhe.
 
 ## Dependências entre fases
 
-```text
-Fase 0 (feito)
-   └─► Fase 1 (auth real + CRUD)
-          ├─► Fase 2 (migração real dos 295 projetos)
-          │      ├─► Fase 4 (ClickUp real, precisa dos projetos migrados)
-          │      └─► Fase 5 (inventário/custos)
-          ├─► Fase 3 (Graph real — visitas/calendário)
-          │      └─► Fase 6 (biblioteca documental, reforça o mesmo GraphAdapter)
-          └─► Fase 7 (Claude/MCP completo — precisa de 5 e 6 para pedidos de material e pesquisa documental)
-```
+Tabela em vez de árvore de propósito: várias fases dependem de mais do que
+uma fase anterior (um grafo, não uma árvore), o que uma árvore ASCII não
+consegue representar sem ambiguidade — a versão anterior deste documento
+tinha exatamente esse problema (dava a entender que a Fase 3 dependia da
+Fase 2, quando na realidade só depende da Fase 1).
 
-Fases 3, 4 e 5 podem ser paralelizadas depois da Fase 2, se houver
-capacidade de equipa — só a Fase 1 é estritamente bloqueante para todas.
+| Fase | Depende de | Porquê |
+|---|---|---|
+| Fase 1 — Auth real + CRUD | Fase 0 | Fundação técnica. |
+| Fase 2 — Migração real dos 295 projetos | Fase 1 | Precisa de permissões/auditoria reais antes de tocar em dados reais. |
+| Fase 3 — Graph real (visitas/calendário) | Fase 1 | Não depende da migração — só de autenticação/permissões reais. |
+| Fase 4 — ClickUp real | Fase 2 | Precisa dos projetos já migrados para mapear `task_id`. |
+| Fase 5 — Inventário/custos | Fase 2 | Precisa dos projetos já migrados para atribuir stock/custos. |
+| Fase 6 — Biblioteca documental | Fase 3 | Reforça o mesmo `GraphAdapter` já ligado a sério na Fase 3 (operações de ficheiros). |
+| Fase 7 — Claude/MCP completo | Fase 5 e Fase 6 | Pedidos de material (Fase 5) e pesquisa documental (Fase 6) são pré-requisitos de ferramentas específicas do Claude. |
+
+**Só a Fase 1 é estritamente bloqueante para todas as restantes.** Depois
+dela: Fase 2 e Fase 3 podem correr em paralelo; Fase 4 e Fase 5 só depois
+da Fase 2; Fase 6 só depois da Fase 3; Fase 7 só depois de Fase 5 e Fase 6
+estarem ambas concluídas.
 
 ## Plano de testes
 
@@ -259,7 +338,9 @@ capacidade de equipa — só a Fase 1 é estritamente bloqueante para todas.
 | Permissões por perfil | Implementado e testado (`tests/test_permissions.py`) |
 | IDs externos/correspondência estável | Implementado e testado (`tests/test_external_ids.py`) |
 | Migração em staging (ingestão, conflitos, promoção, rollback, idempotência) | Implementado e testado (`tests/test_staging_persistence.py`) |
+| Reconciliação de PM (fila de revisão, nunca promover PM não resolvido) | Implementado e testado (`tests/test_people_reconciliation.py`) |
 | Bloqueio de configuração insegura (staging/produção) | Implementado e testado (`tests/test_config_hardening.py`) |
+| Motor de base de dados realmente ligado corresponde ao esperado pelo CI | Implementado e testado (`tests/test_database_dialect.py`) |
 | Precisão monetária (`Numeric`/`Decimal`) | Implementado e testado (`tests/test_monetary_precision.py`) |
 | Histórico/auditoria (append-only, aprovação de IA) | Implementado e testado (`tests/test_audit.py`) |
 | Adapters (mock/fallback, nunca chamada real) | Implementado e testado (`tests/test_adapters.py`) |
@@ -330,10 +411,12 @@ staging.
 
 | Risco | Tipo | Mitigação |
 |---|---|---|
-| SQLite em dev/teste divergir de PostgreSQL em produção | Técnico | Tipos portáveis (`GUID`, `Numeric`), sem features exclusivas de um motor nos modelos (D-002); job de CI contra PostgreSQL adicionado (D-021), mas não executado localmente neste ambiente — primeira execução real fica para o GitHub Actions |
+| SQLite em dev/teste divergir de PostgreSQL em produção | Técnico | Tipos portáveis (`GUID`, `Numeric`), sem features exclusivas de um motor nos modelos (D-002); job de CI contra PostgreSQL adicionado (D-021) — tentativa real de validação local feita (PostgreSQL embebido via `pgserver`), bloqueada por um problema confirmado do PostgreSQL-para-Windows com o nome de utilizador local (não relacionado com este código) — ver D-021; primeira execução real fica para o GitHub Actions (runners Linux, sem esse problema) |
+| Um job de CI "passar" sem testar o que diz testar | Segurança/Técnico | Já aconteceu uma vez nesta fase (conftest.py sobrescrevia sempre DATABASE_URL, mascarando o job PostgreSQL como SQLite) — corrigido com bloqueio duro (`pytest.exit`) + teste nomeado quando `EXPECTED_DB_DIALECT` diverge do motor real (D-022) |
 | Sistema Financial desconhecido | Operacional | Fase 5 isolada para não bloquear as restantes; adapter CSV real já disponível (D-011) |
 | Conflitos de dados não resolvidos na migração real | Técnico | Mecanismo de staging+conflitos já testado; nunca aplicar sem revisão humana (D-005, D-017) |
 | Deteção de duplicados não cobre lotes de importação diferentes ainda não promovidos | Técnico | Âmbito conhecido e documentado (D-017); mitigação operacional: promover um lote de cada vez antes de ingerir o seguinte, na migração real |
+| PM desconhecido/ambíguo bloquear muitos projetos na migração real | Operacional | Reconciliação como passo explícito antes da ingestão (D-023) reduz o número de bloqueios; orçamentar tempo de revisão humana para os 8 PMs históricos do legado |
 | Rollback de uma promoção que atualizou um projeto existente depende de `project_history` correlacionado corretamente | Técnico | Testado explicitamente (`test_staging_persistence.py`); nunca apaga histórico, só acrescenta — um erro de rollback é sempre auditável e corrigível manualmente, nunca silencioso |
 | Equipa pequena (5 utilizadores) com pouca margem para gerir um novo sistema | Operacional | Monólito modular deliberadamente simples (D-001); scheduler leve em vez de fila pesada (D-013) |
 | Repositório público herdar dados reais por engano | Segurança | `.gitignore` + fixtures exclusivamente sintéticas + revisão manual antes de cada commit (D-015) |

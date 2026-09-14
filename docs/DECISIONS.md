@@ -348,11 +348,121 @@ do GitHub Actions, corre `alembic upgrade head` e `pytest -q` contra
 
 **Porquê:** cumpre o pedido diretamente; garante que a migração
 (`batch_alter_table`, `Numeric`, `GUID`) e a suite de testes funcionam
-também no motor de produção-alvo, não só em SQLite. **Não foi possível
-correr este job localmente** (sem Docker/Postgres neste ambiente — ver
-D-002) — validado por leitura cuidadosa e pelos mesmos padrões já usados
-com sucesso no job SQLite; a primeira execução real fica para o GitHub
-Actions.
+também no motor de produção-alvo, não só em SQLite.
+
+**Tentativa real de validação local (revisão de hardening seguinte) e o
+que bloqueou:** sem Docker disponível (D-002), tentou-se instalar
+PostgreSQL embebido via o pacote `pgserver` (binários portáveis, sem
+serviço de sistema, sem admin) — foi necessário instalar Python 3.12 à
+parte (só há wheels `pgserver` até cp312), o que funcionou. O `initdb`
+do PostgreSQL embebido, porém, falha sempre neste computador com
+`FATAL: invalid byte sequence for encoding "UTF8"`, independentemente do
+diretório de dados escolhido ou de `--locale`/variáveis de ambiente
+`USERNAME` sobrepostas: o binário lê o nome da conta Windows atual
+("Sérgio", com acento) através de uma API que não faz a transcodificação
+correta para UTF-8 antes de o passar ao script de bootstrap SQL — um
+problema conhecido de builds de PostgreSQL para Windows com nomes de
+utilizador não-ASCII, não um problema no código deste repositório.
+Não foi contornável em tempo razoável sem alterar a conta Windows do
+utilizador (fora de questão) ou compilar um binário próprio.
+
+Conclusão: o job continua **não executado localmente**, mas por uma
+limitação confirmada do ambiente local (não do código), depois de uma
+tentativa real e documentada — não apenas por falta de Docker. A primeira
+execução real continua a ficar para o GitHub Actions, onde os runners
+`ubuntu-latest` não têm este problema (contas de serviço Linux, sempre
+ASCII).
+
+## D-022 — `conftest.py` nunca sobrescreve `DATABASE_URL`; dialect verificado explicitamente
+
+**Decisão:** `tests/conftest.py` só cria/gere um ficheiro SQLite temporário
+quando `DATABASE_URL` **não** está definido no ambiente. Quando está
+definido — pelo CI (`backend-postgres`) ou por um dev a testar contra
+PostgreSQL manualmente — é respeitado tal como está, nunca sobreposto.
+Além disso, `_prepare_database` (fixture de sessão, `autouse=True`) chama
+`pytest.exit(...)` — abortando toda a sessão de testes, antes de qualquer
+teste correr — se a variável `EXPECTED_DB_DIALECT` estiver definida e não
+corresponder ao dialect do motor realmente ligado
+(`engine.dialect.name`). `tests/test_database_dialect.py` acrescenta um
+resultado nomeado e visível para a mesma garantia.
+`.github/workflows/ci.yml` define `EXPECTED_DB_DIALECT=postgresql` no job
+`backend-postgres` e `EXPECTED_DB_DIALECT=sqlite` no job `backend-sqlite`.
+
+**Porquê — bug real corrigido, não só um risco teórico:** a versão
+anterior de `conftest.py` fazia sempre
+`os.environ["DATABASE_URL"] = f"sqlite:///{...}"` incondicionalmente, ANTES
+de qualquer teste correr — isto significava que o job `backend-postgres`
+do CI (que define `DATABASE_URL=postgresql+psycopg://...` no ambiente)
+teria essa variável **imediatamente substituída por SQLite** assim que
+`pytest` importasse `conftest.py`, e a suite inteira corria — e "passava"
+— contra SQLite, sem nunca tocar em PostgreSQL. O job ficaria verde sem
+validar nada do que dizia validar. Confirmado e corrigido nesta revisão,
+com teste de regressão (`test_dev_header_mechanism_*` e a suite geral
+correndo com um `DATABASE_URL` externo antes e depois da correção).
+
+## D-023 — Reconciliação de PM como etapa explícita antes da promoção de projetos
+
+**Decisão:** `app/migration/people_reconciliation.py` introduz uma etapa
+— chamada antes de `ingest_export`, mas cujo efeito de bloqueio se aplica
+durante toda a ingestão/promoção — com duas responsabilidades:
+
+1. `reconcile_pm_names(db, payload=...)`: para cada nome de PM distinto no
+   export, verifica se corresponde a exatamente um `Person` conhecido; se
+   não (zero ou mais do que uma correspondência), regista um
+   `PersonReconciliationItem` (`status='pending'`) — nunca cria nem liga
+   uma `Person` sozinho. Idempotente por nome normalizado.
+2. `resolve_person_reconciliation(...)`: a única forma de sair de
+   `pending` — `link_existing` (liga a uma `Person` já existente),
+   `create_new` (cria uma `Person` nova, **sempre `is_active=False` e sem
+   `User`** — nunca dá login automaticamente), ou `ignore` (decisão
+   explícita de não associar nenhuma pessoa a este nome).
+
+`app/migration/staging.py` usa `classify_pm_name` (a mesma função usada
+pela reconciliação) em três pontos, para nunca haver duas lógicas de
+decisão divergentes sobre o que conta como "PM resolvido":
+
+- `ingest_export`: se um registo tem PM presente mas não resolvido, fica
+  `status='conflict'`, `conflict_reason='pm_unresolved'` — mesmo que a
+  parte de identidade do projeto (nome, sem duplicados) esteja
+  perfeitamente limpa. A resolução do projeto (`create_new`/
+  `update_existing`) fica já calculada e guardada, para não se perder
+  quando o PM for resolvido.
+- `resolve_conflict`: ganhou a ação `proceed_without_pm` (só válida para
+  `conflict_reason='pm_unresolved'`) — decisão humana explícita de avançar
+  sem PM. Quando um conflito de NOME de projeto é resolvido
+  (`create_new`/`link_existing`) e o registo tinha também um PM por
+  resolver, o registo não salta para `ready_to_promote`: volta a ficar
+  `conflict`/`pm_unresolved`, porque o problema de PM nunca tinha sido
+  endereçado (só o de nome). Ambos os caminhos passam pelo mesmo
+  `_finalize_status_given_pm`, para nunca divergirem.
+- `promote_staging_record`: verifica **outra vez**, já na promoção, se o
+  PM está resolvido ou explicitamente dispensado — mesmo que o registo
+  tenha chegado a `ready_to_promote` por alguma via que não passasse pelas
+  barreiras normais (testado explicitamente forçando o estado
+  diretamente). Esta é a garantia final e não contornável de "nunca
+  promover silenciosamente um projeto com PM conhecido mas não resolvido".
+- `retry_pm_resolution`: reclassifica um registo bloqueado por
+  `pm_unresolved` depois de a reconciliação resolver o nome em causa —
+  desbloqueia sem repetir a ingestão.
+
+**Porquê:** cumpre os quatro requisitos pedidos diretamente — preservar
+todos os PMs históricos como `Person` já era uma propriedade do modelo
+(D-003), aqui reforçada ao nunca apagar/ignorar um `Person` existente;
+`User` só é criado por decisão humana separada (a reconciliação nunca cria
+um); nomes desconhecidos/ambíguos vão sempre para a fila
+`person_reconciliation_items`; e a barreira em `promote_staging_record` é
+estrutural, não contornável por um caminho alternativo dentro do código.
+Testado em `tests/test_people_reconciliation.py` (16 testes) e no ajuste
+correspondente em `tests/test_staging_persistence.py`.
+
+**Âmbito conhecido:** tal como a deteção de duplicados de projeto (D-017),
+`reconcile_pm_names` só vê o `payload` que lhe é passado — não deteta
+proativamente nomes de PM pendentes de lotes anteriores ainda por
+reconciliar; isso já é coberto, na prática, porque `classify_pm_name`
+consulta sempre `person_reconciliation_items` para decisões já tomadas
+(`ignored`/resolvidas), e um item `pending` de um lote anterior continua
+`pending` e continua a bloquear qualquer registo com esse nome, em
+qualquer lote.
 
 ## Âmbito deliberadamente deixado de fora desta fase
 

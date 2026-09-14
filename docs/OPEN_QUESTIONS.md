@@ -178,6 +178,24 @@ sistema externo ainda não mapeado.
 evidência de um sistema externo — não inventar uma integração que pode não
 existir.
 
+### 17. Quem resolve a fila de reconciliação de PM na migração real?
+
+**Impacto:** a Fase 2 (migração real) depende de alguém decidir, para cada
+nome de PM desconhecido/ambíguo do export legado, se corresponde a uma
+pessoa já em `people`, se deve criar uma pessoa nova (histórica, sem
+login), ou se deve ficar sem PM associado (`app.migration.people_reconciliation`,
+D-023). Os 8 PMs históricos do legado provavelmente geram vários destes
+itens logo na primeira ingestão real.
+
+**Decisão necessária:** quem (Chefe de Operações? Administrador?) tem
+autoridade para tomar estas decisões, e se há casos que precisam de
+confirmação do próprio PM (ex.: confirmar que "Gonçalo Palacino" e
+"Gonçalo P." no legado são a mesma pessoa).
+
+**Recomendação por defeito:** Chefe de Operações ou Administrador — os
+únicos perfis com `project.edit_all` na matriz de permissões
+(`ARCHITECTURE_PROPOSAL.md` secção 6) — a confirmar antes da Fase 2.
+
 ## Podem ser decididas mais tarde
 
 - Fornecedor do serviço de mapas/rotas.
