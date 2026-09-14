@@ -957,3 +957,40 @@ email desconhecido/inativo rejeitados, nunca cria `User`, reatribuição
 rejeitada, `entra_object_id` duplicado rejeitado (com e sem a verificação
 explícita — o teste da restrição UNIQUE da base de dados confirma a
 barreira final independente da aplicação), argumentos vazios rejeitados.
+
+## D-035 — Allowlist de campos PM revista: campos com impacto comercial ficam administrativos até decisão de negócio
+
+**Decisão:** `app/security/project_fields.py` (D-028) tinha classificado
+`lat`, `lon`, `power_kwp`, `power_raw`, `start_date`,
+`commercial_assumptions`, `upac_connection_date_raw` e `award_year_raw`
+como PM-editáveis (`project.edit_own_progress`) — uma omissão técnica
+razoável na Fase 1, mas nunca confirmada como decisão de negócio. Revisto
+nesta preparação para staging/produção: estes oito campos passam a
+`ADMIN_ONLY_PROJECT_FIELDS` (só `project.edit_all` os edita). Ficam
+PM-editáveis só `role`, `equipment_notes`, `injection_notes`, `om_notes` e
+`notes` — texto de acompanhamento operacional, sem valor comercial nem
+usado por outra integração.
+
+**Porquê:** potência e coordenadas afetam o dimensionamento e a
+localização real reportada da instalação; `commercial_assumptions` é, pelo
+nome, um pressuposto comercial; as datas legadas (`start_date`,
+`upac_connection_date_raw`, `award_year_raw`) podem ter valor contratual.
+Nenhum destes teve uma resposta explícita de "um PM pode corrigir isto no
+seu próprio projeto sem aprovação?" — seguindo a regra geral desta revisão
+("sem confirmação de negócio, usar a opção mais restritiva"), ficam
+administrativos até essa confirmação existir. Registado como pergunta em
+aberto — `docs/OPEN_QUESTIONS.md`, pergunta 5-B.
+
+**Impacto operacional conhecido, aceite deliberadamente:** uma correção
+legítima destes campos por um PM (ex.: coordenadas erradas vindas da
+migração) passa a exigir sempre um Chefe de Operações/Administrador —
+possível atrito se a resposta de negócio acabar por ser "sim, o PM pode
+editar X". Prefere-se este atrito a um PM poder alterar, sem aprovação,
+um valor com peso comercial/contratual antes de existir uma decisão.
+
+**Testado em** `tests/test_project_field_permissions.py` — teste novo
+confirma explicitamente que os oito campos ficam em
+`ADMIN_ONLY_PROJECT_FIELDS` e que um PM recebe 403 ao tentar alterar
+`power_kwp` no seu próprio projeto; os testes existentes (disjunção,
+cobertura total de `ProjectUpdate`, `notes` continua PM-editável)
+continuam a passar sem alteração.

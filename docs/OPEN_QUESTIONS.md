@@ -91,6 +91,36 @@ aprovação adicional).
 `app/security/catalog.py` (Chefe de Operações e Administrador aprovam
 tudo; PM aprova só o seu próprio envio/evento) — a confirmar ou ajustar.
 
+### 5-B. Allowlist de campos editáveis por PM: campos com impacto comercial
+
+**Impacto:** `app/security/project_fields.py` (D-028, revisto em D-035)
+distingue, no servidor, os campos de `Project` que um PM
+(`project.edit_own_progress`) pode alterar no seu próprio projeto dos que
+exigem `project.edit_all` (Chefe de Operações, Administrador). Ficaram
+administrativos por omissão, nesta revisão de fecho de Fase 1,
+`lat`/`lon` (coordenadas), `power_kwp`/`power_raw` (potência),
+`start_date`/`upac_connection_date_raw`/`award_year_raw` (datas legadas) e
+`commercial_assumptions` — nenhum tem uma regra de negócio confirmada
+sobre se um PM pode corrigi-los sem aprovação, e todos têm potencial
+impacto comercial ou contratual (potência/coordenadas afetam
+dimensionamento e localização real da instalação; `commercial_assumptions`
+é, pelo nome, um pressuposto comercial; as datas legadas podem ter valor
+contratual). Enquanto ficam administrativos, uma correção legítima de um
+PM (ex.: coordenadas erradas na migração) exige sempre um Chefe de
+Operações/Administrador a aplicá-la — potencial atrito operacional se a
+resposta acabar por ser "sim, o PM pode".
+
+**Decisão necessária:** para cada um destes campos, o responsável
+operacional confirma se um PM pode editá-lo no seu próprio projeto sem
+aprovação adicional, ou se deve continuar administrativo (ou passar a
+exigir um fluxo de aprovação específico, ainda não modelado).
+
+**Recomendação por defeito (já aplicada como omissão técnica, a
+confirmar como decisão de negócio):** manter todos administrativos até
+resposta explícita — a opção mais restritiva, nunca assumida como
+definitiva. Ver `app/security/project_fields.py` para a lista completa e
+`docs/DECISIONS.md` D-035.
+
 ## Importantes
 
 ### 6. Uma visita pode envolver mais do que uma pessoa/equipa?
