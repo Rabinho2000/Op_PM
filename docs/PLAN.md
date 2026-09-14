@@ -149,36 +149,81 @@ hardening acima, antes de considerar a Fase 0 encerrada. Ver
   contra SQLite (validação real da execução fica para o primeiro push ao
   GitHub Actions, fora do alcance desta sessão local).
 
-## Fase 1 — Autenticação real e primeiros endpoints CRUD
+## Fase 1 — Autenticação real e primeiros endpoints CRUD (IMPLEMENTADA — código completo, login real ponta-a-ponta pendente do tenant)
 
-- **Objetivo:** ligar Microsoft Entra ID a sério (substituir o mecanismo de
-  desenvolvimento — D-012) e expor os primeiros endpoints de escrita reais
-  (projetos, workflow) atrás das permissões já modeladas.
-- **Entidades:** `projects`, `project_stage_progress`,
-  `project_subtask_progress`, `project_history` (endpoints de leitura e
-  escrita, sempre gerando entrada de histórico).
-- **Integrações:** Entra ID — substitui a validação `NotImplementedError`
-  atual (D-012) por validação real de token OIDC, e só depois define
-  `AUTH_ENABLED=true`; `GraphAdapter` continua em fallback local até à
-  Fase 3, que é quem o liga a sério (ver "Dependências entre fases").
-- **Testes:** testes de integração da API (não só de serviço), teste de que
-  um token inválido/expirado é rejeitado, teste de que toda a escrita gera
-  histórico.
+Ver `docs/DECISIONS.md` D-024 a D-027 para o detalhe técnico completo.
+
+- **Objetivo:** ligar a validação real de token Microsoft Entra ID
+  (substituindo o `NotImplementedError` da Fase 0 — D-012), expor os
+  primeiros endpoints CRUD de projetos atrás das permissões já modeladas,
+  endpoints para consultar/resolver a migração (lotes, staging,
+  reconciliação de PM), e a primeira interface web funcional.
+- **O que ficou feito:**
+  1. `app/security/entra_auth.py`: validação real (JWKS do tenant, RS256,
+     issuer/audience/validade) e um validador mock (chave de teste local,
+     nunca alcançável fora de testes — D-024).
+  2. `get_current_user` valida `Authorization: Bearer <token>` quando
+     `AUTH_ENABLED=true`; liga por `entra_object_id`, com ligação
+     "just-in-time" por email para um `User` ainda não ligado (nunca cria
+     um `User` novo a partir de um token).
+  3. `app/services/projects.py` + `app/api/routes_projects.py`: listar
+     (com filtros PM/estado/pesquisa, respeitando `view_all`/`view_own`),
+     detalhe, editar (`can_edit_project` antes de qualquer escrita, uma
+     entrada de `project_history` por campo alterado), histórico.
+  4. `app/api/routes_migration.py`: consultar lotes/registos de
+     staging/fila de reconciliação, e as ações de resolução já existentes
+     (`resolve-conflict`, `promote`, `rollback`, `retry-pm-resolution`,
+     `reconciliation-items/resolve`) — sem endpoint de ingestão (D-026,
+     decisão deliberada).
+  5. Frontend: `Login`, `ProjectsList`, `ProjectDetail`, `ReconciliationQueue`,
+     `react-router-dom` — validado manualmente ponta-a-ponta com o backend
+     local (D-027).
+- **O que ficou pendente (fora do controlo deste repositório):**
+  autenticação real ponta-a-ponta precisa de um tenant Microsoft
+  Entra ID/app registration reais (pergunta bloqueante nº 1) para o
+  MSAL.js do frontend ter com quem falar — o backend já valida tokens
+  reais, mas não há tenant para os emitir. O login do frontend continua a
+  usar o mecanismo de desenvolvimento (`X-Dev-User-Email`, só
+  local/test), com um aviso explícito no ecrã sobre esta pendência.
+- **Entidades:** `projects`, `project_history` (endpoints de leitura e
+  escrita); `import_batches`, `staging_project_records`,
+  `person_reconciliation_items` (endpoints de leitura e resolução).
+  `project_stage_progress`/`project_subtask_progress` (workflow) **ainda
+  sem endpoint** — ver "Âmbito deixado de fora da Fase 1" em
+  `docs/DECISIONS.md`.
+- **Integrações:** nenhuma real ainda — Graph/ClickUp/Financial/Claude
+  continuam mock/fallback; `GraphAdapter` fica em fallback local até à
+  Fase 3.
+- **Testes:** `tests/test_auth_entra.py` (12 — token válido/inválido/
+  malformado/expirado/audience errada/issuer errado, ligação por email e
+  por `entra_object_id`, utilizador sem papel, X-Dev-User-Email ignorado
+  com `AUTH_ENABLED=true`); `tests/test_project_api.py` (8 — PM só edita
+  o seu, Chefe edita qualquer um, Comercial só lê, histórico por campo
+  alterado, sem entrada quando o valor não muda, pedido não autenticado);
+  `tests/test_migration_api.py` (5 — bloqueio de promoção em conflito,
+  reconciliação de PM desconhecido via API seguida de promoção,
+  `proceed_without_pm` via API, permissão de migração). Suite completa:
+  99 passed, 2 skipped (SQLite local).
 - **Riscos:** depende de `DECISÃO NECESSÁRIA` sobre o tenant M365 (ver
-  `OPEN_QUESTIONS.md`) — sem isso, esta fase fica bloqueada na parte de
-  autenticação (mas os endpoints CRUD podem avançar sob o mecanismo de
-  desenvolvimento entretanto).
-- **Rollback:** em `local`/`test`, manter `AUTH_ENABLED=false` (mecanismo de
-  desenvolvimento) como via de recuperação enquanto a integração Entra ID
-  não estiver pronta. **Nunca em `staging`/`production`** — aí
+  `OPEN_QUESTIONS.md`) para o login real ponta-a-ponta — sem isso, a
+  aplicação continua a funcionar em `local`/`test` com o mecanismo de
+  desenvolvimento, mas nunca pode ser exposta em `staging`/`production`
+  (D-020/D-024 bloqueiam isso estruturalmente).
+- **Rollback:** em `local`/`test`, manter `AUTH_ENABLED=false` (mecanismo
+  de desenvolvimento) como via de recuperação enquanto a integração Entra
+  ID não estiver pronta. **Nunca em `staging`/`production`** — aí
   `AUTH_ENABLED=false` está bloqueado estruturalmente pela validação de
   arranque (D-020); a app simplesmente não arranca com essa combinação. Na
   prática isto significa que só se promove esta fase para staging depois
   de a integração Entra ID real estar a funcionar — não há um "voltar
   atrás" para staging/produção sem autenticação real, por desenho.
-- **Critérios de conclusão:** um utilizador real autentica-se via Entra ID;
-  `/me` reflete os seus papéis reais; criar/editar um projeto sintético via
-  API gera uma entrada de `project_history` correta.
+- **Critérios de conclusão:** código de validação real de token completo e
+  testado (mock); `/me` reflete papéis/permissões reais; editar um
+  projeto sintético via API gera uma entrada de `project_history`
+  correta; frontend funcional validado manualmente. **Login real
+  ponta-a-ponta com um tenant Entra ID de verdade fica como critério em
+  aberto até à pergunta bloqueante nº 1 ser respondida** — não é um
+  critério que este repositório possa cumprir sozinho.
 
 ## Fase 2 — Migração real dos 295 projetos (staging → produção)
 
@@ -345,10 +390,12 @@ estarem ambas concluídas.
 | Histórico/auditoria (append-only, aprovação de IA) | Implementado e testado (`tests/test_audit.py`) |
 | Adapters (mock/fallback, nunca chamada real) | Implementado e testado (`tests/test_adapters.py`) |
 | Saúde da API | Implementado e testado (`tests/test_health.py`) |
-| Endpoints CRUD reais | Por implementar (Fase 1) |
-| Integração Entra ID real | Por implementar (Fase 1) |
+| Validação de token Entra ID (real e mock) | Implementado e testado (`tests/test_auth_entra.py`) |
+| Endpoints CRUD de projetos + permissões + histórico | Implementado e testado (`tests/test_project_api.py`) |
+| Endpoints de migração (resolução, nunca ingestão) | Implementado e testado (`tests/test_migration_api.py`) |
+| Autenticação Entra ID real ponta-a-ponta (tenant de verdade) | Bloqueado pela pergunta nº 1 — código pronto, validado só com mock |
 | Integração Graph/ClickUp/Financial/Claude reais | Por implementar (Fases 3, 4, 5, 7) |
-| Frontend (além do build) | Por implementar — sem testes automatizados de UI nesta fase |
+| Frontend (além do build e validação manual) | Sem testes automatizados de UI ainda (Playwright/Cypress — ver D-027) |
 
 CI (`.github/workflows/ci.yml`) corre a cada push/PR: backend contra SQLite
 (rápido, sem serviços), backend contra um serviço PostgreSQL do próprio
@@ -420,7 +467,9 @@ staging.
 | Rollback de uma promoção que atualizou um projeto existente depende de `project_history` correlacionado corretamente | Técnico | Testado explicitamente (`test_staging_persistence.py`); nunca apaga histórico, só acrescenta — um erro de rollback é sempre auditável e corrigível manualmente, nunca silencioso |
 | Equipa pequena (5 utilizadores) com pouca margem para gerir um novo sistema | Operacional | Monólito modular deliberadamente simples (D-001); scheduler leve em vez de fila pesada (D-013) |
 | Repositório público herdar dados reais por engano | Segurança | `.gitignore` + fixtures exclusivamente sintéticas + revisão manual antes de cada commit (D-015) |
-| Configuração insegura chegar a staging/produção | Segurança | Bloqueada estruturalmente por dupla verificação (D-020) — a aplicação não arranca, e o mecanismo de utilizador de desenvolvimento não funciona fora de local/test |
+| Configuração insegura chegar a staging/produção | Segurança | Bloqueada estruturalmente por tripla verificação (D-020, D-024) — a aplicação não arranca sem AUTH_ENABLED/SECRET_KEY/DATABASE_URL/ENTRA_VALIDATION_MODE corretos, e o mecanismo de utilizador de desenvolvimento não funciona fora de local/test |
+| Login real ponta-a-ponta continua por confirmar sem um tenant Entra ID de verdade | Operacional/Técnico | Validação de token já implementada e testada com uma chave mock (D-024) — só falta o tenant/app registration (pergunta bloqueante nº 1); nenhuma parte do backend precisa de ser reescrita quando esse tenant existir |
+| `can_edit_project` é tudo-ou-nada por projeto, não por campo (um PM podia, em teoria, editar `clickup_status_mirror` se estivesse em `ProjectUpdate`) | Técnico | Mitigado nesta fase por desenho: `clickup_status_mirror` fica fora de `ProjectUpdate` (D-025); restrição por campo mais fina fica para quando o workflow (progresso vs. identidade) tiver a sua própria UI |
 | IA usada como atalho para decisões humanas | Segurança/Operacional | Controlo arquitetural (nenhuma ferramenta pode executar ação irreversível — ver `ARCHITECTURE_PROPOSAL.md` secção 8) + auditoria completa |
 | Custo de APIs externas (Claude, rotas, geocoding) a escalar | Operacional | Limite/orçamento configurável antes de ativar cada integração real |
 

@@ -464,15 +464,12 @@ consulta sempre `person_reconciliation_items` para decisões já tomadas
 `pending` e continua a bloquear qualquer registo com esse nome, em
 qualquer lote.
 
-## Âmbito deliberadamente deixado de fora desta fase
+## Âmbito deliberadamente deixado de fora da Fase 0
 
 - Métodos de ficheiros (SharePoint/OneDrive) na interface do `GraphAdapter`
   — só existem hoje `get_availability`/`create_draft_email`/`send_mail`/
   `create_event`. Operações de documentos entram quando a Fase da biblioteca
   documental (ver `docs/PLAN.md`) for trabalhada.
-- Qualquer endpoint de escrita na API além de `/health` e `/me` — os
-  modelos e a lógica de permissões existem, mas os endpoints CRUD de
-  projetos/visitas/inventário/etc. são trabalho da Fase 1 em diante.
 - Migração dos 295 projetos reais — só a mecânica (ingestão, staging, IDs
   externos, conflitos, promoção explícita, rollback, checksum) está
   implementada e testada com dados sintéticos.
@@ -480,3 +477,142 @@ qualquer lote.
   promovidos (ver D-017, âmbito conhecido).
 - Regra de base de dados (trigger/permissão) que impeça UPDATE/DELETE em
   `project_history` — continua aplicada só por convenção de código (D-006).
+
+# Fase 1 — Autenticação real, CRUD, reconciliação por API, frontend
+
+Nenhuma destas decisões liga uma integração externa real — Graph, ClickUp,
+Financial e Claude continuam mock/fallback (D-009 a D-011); os 295
+projetos reais continuam por migrar (D-005/D-017).
+
+## D-024 — Validação real de token Entra ID, dupla barreira contra o modo mock
+
+**Decisão:** `app/security/entra_auth.py` valida tokens OIDC do Microsoft
+Entra ID (assinatura RS256, `iss`, `aud`, `exp`/`iat`, claims obrigatórias)
+com duas implementações atrás da mesma interface:
+
+- `RealEntraTokenValidator`: busca o JWKS do tenant real via rede
+  (`PyJWKClient`, com cache), issuer/audience derivados de
+  `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID` (ou explícitos via
+  `ENTRA_ISSUER`/`ENTRA_AUDIENCE`/`ENTRA_JWKS_URL`).
+- `MockEntraTokenValidator`: valida contra uma chave RSA de teste fixa,
+  gerada uma única vez para este repositório, embutida no código — sem
+  qualquer chamada de rede. **Não é um segredo real**: nunca validaria
+  nada vindo de um Entra ID de verdade (issuer/audience diferentes), serve
+  só para assinar/validar tokens sintéticos em `issue_mock_token` (testes).
+
+`Settings.entra_validation_mode` (`'real'` por omissão) escolhe qual —
+`app/security/entra_auth.py:get_token_validator` é o único ponto que
+decide isto, nunca instanciado diretamente fora daí.
+
+`get_current_user` (app/security/current_user.py) liga o `oid` do token a
+`User.entra_object_id`; se ainda não houver ligação, tenta uma ligação
+"just-in-time" por email — só para um `User` já existente, ativo, sem
+`entra_object_id`, e só se exatamente um corresponder (nunca cria um
+`User` novo a partir de um token; provisionamento continua um passo
+administrativo separado). Ambíguo ou inexistente → 401 genérico (nunca
+revela ao chamador HTTP qual validação específica falhou — assinatura,
+issuer, audience, ou validade — só ao log do servidor).
+
+**Porquê a dupla barreira ser necessária:** `ENTRA_VALIDATION_MODE=mock`
+nunca pode ser alcançável em staging/produção, senão qualquer token
+assinado com a chave de teste (pública neste repositório) autenticaria
+como qualquer utilizador. `Settings._enforce_hardening_in_non_local_envs`
+(D-020) foi estendida para também exigir `ENTRA_VALIDATION_MODE='real'`
+nesses ambientes — a aplicação recusa-se a arrancar caso contrário.
+Testado em `tests/test_config_hardening.py` (bloqueio de arranque) e
+`tests/test_auth_entra.py` (12 testes: token válido, ligação por email,
+segunda autenticação já ligada por `entra_object_id`, assinatura inválida,
+token malformado, `Authorization` em falta, token expirado, audience
+errada, issuer errado, utilizador sem papel, email/object_id
+desconhecidos, e X-Dev-User-Email nunca é sequer lido quando
+`AUTH_ENABLED=true`).
+
+## D-025 — CRUD de projetos: permissões e histórico só na camada de serviço
+
+**Decisão:** `app/services/projects.py` é o único sítio que escreve num
+`Project` a partir da API (`app/api/routes_projects.py`). `update_project`
+verifica `can_edit_project` (D-008) antes de tocar em qualquer campo, e usa
+`model_dump(exclude_unset=True)` para só considerar campos explicitamente
+presentes no pedido — um campo omitido nunca é tocado, um campo presente
+com `null` limpa-o explicitamente. Cada campo efetivamente alterado gera
+uma entrada de `project_history` (`source='ui'`,
+`changed_by_person_id=<pessoa do utilizador autenticado>`) através do
+mesmo `record_project_change` já usado pela migração (D-005) — nunca uma
+escrita silenciosa, e um valor igual ao anterior não gera entrada (mesma
+regra que corrige C-08 desde a Fase 0).
+
+`GET /api/projects` e `GET /api/projects/{id}` filtram por
+`can_view_project`/`visible_projects_query` — um PM sem `project.view_all`
+só vê os seus próprios projetos, nunca recebe uma lista completa filtrada
+no cliente. Não existe nenhum endpoint que escreva em `project_history`
+diretamente — só leitura (`GET /api/projects/{id}/history`).
+
+`clickup_status_mirror` fica deliberadamente fora de `ProjectUpdate` — é
+espelho só-de-leitura do ClickUp (fonte de verdade externa), nunca editado
+pela UI desta plataforma.
+
+Testado em `tests/test_project_api.py`: PM só edita o seu próprio projeto
+(403 no outro), Chefe de Operações edita qualquer um, Comercial só lê
+(403 em qualquer PATCH), histórico criado por cada campo alterado, nenhuma
+entrada gerada quando o valor não muda, pedido não autenticado rejeitado.
+
+## D-026 — Endpoints de migração: consulta e resolução, nunca ingestão
+
+**Decisão:** `app/api/routes_migration.py` expõe leitura
+(`import-batches`, `staging-records`, `reconciliation-items`) e as ações
+de resolução já existentes em `app/migration/staging.py`/
+`people_reconciliation.py` (`resolve-conflict`, `promote`, `rollback`,
+`retry-pm-resolution`, `reconciliation-items/{id}/resolve`) — mas
+**nenhum endpoint para `ingest_export`**. Duas novas permissões:
+`migration.view` e `migration.resolve`, concedidas a Administrador e
+Chefe de Operações (a recomendação por omissão da pergunta aberta nº 17).
+
+**Porquê não expor ingestão via API:** a ingestão de um export real é uma
+operação controlada e pouco frequente (por lote, não por pedido HTTP
+casual), e expor um endpoint para ela convidaria a experimentar com dados
+reais antes de tempo — contrariando a regra explícita desta fase ("não
+migrar ainda os 295 projetos reais"). Quando a Fase 2 chegar, a ingestão
+real continua a ser um comando/script operado deliberadamente, não um
+botão da UI.
+
+Testado em `tests/test_migration_api.py`: bloqueio de promoção com
+registo em conflito (incluindo `pm_unresolved`), resolução de PM
+desconhecido via API seguida de promoção bem-sucedida,
+`proceed_without_pm` via API, e que um PM sem `migration.view` não
+consegue ver nem resolver nada de migração.
+
+## D-027 — Frontend Fase 1: login (mecanismo de dev), lista, detalhe, reconciliação
+
+**Decisão:** primeira interface web funcional — `Login` (guarda o email de
+desenvolvimento em `localStorage`, nunca um token — ver nota abaixo),
+`ProjectsList` (filtros por PM/estado/pesquisa), `ProjectDetail` (edição
+dos campos permitidos + histórico ao lado), `ReconciliationQueue` (liga/
+cria/ignora um nome de PM pendente). `react-router-dom` para a navegação;
+`RequireAuth` redireciona para `/login` sem um email de dev guardado.
+
+**Login com Entra ID real não foi ligado ao frontend nesta fase** — exigia
+MSAL.js e valores reais de app registration (tenant ID, client ID) que
+este repositório não tem (ver `docs/OPEN_QUESTIONS.md`, pergunta 1); o
+ecrã de login diz isto explicitamente ao utilizador, em vez de fingir uma
+opção que não funciona. O backend já valida tokens reais (D-024) — falta
+só a configuração do tenant para o MSAL.js ter com quem falar.
+
+Validado manualmente ponta-a-ponta (backend + frontend a correr
+localmente): login, listagem com filtros, edição de um projeto com
+histórico a aparecer imediatamente com autor/fonte corretos, fila de
+reconciliação vazia a renderizar sem erros, logout a limpar a sessão.
+
+## Âmbito deliberadamente deixado de fora da Fase 1
+
+- Autenticação real ponta-a-ponta (MSAL.js no frontend) — pendente do
+  tenant Microsoft 365 (pergunta bloqueante nº 1).
+- Endpoints de workflow (`project_stage_progress`/`project_subtask_progress`)
+  — só os campos de identidade do `Project` são editáveis via API nesta
+  fase; progresso de checklist fica para quando o workflow (fases/etapas)
+  ganhar a sua própria UI.
+- Ingestão real de projetos via API (D-026, decisão deliberada).
+- Restrição de campos por perfil dentro de um projeto (ex.: um PM só
+  poder editar campos de "progresso", não de "identidade") — hoje
+  `can_edit_project` é tudo-ou-nada por projeto, não por campo.
+- Testes de UI automatizados (Playwright/Cypress) — validação desta fase
+  foi manual, via navegador, documentada acima.

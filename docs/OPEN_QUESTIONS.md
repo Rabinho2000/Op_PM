@@ -10,14 +10,20 @@
 
 ### 1. Tenant Microsoft 365 / Entra ID
 
-**Impacto:** sem isto, a Fase 1 (autenticação real) e a Fase 3 (Graph real —
-email/calendário) não podem avançar além do mecanismo de desenvolvimento
-(`AUTH_ENABLED=false`, D-012).
+**Impacto:** o backend já valida tokens Entra ID reais (`app/security/entra_auth.py`,
+D-024) e o frontend já tem o ecrã de login pronto para MSAL.js (D-027) —
+mas sem um tenant/app registration reais, ninguém consegue emitir um
+token de verdade para testar isto ponta-a-ponta, e a Fase 3 (Graph real —
+email/calendário) também não pode avançar. É a única peça que falta para
+fechar a autenticação real; nada no código precisa de ser reescrito
+quando isto existir.
 
 **Decisão necessária:** confirmar que existe um tenant Microsoft 365
 administrável, com alguém capaz de registar uma aplicação (app
 registration) e conceder consentimento de administrador para os âmbitos
-necessários (Mail.Send, Calendars.ReadWrite, Files.ReadWrite, etc.).
+necessários (Mail.Send, Calendars.ReadWrite, Files.ReadWrite, etc.), e
+fornecer `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID` (e, se necessário,
+`ENTRA_CLIENT_SECRET` para fluxos confidenciais).
 
 **Recomendação por defeito:** nenhuma — depende inteiramente de recursos
 que só a organização tem.
@@ -192,9 +198,14 @@ autoridade para tomar estas decisões, e se há casos que precisam de
 confirmação do próprio PM (ex.: confirmar que "Gonçalo Palacino" e
 "Gonçalo P." no legado são a mesma pessoa).
 
-**Recomendação por defeito:** Chefe de Operações ou Administrador — os
-únicos perfis com `project.edit_all` na matriz de permissões
-(`ARCHITECTURE_PROPOSAL.md` secção 6) — a confirmar antes da Fase 2.
+**Recomendação por defeito (já implementada como omissão técnica, a
+confirmar como decisão de negócio):** a Fase 1 já restringiu as
+permissões `migration.view`/`migration.resolve` a Administrador e Chefe
+de Operações (`app/security/catalog.py`) — falta só confirmar que é
+mesmo esta a intenção de negócio antes da Fase 2, e resolver quem faz o
+trabalho concreto de revisão (pode ser uma pessoa diferente de quem tem a
+permissão técnica, ex. um PM a confirmar a identidade de um antigo colega,
+com o Chefe de Operações só a "carimbar" a decisão final na fila).
 
 ## Podem ser decididas mais tarde
 

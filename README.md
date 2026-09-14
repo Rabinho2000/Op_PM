@@ -9,16 +9,20 @@ desenvolvimento) são sintéticos.
 
 ## Estado atual
 
-**Fase 0 — fundação técnica, com a revisão de hardening concluída**, implementada e
-testada (56 testes automatizados). Sem integrações externas reais ligadas (Claude,
-Microsoft Graph, ClickUp, Financial); sem migração de dados reais; sem envio de email ou
-criação de eventos reais. Ver `docs/PLAN.md` para o roadmap completo.
+**Fase 0 concluída** (fundação técnica + revisão de hardening) e **Fase 1 em curso**
+(autenticação real, CRUD de projetos, resolução de migração, primeira interface web) —
+99 testes automatizados a passar em SQLite. Sem integrações externas reais ligadas
+(Claude, Microsoft Graph, ClickUp, Financial); sem migração de dados reais; sem envio de
+email ou criação de eventos reais. Ver `docs/PLAN.md` para o roadmap completo.
 
-Pontos-chave do hardening: a aplicação recusa-se a arrancar em `staging`/`production`
-com configuração de desenvolvimento (ver secção "Segurança" abaixo); a migração nunca
-escreve diretamente em `projects` — passa sempre por ingestão em staging, revisão de
-conflitos, e promoção explícita e reversível (`app/migration/staging.py`); valores
-monetários usam `Numeric`/`Decimal`, nunca `Float`.
+Pontos-chave: a aplicação recusa-se a arrancar em `staging`/`production` com
+configuração de desenvolvimento (ver secção "Segurança" abaixo); a migração nunca
+escreve diretamente em `projects` — passa sempre por ingestão em staging, reconciliação
+de PM, revisão de conflitos, e promoção explícita e reversível
+(`app/migration/staging.py`); valores monetários usam `Numeric`/`Decimal`, nunca
+`Float`; tokens Microsoft Entra ID são validados a sério (assinatura, issuer, audience,
+validade — `app/security/entra_auth.py`), com login real ponta-a-ponta pendente de um
+tenant/app registration (ver `docs/OPEN_QUESTIONS.md`, pergunta 1).
 
 Documentação:
 
@@ -62,12 +66,16 @@ uvicorn app.main:app --reload --port 8000
 
 Com o servidor a correr: `http://localhost:8000/docs` (Swagger), `http://localhost:8000/health`.
 
-`/me` e outros endpoints autenticados exigem o cabeçalho de desenvolvimento
-`X-Dev-User-Email` (ver `app/security/current_user.py`) — por exemplo
-`chefe.sintetico@example.invalid`, criado pelo seed. Isto é um mecanismo de
-desenvolvimento explícito, não autenticação real; a integração com Microsoft Entra ID
-fica para uma fase seguinte (`AUTH_ENABLED=true` levanta `NotImplementedError`
-propositadamente enquanto isso não estiver feito).
+Por omissão (`AUTH_ENABLED=false`), `/me` e outros endpoints autenticados exigem o
+cabeçalho de desenvolvimento `X-Dev-User-Email` (ver `app/security/current_user.py`) —
+por exemplo `chefe.sintetico@example.invalid`, criado pelo seed. Isto é um mecanismo de
+desenvolvimento explícito, só disponível em `local`/`test`, nunca autenticação real.
+
+Para testar a validação real de token Microsoft Entra ID sem um tenant de verdade,
+defina `AUTH_ENABLED=true` e `ENTRA_VALIDATION_MODE=mock` (só válido em `local`/`test` —
+ver `docs/DECISIONS.md` D-024) e envie `Authorization: Bearer <token>`, assinado com
+`app.security.entra_auth.issue_mock_token(...)`. Com um tenant real disponível, deixe
+`ENTRA_VALIDATION_MODE=real` (omissão) e defina `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID`.
 
 ### PostgreSQL real (opcional, para validar contra a base de dados-alvo)
 
@@ -93,6 +101,13 @@ npm run dev                  # http://localhost:5173, espera o backend em :8000
 npm run build                # valida TypeScript + gera build de produção
 ```
 
+Com o backend também a correr (`uvicorn` — ver acima), abrir
+`http://localhost:5173`: ecrã de login (mecanismo de desenvolvimento — ver aviso no
+próprio ecrã), lista de projetos com filtros por PM/estado/pesquisa, detalhe com edição
+autorizada e histórico ao lado, e a fila de reconciliação de PM
+(`/reconciliation`). Validado manualmente ponta-a-ponta nesta fase — ver
+`docs/DECISIONS.md` D-027.
+
 ## Integrações — todas em modo mock/fallback nesta fase
 
 Nenhuma integração externa real está ligada. Cada uma tem uma flag explícita
@@ -116,10 +131,14 @@ Ativar qualquer uma destas para chamadas reais é trabalho de uma fase futura �
 - `.gitignore` bloqueia `.env`, `.secrets/`, `data/`, `files/`, backups e bases de
   dados locais.
 - **A aplicação recusa-se a arrancar em `APP_ENV=staging`/`production`** se
-  `AUTH_ENABLED=false`, `SECRET_KEY` for o valor de desenvolvimento, ou `DATABASE_URL`
-  for SQLite — ver `app/config.py` e `docs/DECISIONS.md` D-020. O mecanismo de
-  utilizador de desenvolvimento (`X-Dev-User-Email`) tem uma segunda verificação
-  independente e só funciona em `local`/`test`.
+  `AUTH_ENABLED=false`, `SECRET_KEY` for o valor de desenvolvimento, `DATABASE_URL`
+  for SQLite, ou `ENTRA_VALIDATION_MODE` não for `real` — ver `app/config.py` e
+  `docs/DECISIONS.md` D-020/D-024. O mecanismo de utilizador de desenvolvimento
+  (`X-Dev-User-Email`) tem uma segunda verificação independente e só funciona em
+  `local`/`test` — nem é consultado quando `AUTH_ENABLED=true`.
+- Tokens Microsoft Entra ID são validados a sério: assinatura RS256 (JWKS do tenant),
+  issuer, audience, e validade temporal — `app/security/entra_auth.py`. O modo `mock`
+  (chave de teste local, sem rede) nunca é alcançável fora de `local`/`test`.
 - Nenhuma migração escreve diretamente em `projects` — passa sempre por ingestão em
   staging (`import_batches`/`staging_project_records`), revisão de conflitos, e
   promoção explícita, sempre com auditoria e rollback (`app/migration/staging.py`,

@@ -156,18 +156,22 @@ Project Manager, Comercial, Financeiro. Catálogo inicial de permissões em
 `backend/app/security/catalog.py`, aplicado no seed de desenvolvimento e
 testado em `backend/tests/test_permissions.py`.
 
-| Perfil | Ver projetos | Editar projetos | Custos | Inventário | Pedidos de material | Documentos | Aprovar envio/evento/IA |
-|---|---|---|---|---|---|---|---|
-| **Administrador** | Todos | Todos | Ver+editar tudo | Ver+editar | Criar/aprovar/adjudicar | Ver+editar | Sim |
-| **Chefe de Operações** | Todos | Todos | Ver+editar estimativa | Ver+editar | Criar/aprovar/adjudicar | Ver+editar | Sim |
-| **Project Manager** | Só os seus | Só os seus (progresso) | Ver | Ver | Criar | Ver+editar | Sim (só os seus) |
-| **Comercial** | Todos (leitura) | Não | Ver | Não | Não | Ver | Não |
-| **Financeiro** | Todos (leitura) | Não | Ver+editar custo real | Não | Não | Ver | Não |
+| Perfil | Ver projetos | Editar projetos | Custos | Inventário | Pedidos de material | Documentos | Migração (ver/resolver) | Aprovar envio/evento/IA |
+|---|---|---|---|---|---|---|---|---|
+| **Administrador** | Todos | Todos | Ver+editar tudo | Ver+editar | Criar/aprovar/adjudicar | Ver+editar | Sim/Sim | Sim |
+| **Chefe de Operações** | Todos | Todos | Ver+editar estimativa | Ver+editar | Criar/aprovar/adjudicar | Ver+editar | Sim/Sim | Sim |
+| **Project Manager** | Só os seus | Só os seus (progresso) | Ver | Ver | Criar | Ver+editar | Não/Não | Sim (só os seus) |
+| **Comercial** | Todos (leitura) | Não | Ver | Não | Não | Ver | Não/Não | Não |
+| **Financeiro** | Todos (leitura) | Não | Ver+editar custo real | Não | Não | Ver | Não/Não | Não |
 
 A aplicação desta matriz é sempre no servidor
 (`app/security/permissions.py`) — nunca um valor vindo do cliente. Um
 utilizador sem papel associado não herda nenhuma permissão por omissão
-(testado explicitamente).
+(testado explicitamente). A coluna "Migração" (`migration.view`/
+`migration.resolve`, D-026) cobre lotes de importação, registos de
+staging, e a fila de reconciliação de PM — reservada a Administrador e
+Chefe de Operações por omissão; ver `docs/OPEN_QUESTIONS.md` pergunta 17
+para a confirmação de negócio pendente.
 
 ## 7. Worker/scheduler para tarefas demoradas
 
