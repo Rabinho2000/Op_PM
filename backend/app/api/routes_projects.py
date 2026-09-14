@@ -67,8 +67,11 @@ def update_project_endpoint(
         raise HTTPException(status_code=404, detail="Projeto não encontrado.")
     try:
         updated = update_project_service(db, project=project, changes=body, ctx=ctx)
-    except PermissionDenied:
-        raise HTTPException(status_code=403, detail="Sem permissão para editar este projeto.")
+    except PermissionDenied as exc:
+        # str(exc) inclui, quando aplicável, a lista de campos
+        # administrativos recusados (D-028) — não é uma fuga de
+        # informação sensível, o próprio pedido já continha esses campos.
+        raise HTTPException(status_code=403, detail=f"Sem permissão para editar este projeto: {exc}")
     return _to_read(updated)
 
 

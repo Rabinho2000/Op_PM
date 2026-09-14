@@ -14,6 +14,7 @@ from app.audit.log import record_project_change
 from app.models.project import Project
 from app.schemas.projects import ProjectUpdate
 from app.security.permissions import AuthContext, PermissionDenied, can_edit_project, can_view_project
+from app.security.project_fields import PM_EDITABLE_PROJECT_FIELDS
 
 
 def visible_projects_query(db: Session, ctx: AuthContext) -> Query:
@@ -71,7 +72,16 @@ def update_project(
     """Só isto escreve num `Project` a partir da API. Verifica permissão
     primeiro (nunca confia no chamador já ter verificado); gera uma
     entrada de `project_history` por campo efetivamente alterado — nunca
-    uma escrita silenciosa."""
+    uma escrita silenciosa.
+
+    Restrição de campo (D-028): quem só tem `project.edit_own_progress`
+    (nunca `project.edit_all`) está limitado à allowlist explícita
+    `PM_EDITABLE_PROJECT_FIELDS` — nunca pode tocar em `name`,
+    `client_email`, `client_contact`, `pm_person_id`, `is_active`, ou
+    qualquer outro campo administrativo, mesmo que seja o PM do projeto.
+    Um pedido com QUALQUER campo fora da allowlist é rejeitado por
+    inteiro, antes de qualquer escrita — nunca aplica só os campos
+    permitidos e ignora os outros em silêncio."""
     if not can_edit_project(ctx, project):
         raise PermissionDenied("project.edit_all|project.edit_own_progress")
 
@@ -79,6 +89,16 @@ def update_project(
     # presente com valor `null` limpa-o explicitamente — distinção
     # importante para não apagar dados por omissão de um campo no body.
     changed_fields = changes.model_dump(exclude_unset=True)
+
+    if not ctx.has_permission("project.edit_all"):
+        # Chegou aqui só com project.edit_own_progress (can_edit_project já
+        # garantiu que é o PM deste projeto) — restringe à allowlist.
+        disallowed_fields = sorted(set(changed_fields) - PM_EDITABLE_PROJECT_FIELDS)
+        if disallowed_fields:
+            raise PermissionDenied(
+                f"project.edit_all (campos administrativos não permitidos a "
+                f"project.edit_own_progress: {', '.join(disallowed_fields)})"
+            )
 
     for field_name, new_value in changed_fields.items():
         old_value = getattr(project, field_name)
