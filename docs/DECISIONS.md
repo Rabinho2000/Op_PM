@@ -571,9 +571,11 @@ Chefe de Operações (a recomendação por omissão da pergunta aberta nº 17).
 operação controlada e pouco frequente (por lote, não por pedido HTTP
 casual), e expor um endpoint para ela convidaria a experimentar com dados
 reais antes de tempo — contrariando a regra explícita desta fase ("não
-migrar ainda os 295 projetos reais"). Quando a Fase 2 chegar, a ingestão
-real continua a ser um comando/script operado deliberadamente, não um
-botão da UI.
+migrar ainda os 295 projetos reais"). Quando a fase de migração real
+chegar (Fase 2 no roadmap desta altura, renumerada para Fase 4 em
+docs/PLAN.md — ver D-037), a ingestão real continua a ser um
+comando/script operado deliberadamente (`app/cli/ingest_staging.py`),
+não um botão da UI.
 
 Testado em `tests/test_migration_api.py`: bloqueio de promoção com
 registo em conflito (incluindo `pm_unresolved`), resolução de PM
@@ -1085,3 +1087,46 @@ coordenadas); resolução de `--actor-email` (existente, desconhecido,
 omitido). Validado manualmente também via linha de comandos: recusa
 correta em `APP_ENV=production` (bloqueado já pela validação de
 configuração — D-032) e execução completa com resumo correto em `local`.
+
+## D-038 — Roadmap funcional reordenado: Dashboard → Workflow → Migração → Inventário → Graph → Claude
+
+**Decisão:** `docs/PLAN.md` renumerado por pedido explícito — a ordem de
+prioridade passa a ser Dashboard inicial (Fase 2, nova) → Workflow de
+projetos (Fase 3, nova) → Migração real dos 295 projetos (Fase 4, era
+Fase 2) → Inventário e pedidos de material (Fase 5, sem alteração de
+número) → Microsoft Graph real (Fase 6, era Fase 3) → Claude — propostas
+de agenda, preparação de emails e relatórios, sempre com aprovação humana
+(Fase 7, era Fase 7, âmbito reduzido — ver abaixo). ClickUp real (Fase 8,
+era Fase 4) e Biblioteca documental (Fase 9, era Fase 6) não faziam parte
+da ordem de seis itens pedida — mantidos no roadmap, colocados depois
+dessas seis, sem prioridade relativa inventada; cada secção documenta a
+sua própria dependência técnica (ClickUp de Fase 4, Documental de Fase 6).
+
+**Duas fases novas, só roadmap nesta revisão (sem implementação):**
+- **Fase 2 — Dashboard inicial:** estatísticas semanais, trabalhos
+  pendentes, visão operacional, visão comercial, férias e aniversários.
+  Nenhuma métrica/campo obrigatório foi assumido — "férias e aniversários"
+  não tem sequer modelo de dados hoje (`Person` sem data de nascimento,
+  sem entidade de ausências). Registado como pergunta 18 em
+  `docs/OPEN_QUESTIONS.md`.
+- **Fase 3 — Workflow de projetos:** o modelo de dados
+  (`phases`/`workflow_stages`/`workflow_subtasks`/
+  `project_stage_progress`/`project_subtask_progress`) já existe desde a
+  Fase 0, semeado só com um processo genérico de exemplo — carregar o
+  processo real de 6 fases da Solcor e definir os requisitos para avançar
+  de fase (hoje nada bloqueia isto) ficam como decisão de negócio,
+  registada como pergunta 19.
+
+**Consequência aceite:** a Fase 4 (Migração) só depende tecnicamente da
+Fase 1, não das Fases 2/3 — a nova sequência é uma escolha de prioridade
+de negócio, não uma dependência técnica; a tabela "Dependências entre
+fases" em `docs/PLAN.md` documenta isto explicitamente para não passar a
+impressão de um bloqueio que não existe. O âmbito da Fase 7 (Claude) fica
+reduzido face à versão anterior do roadmap: a pesquisa documental (RAG)
+sobre a biblioteca dependia da Biblioteca Documental, que passa a vir
+depois (Fase 9) — fica registada como um incremento futuro de Claude,
+não como parte do âmbito imediato desta fase.
+
+**Nada disto implica trabalho de implementação nesta sessão** — pedido
+explícito era só reordenar o roadmap, nunca implementar as integrações
+externas ou o dashboard/workflow em si.

@@ -18,7 +18,7 @@ Authorization Code + PKCE, access token para a API, renovação silenciosa,
 logout) — mas sem um tenant/app registration reais, ninguém consegue
 emitir um token de verdade nem preencher `VITE_ENTRA_CLIENT_ID`/
 `VITE_ENTRA_TENANT_ID`/`VITE_ENTRA_API_SCOPE` para testar isto
-ponta-a-ponta, e a Fase 3 (Graph real — email/calendário) também não pode
+ponta-a-ponta, e a Fase 6 (Graph real — email/calendário, renumerada nesta revisão) também não pode
 avançar. É a única peça que falta para fechar a autenticação real; nada
 no código precisa de ser reescrito quando isto existir — só configurado.
 
@@ -28,7 +28,7 @@ registrations) — uma SPA pública para o frontend (MSAL.js, Authorization
 Code + PKCE, sem client secret) e uma API para o backend expor o âmbito
 `access_as_user` — conceder consentimento de administrador para os
 âmbitos necessários no backend (Mail.Send, Calendars.ReadWrite,
-Files.ReadWrite, etc., quando a Fase 3 avançar), e fornecer
+Files.ReadWrite, etc., quando a Fase 6 avançar), e fornecer
 `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID`/`ENTRA_REQUIRED_SCOPE` (backend) e
 `VITE_ENTRA_CLIENT_ID`/`VITE_ENTRA_TENANT_ID`/`VITE_ENTRA_API_SCOPE`
 (frontend — ver `frontend/.env.example`).
@@ -67,7 +67,7 @@ etapas do workflow (ex. não pode agendar comissionamento sem contacto).
 
 ### 4. Calendários e equipas a considerar no planeamento de visitas
 
-**Impacto:** sem isto, `get_availability` (Fase 3) não sabe que calendários
+**Impacto:** sem isto, `get_availability` (Fase 6) não sabe que calendários
 consultar via Graph.
 
 **Decisão necessária:** confirmar se é o calendário individual de cada PM,
@@ -135,7 +135,7 @@ participantes internos desde já no modelo de `calendar_events.attendees`
 
 ### 7. Horários, zonas geográficas, almoço, limites diários
 
-**Impacto:** necessário para `propose_visit_dates`/`analyze_travel` (Fase 3
+**Impacto:** necessário para `propose_visit_dates`/`analyze_travel` (Fase 6
 e o cálculo determinístico de deslocações).
 
 **Recomendação por defeito:** nenhuma sem confirmação — este cálculo é
@@ -162,19 +162,19 @@ necessidade real, sem inventar uma lista.
 `orcamento_recebido` → `aprovado`).
 
 **Recomendação por defeito:** anexo de documento (via biblioteca
-documental, Fase 6) + aprovação manual no estado do pedido — sem
+documental, Fase 9) + aprovação manual no estado do pedido — sem
 integração automática de parsing de orçamento nesta fase.
 
 ### 11. Estrutura atual da Drive e permissões por documento
 
-**Impacto:** afeta o desenho da Fase 6 (biblioteca documental).
+**Impacto:** afeta o desenho da Fase 9 (biblioteca documental).
 
 **Recomendação por defeito:** nenhuma sem confirmação — herdar a estrutura
 e permissões do SharePoint existente é mais seguro do que assumir uma nova.
 
 ### 12. Quantos anos de histórico devem ser migrados
 
-**Impacto:** afeta o volume e o esforço da Fase 2 (migração real).
+**Impacto:** afeta o volume e o esforço da Fase 4 (migração real).
 
 **Recomendação por defeito:** migrar tudo o que existir no export legado —
 o mecanismo de staging já preserva campos incompletos sem custo adicional
@@ -212,7 +212,8 @@ legados (registo UPAC, cartão M2M) um lugar explícito no `Project`
 5), mas como cópia simples do export legado, com Op_PM como fonte de
 verdade por omissão. Se existir um sistema de licenciamento/DGEG ou do
 operador de rede que devesse ser a fonte de verdade real destes valores, a
-Fase 4+ (integrações) precisa de o saber.
+uma fase de integração futura (Fase 8 — ClickUp, ou outra ainda não
+planeada) precisa de o saber.
 
 **Decisão necessária:** confirmar se estes valores vêm só do processo
 manual da equipa (e por isso Op_PM é mesmo a fonte de verdade) ou de um
@@ -224,7 +225,7 @@ existir.
 
 ### 17. Quem resolve a fila de reconciliação de PM na migração real?
 
-**Impacto:** a Fase 2 (migração real) depende de alguém decidir, para cada
+**Impacto:** a Fase 4 (migração real) depende de alguém decidir, para cada
 nome de PM desconhecido/ambíguo do export legado, se corresponde a uma
 pessoa já em `people`, se deve criar uma pessoa nova (histórica, sem
 login), ou se deve ficar sem PM associado (`app.migration.people_reconciliation`,
@@ -240,10 +241,52 @@ confirmação do próprio PM (ex.: confirmar que "Gonçalo Palacino" e
 confirmar como decisão de negócio):** a Fase 1 já restringiu as
 permissões `migration.view`/`migration.resolve` a Administrador e Chefe
 de Operações (`app/security/catalog.py`) — falta só confirmar que é
-mesmo esta a intenção de negócio antes da Fase 2, e resolver quem faz o
+mesmo esta a intenção de negócio antes da Fase 4, e resolver quem faz o
 trabalho concreto de revisão (pode ser uma pessoa diferente de quem tem a
 permissão técnica, ex. um PM a confirmar a identidade de um antigo colega,
 com o Chefe de Operações só a "carimbar" a decisão final na fila).
+
+### 18. Dashboard inicial: métricas semanais, separação operacional/comercial, férias e aniversários
+
+**Impacto:** `docs/PLAN.md` Fase 2 (Dashboard inicial) só define o roadmap
+de alto nível nesta revisão — nenhuma métrica, campo obrigatório, ou
+fonte de dados foi assumida, de propósito.
+
+**Decisão necessária:**
+- Que estatísticas semanais exatamente (projetos que avançaram de fase?
+  pedidos de material novos? algo mais?) e como se calculam.
+- O que distingue a "visão operacional" da "visão comercial" — que
+  métricas pertencem a cada uma, e se são páginas separadas ou a mesma
+  página filtrada por papel.
+- **Férias e aniversários não têm modelo de dados hoje** — `Person` não
+  tem data de nascimento nem qualquer registo de ausências/férias. É
+  preciso confirmar a fonte (mantida dentro do Op_PM? importada de um
+  sistema de RH? do perfil Microsoft 365, via Graph — Fase 6?) antes de
+  desenhar o schema.
+
+**Recomendação por defeito:** nenhuma — implementar um dashboard sem
+estas respostas arrisca construir a métrica errada; ver
+`docs/PLAN.md` Fase 2 para o detalhe de cada pendência.
+
+### 19. Workflow de projetos: processo oficial real e requisitos para avançar de fase
+
+**Impacto:** `docs/PLAN.md` Fase 3 (Workflow de projetos) tem o modelo de
+dados já pronto desde a Fase 0 (`phases`/`workflow_stages`/
+`workflow_subtasks`/`project_stage_progress`/`project_subtask_progress`),
+mas semeado só com um processo genérico de exemplo
+(`GENERIC_WORKFLOW` em `app/migration/seed_dev.py`), nunca o processo
+real de 6 fases da Solcor.
+
+**Decisão necessária:**
+- Carregar as fases/etapas/subtarefas oficiais reais (substituindo o seed
+  genérico) — quem confirma esta lista e o texto exato de cada item.
+- Que combinação de etapas/subtarefas concluídas é exigida para uma fase
+  poder ser considerada fechada/avançada — hoje nada bloqueia isto.
+- Se o responsável por etapa é sempre o PM do projeto, ou varia.
+
+**Recomendação por defeito:** nenhuma — carregar o processo real errado
+(ou inventar requisitos de avanço de fase) pode travar trabalho real por
+engano; ver `docs/PLAN.md` Fase 3 para o detalhe de cada pendência.
 
 ## Podem ser decididas mais tarde
 
