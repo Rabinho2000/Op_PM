@@ -81,6 +81,16 @@ class Settings(BaseSettings):
     entra_issuer: str = Field(default="", alias="ENTRA_ISSUER")
     entra_jwks_url: str = Field(default="", alias="ENTRA_JWKS_URL")
     entra_audience: str = Field(default="", alias="ENTRA_AUDIENCE")
+    # Escopo delegado exigido no claim 'scp' (ver docs/DECISIONS.md D-029)
+    # — esta API só aceita tokens delegados (utilizador interativo via
+    # Authorization Code + PKCE), nunca tokens só de aplicação (client
+    # credentials, claim 'roles' sem 'scp'). Vazio: qualquer 'scp' não
+    # vazio serve, mas um token sem 'scp' nenhum continua sempre recusado.
+    entra_required_scope: str = Field(default="", alias="ENTRA_REQUIRED_SCOPE")
+    # None = "não configurado explicitamente" -> ver
+    # resolved_entra_jit_link_by_email(): True em local/test, False em
+    # staging/produção, a menos que definido aqui de propósito (D-029).
+    entra_jit_link_by_email: bool | None = Field(default=None, alias="ENTRA_JIT_LINK_BY_EMAIL")
 
     def resolved_entra_issuer(self) -> str:
         return self.entra_issuer or f"https://login.microsoftonline.com/{self.entra_tenant_id}/v2.0"
@@ -92,6 +102,11 @@ class Settings(BaseSettings):
 
     def resolved_entra_audience(self) -> str:
         return self.entra_audience or self.entra_client_id
+
+    def resolved_entra_jit_link_by_email(self) -> bool:
+        if self.entra_jit_link_by_email is not None:
+            return self.entra_jit_link_by_email
+        return self.app_env not in HARDENED_ENVIRONMENTS
 
     # --- Integrações: flags explícitas, todas falsas por omissão ---
     graph_enabled: bool = Field(default=False, alias="GRAPH_ENABLED")

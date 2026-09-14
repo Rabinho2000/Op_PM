@@ -30,14 +30,14 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.db import get_db
-from app.models.identity import User
+from app.models.identity import AuthAuditLog, User
 from app.security.entra_auth import EntraClaims, TokenValidationError, get_token_validator
 from app.security.permissions import AuthContext, load_auth_context
 
 _DEV_HEADER_ALLOWED_ENVIRONMENTS = {"local", "test"}
 
 
-def _resolve_user_from_entra_claims(db: Session, claims: EntraClaims) -> User | None:
+def _resolve_user_from_entra_claims(db: Session, claims: EntraClaims, settings: Settings) -> User | None:
     """Liga o token validado a um `User` — nunca cria um `User` novo aqui
     (provisionamento é sempre um passo administrativo separado, fora deste
     caminho de autenticação)."""
@@ -49,13 +49,18 @@ def _resolve_user_from_entra_claims(db: Session, claims: EntraClaims) -> User | 
     if user is not None:
         return user
 
+    # Ligação "just-in-time" por email — configurável (D-029) e desligada
+    # por omissão em staging/produção (`resolved_entra_jit_link_by_email`);
+    # em local/test fica ligada por omissão para não exigir pré-preencher
+    # entra_object_id manualmente em cada seed/teste.
+    if not settings.resolved_entra_jit_link_by_email():
+        return None
     if not claims.email:
         return None
 
-    # Ligação "just-in-time": só para um User já existente, ativo, ainda
-    # sem entra_object_id, com email exatamente correspondente (case
-    # insensitive). Ambíguo (mais do que um) ou inexistente -> nunca
-    # adivinha, falha a autenticação.
+    # Só para um User já existente, ativo, ainda sem entra_object_id, com
+    # email exatamente correspondente (case insensitive). Ambíguo (mais do
+    # que um) ou inexistente -> nunca adivinha, falha a autenticação.
     candidates = (
         db.query(User)
         .filter(
@@ -70,6 +75,13 @@ def _resolve_user_from_entra_claims(db: Session, claims: EntraClaims) -> User | 
 
     user = candidates[0]
     user.entra_object_id = claims.object_id
+    db.add(
+        AuthAuditLog(
+            user_id=user.id,
+            event="jit_link_by_email",
+            detail=f"Ligação automática por email a partir do claim 'oid'={claims.object_id!r}.",
+        )
+    )
     db.commit()
     db.refresh(user)
     return user
@@ -104,7 +116,7 @@ def get_current_user(
                 detail="Token inválido, expirado, ou não emitido para este tenant/aplicação.",
             )
 
-        user = _resolve_user_from_entra_claims(db, claims)
+        user = _resolve_user_from_entra_claims(db, claims, settings)
         if user is None:
             raise HTTPException(
                 status_code=401,

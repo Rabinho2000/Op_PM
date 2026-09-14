@@ -158,3 +158,31 @@ def api_client_with_mock_entra_auth(db_session):
     finally:
         app.dependency_overrides.pop(get_db, None)
         app.dependency_overrides.pop(get_settings, None)
+
+
+@pytest.fixture()
+def make_api_client(db_session):
+    """Fábrica de `TestClient` com `Settings` arbitrárias (ex.: testar
+    `ENTRA_REQUIRED_SCOPE`, `ENTRA_JIT_LINK_BY_EMAIL`, `ENTRA_TENANT_ID` —
+    cenários que os fixtures fixos acima não cobrem). `get_db` fica sempre
+    ligado à mesma `db_session` isolada do teste."""
+    from fastapi.testclient import TestClient
+
+    from app.config import get_settings
+    from app.db import get_db
+    from app.main import app
+
+    def _override_get_db():
+        yield db_session
+
+    app.dependency_overrides[get_db] = _override_get_db
+
+    def _make(settings):
+        app.dependency_overrides[get_settings] = lambda: settings
+        return TestClient(app)
+
+    try:
+        yield _make
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(get_settings, None)

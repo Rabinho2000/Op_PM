@@ -13,9 +13,10 @@ fixo em código, para poderem ser ajustados sem migração de schema.
 """
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 
-from sqlalchemy import Boolean, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, GUID
@@ -78,3 +79,20 @@ class UserRole(UUIDPk, TimestampMixin, Base):
 
     user: Mapped["User"] = relationship(back_populates="roles")
     role: Mapped["Role"] = relationship()
+
+
+class AuthAuditLog(UUIDPk, Base):
+    """Auditoria de eventos de autenticação — hoje só a ligação
+    "just-in-time" automática entre um email de token Entra ID e um
+    `User.entra_object_id` ainda não ligado (D-029). Append-only, como
+    `ProjectHistory` — sem `updated_at` de propósito, nunca é alterada
+    depois de criada."""
+
+    __tablename__ = "auth_audit_log"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("users.id"), nullable=False)
+    event: Mapped[str] = mapped_column(String(64), nullable=False)  # ex.: 'jit_link_by_email'
+    detail: Mapped[str] = mapped_column(Text, default="")
+    occurred_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
