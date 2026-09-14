@@ -227,6 +227,31 @@ def _find_project_candidates_by_name(db: Session, *, name: str) -> list[Project]
     return db.query(Project).filter(func.lower(func.trim(Project.name)) == normalized).all()
 
 
+def resolve_candidate_project_ids(db: Session, record: StagingProjectRecord) -> set[str]:
+    """Traduz `candidate_project_ids_json` para o conjunto de UUIDs de
+    `Project` válidos como alvo de `link_existing` (D-030). Inclui tanto
+    candidatos diretos (já eram projetos reais no momento da deteção) como
+    candidatos `'batch:<external_id>'` cujo projeto entretanto foi
+    promovido — um duplicado detetado dentro do mesmo lote (D-017) só
+    aponta para um ID real depois de o outro registo do lote ser
+    promovido; sem esta resolução, ligar a esse projeto legítimo seria
+    injustamente tratado como "fora dos candidatos". Usado tanto pela
+    validação em `resolve_conflict` como pela API
+    (`app/api/routes_migration.py`), para nunca haver duas lógicas
+    divergentes sobre o que conta como candidato válido."""
+    raw_candidates = json.loads(record.candidate_project_ids_json or "[]")
+    resolved: set[str] = set()
+    for ref in raw_candidates:
+        if ref.startswith("batch:"):
+            legacy_external_id = ref[len("batch:") :]
+            link = _find_external_link(db, source_system=record.source_system, external_id=legacy_external_id)
+            if link is not None:
+                resolved.add(str(link.project_id))
+        else:
+            resolved.add(ref)
+    return resolved
+
+
 def _finalize_status_given_pm(record: StagingProjectRecord, pm_classification) -> None:
     """Ponto único de decisão: dado que a parte de PROJETO da resolução já
     está definida em `record.resolved_action`/`resolved_target_project_id`,
@@ -374,7 +399,16 @@ def resolve_conflict(
     actor_person_id: uuid.UUID,
     target_project_id: uuid.UUID | None = None,
     note: str = "",
+    allow_target_outside_candidates: bool = False,
 ) -> StagingProjectRecord:
+    """`allow_target_outside_candidates` é uma segunda barreira, a nível de
+    serviço (defesa em profundidade — D-030): a decisão de permitir isto
+    ou não é do chamador (a API, que verifica
+    `migration.link_arbitrary_project` e exige uma nota não vazia antes de
+    sequer chegar aqui) — mas mesmo que alguém chame esta função
+    diretamente sem essa verificação, o valor por omissão (`False`)
+    continua a recusar ligar a um projeto que o sistema não detetou como
+    candidato."""
     record = db.get(StagingProjectRecord, staging_record_id)
     if record is None:
         raise ValueError(f"registo de staging não encontrado: {staging_record_id}")
@@ -409,6 +443,28 @@ def resolve_conflict(
         )
     if action == "link_existing" and target_project_id is None:
         raise ValueError("a ação 'link_existing' exige target_project_id")
+
+    if action == "link_existing":
+        # D-030: target_project_id tem de estar entre os candidatos
+        # detetados automaticamente (resolve_candidate_project_ids —
+        # inclui candidatos 'batch:' já promovidos), a menos que
+        # allow_target_outside_candidates=True E uma nota não vazia
+        # expliquem a decisão — nunca ligar "às cegas" a um projeto
+        # arbitrário sem essas duas condições.
+        valid_candidate_ids = resolve_candidate_project_ids(db, record)
+        if str(target_project_id) not in valid_candidate_ids:
+            if not allow_target_outside_candidates:
+                raise ValueError(
+                    f"target_project_id {target_project_id} não está entre os candidatos "
+                    f"detetados para este registo ({sorted(valid_candidate_ids) or 'nenhum'}) — "
+                    "ligar a um projeto fora dos candidatos exige "
+                    "allow_target_outside_candidates=True e uma nota não vazia"
+                )
+            if not note or not note.strip():
+                raise ValueError(
+                    "ligar a um projeto fora dos candidatos detetados exige uma nota não vazia "
+                    "a justificar a decisão"
+                )
 
     record.resolved_action = action
     record.resolved_target_project_id = target_project_id if action == "link_existing" else None

@@ -13,7 +13,12 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.migration.people_reconciliation import resolve_person_reconciliation
-from app.migration.staging import promote_staging_record, resolve_conflict, rollback_promotion
+from app.migration.staging import (
+    promote_staging_record,
+    resolve_candidate_project_ids,
+    resolve_conflict,
+    rollback_promotion,
+)
 from app.models.migration import ImportBatch, PersonReconciliationItem, StagingProjectRecord
 from app.schemas.migration import (
     ImportBatchRead,
@@ -87,6 +92,32 @@ def resolve_staging_conflict(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> StagingProjectRecordRead:
     _require_resolve(ctx)
+
+    # D-030: ligar a um projeto fora dos candidatos detetados exige
+    # migration.link_arbitrary_project + uma nota não vazia, verificado
+    # aqui (mensagens de erro específicas) E outra vez em
+    # app.migration.staging.resolve_conflict (defesa em profundidade,
+    # nunca confia só nesta camada).
+    allow_outside_candidates = False
+    if body.action == "link_existing" and body.target_project_id is not None:
+        record_for_check = db.get(StagingProjectRecord, record_id)
+        if record_for_check is None:
+            raise HTTPException(status_code=404, detail="Registo de staging não encontrado.")
+        valid_candidate_ids = resolve_candidate_project_ids(db, record_for_check)
+        if str(body.target_project_id) not in valid_candidate_ids:
+            if not ctx.has_permission("migration.link_arbitrary_project"):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Ligar a um projeto fora dos candidatos detetados exige a permissão "
+                    "'migration.link_arbitrary_project'.",
+                )
+            if not body.note or not body.note.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Ligar a um projeto fora dos candidatos detetados exige uma nota não vazia.",
+                )
+            allow_outside_candidates = True
+
     try:
         record = resolve_conflict(
             db,
@@ -95,6 +126,7 @@ def resolve_staging_conflict(
             actor_person_id=ctx.person_id,
             target_project_id=body.target_project_id,
             note=body.note,
+            allow_target_outside_candidates=allow_outside_candidates,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))

@@ -43,6 +43,10 @@ PERMISSIONS: dict[str, str] = {
     "admin.manage_users": "Gerir utilizadores e permissões",
     "migration.view": "Ver lotes de importação, registos de staging e fila de reconciliação de PM",
     "migration.resolve": "Resolver conflitos, promover, reverter, e resolver reconciliação de PM",
+    "migration.link_arbitrary_project": (
+        "Ligar um registo de staging a um projeto fora dos candidatos detetados "
+        "automaticamente (exige sempre uma nota — ver D-030)"
+    ),
 }
 
 # Matriz papel -> permissões concedidas por omissão.
