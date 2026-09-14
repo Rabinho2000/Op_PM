@@ -102,3 +102,59 @@ def db_session():
         if trans.is_active:
             trans.rollback()
         connection.close()
+
+
+@pytest.fixture()
+def api_client(db_session):
+    """`TestClient` cujo `get_db` foi substituído pela mesma `db_session`
+    isolada do teste (ver acima) — sem isto, um pedido HTTP abriria a sua
+    própria `SessionLocal()` ligada ao `engine` cru, fora da transação
+    exterior que o teste desfaz no final, e as alterações feitas via HTTP
+    "vazariam" para os testes seguintes. `get_settings` fica por omissão
+    (`AUTH_ENABLED=false`, mecanismo de desenvolvimento) — para testar o
+    caminho de autenticação real, usar `api_client_with_mock_entra_auth`.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.db import get_db
+    from app.main import app
+
+    def _override_get_db():
+        yield db_session
+
+    app.dependency_overrides[get_db] = _override_get_db
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.fixture()
+def api_client_with_mock_entra_auth(db_session):
+    """Como `api_client`, mas com `AUTH_ENABLED=true` e
+    `ENTRA_VALIDATION_MODE=mock` — exercita o caminho real de validação de
+    token (`app/security/entra_auth.py`), só que contra a chave de teste
+    local em vez de um Entra ID real. Nunca alcançável fora de testes: ver
+    `Settings._enforce_hardening_in_non_local_envs` (D-024), que bloqueia
+    `ENTRA_VALIDATION_MODE=mock` em staging/produção."""
+    from fastapi.testclient import TestClient
+
+    from app.config import Settings, get_settings
+    from app.db import get_db
+    from app.main import app
+
+    mock_settings = Settings(app_env="test", auth_enabled=True, entra_validation_mode="mock")
+
+    def _override_get_db():
+        yield db_session
+
+    def _override_get_settings():
+        return mock_settings
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_settings] = _override_get_settings
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(get_settings, None)

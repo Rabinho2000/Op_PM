@@ -43,20 +43,32 @@ def test_blocks_startup_with_sqlite_database(app_env):
         Settings(**_valid_production_kwargs(app_env=app_env, database_url="sqlite:///./data/x.db"))
 
 
+@pytest.mark.parametrize("app_env", ["staging", "production"])
+def test_blocks_startup_with_mock_entra_validation(app_env):
+    """D-024: o validador de token 'mock' (app/security/entra_auth.py)
+    nunca pode ser alcançável em staging/produção — só a chave de teste
+    local, nunca um Entra ID real, validaria contra ele."""
+    with pytest.raises(ValidationError, match="ENTRA_VALIDATION_MODE"):
+        Settings(**_valid_production_kwargs(app_env=app_env, entra_validation_mode="mock"))
+
+
 def test_blocks_startup_reports_all_problems_at_once():
-    """Três problemas em simultâneo devem aparecer todos na mesma mensagem,
-    não só o primeiro — poupa ciclos de tentativa-erro a quem configura."""
+    """Quatro problemas em simultâneo devem aparecer todos na mesma
+    mensagem, não só o primeiro — poupa ciclos de tentativa-erro a quem
+    configura."""
     with pytest.raises(ValidationError) as exc_info:
         Settings(
             app_env="production",
             auth_enabled=False,
             secret_key=DEFAULT_DEV_SECRET_KEY,
             database_url="sqlite:///./data/x.db",
+            entra_validation_mode="mock",
         )
     message = str(exc_info.value)
     assert "AUTH_ENABLED" in message
     assert "SECRET_KEY" in message
     assert "DATABASE_URL" in message
+    assert "ENTRA_VALIDATION_MODE" in message
 
 
 def test_valid_production_config_does_not_raise():

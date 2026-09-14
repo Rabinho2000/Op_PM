@@ -41,6 +41,8 @@ PERMISSIONS: dict[str, str] = {
     "ai.use_tools": "Usar ferramentas de IA (propostas/rascunhos)",
     "ai.approve_actions": "Aprovar uma ação de IA para execução",
     "admin.manage_users": "Gerir utilizadores e permissões",
+    "migration.view": "Ver lotes de importação, registos de staging e fila de reconciliação de PM",
+    "migration.resolve": "Resolver conflitos, promover, reverter, e resolver reconciliação de PM",
 }
 
 # Matriz papel -> permissões concedidas por omissão.
@@ -62,6 +64,8 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "calendar.approve_send",
         "ai.use_tools",
         "ai.approve_actions",
+        "migration.view",
+        "migration.resolve",
     ],
     ROLE_PM: [
         "project.view_own",

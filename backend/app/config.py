@@ -66,8 +66,32 @@ class Settings(BaseSettings):
     auth_enabled: bool = Field(
         default=False,
         alias="AUTH_ENABLED",
-        description="Falso em Fase 0: sem Entra ID configurado, usa utilizador de desenvolvimento local.",
+        description="Falso por omissão: usa o mecanismo de utilizador de desenvolvimento local.",
     )
+    # 'real': valida contra o tenant Entra ID de verdade (JWKS via rede,
+    # issuer/audience derivados de entra_tenant_id/entra_client_id).
+    # 'mock': valida contra uma chave de teste local, sem rede — só para
+    # testes automatizados; NUNCA aceitável em staging/produção (reforçado
+    # por _enforce_hardening_in_non_local_envs abaixo). Ver
+    # app/security/entra_auth.py e docs/DECISIONS.md D-024.
+    entra_validation_mode: Literal["real", "mock"] = Field(default="real", alias="ENTRA_VALIDATION_MODE")
+    # Normalmente derivados de entra_tenant_id/entra_client_id — só
+    # preencher explicitamente para um cenário não-standard (ex. tenant
+    # multi-audience, ou apontar para um emissor de testes).
+    entra_issuer: str = Field(default="", alias="ENTRA_ISSUER")
+    entra_jwks_url: str = Field(default="", alias="ENTRA_JWKS_URL")
+    entra_audience: str = Field(default="", alias="ENTRA_AUDIENCE")
+
+    def resolved_entra_issuer(self) -> str:
+        return self.entra_issuer or f"https://login.microsoftonline.com/{self.entra_tenant_id}/v2.0"
+
+    def resolved_entra_jwks_url(self) -> str:
+        return self.entra_jwks_url or (
+            f"https://login.microsoftonline.com/{self.entra_tenant_id}/discovery/v2.0/keys"
+        )
+
+    def resolved_entra_audience(self) -> str:
+        return self.entra_audience or self.entra_client_id
 
     # --- Integrações: flags explícitas, todas falsas por omissão ---
     graph_enabled: bool = Field(default=False, alias="GRAPH_ENABLED")
@@ -94,6 +118,20 @@ class Settings(BaseSettings):
     claude_api_key: str = Field(default="", alias="CLAUDE_API_KEY")
     claude_model: str = Field(default="claude-sonnet-5", alias="CLAUDE_MODEL")
 
+    # --- CORS (frontend a falar com esta API) ---
+    # Em 'local'/'test', o servidor liberta sempre localhost em qualquer
+    # porta (conveniência de desenvolvimento — `npm run dev` muda de porta
+    # com frequência). Em 'staging'/'production' só as origens aqui
+    # listadas (separadas por vírgula) são aceites — vazio por omissão,
+    # tem de ser configurado explicitamente antes de expor a API.
+    cors_allowed_origins: str = Field(default="", alias="CORS_ALLOWED_ORIGINS")
+
+    def resolved_cors_origins(self) -> list[str]:
+        explicit = [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
+        if self.app_env in ("local", "test"):
+            return explicit or ["http://localhost:5173", "http://127.0.0.1:5173"]
+        return explicit
+
     @model_validator(mode="after")
     def _enforce_hardening_in_non_local_envs(self) -> "Settings":
         """Impede o arranque em staging/produção com configuração de
@@ -104,9 +142,12 @@ class Settings(BaseSettings):
 
         Regra explícita (ver docs/DECISIONS.md): em 'staging'/'production',
         AUTH_ENABLED tem de ser verdadeiro, SECRET_KEY não pode ser o valor
-        de desenvolvimento, e DATABASE_URL não pode ser SQLite. O mecanismo
-        de utilizador de desenvolvimento (`X-Dev-User-Email` — ver
-        `app/security/current_user.py`) tem uma segunda verificação
+        de desenvolvimento, DATABASE_URL não pode ser SQLite, e
+        ENTRA_VALIDATION_MODE tem de ser 'real' — o validador de token
+        'mock' (D-024) nunca pode ser alcançável fora de local/test, mesmo
+        que alguém ligue AUTH_ENABLED sem querer dizer isso a sério. O
+        mecanismo de utilizador de desenvolvimento (`X-Dev-User-Email` —
+        ver `app/security/current_user.py`) tem uma segunda verificação
         independente, feita a cada pedido, para o mesmo efeito."""
         if self.app_env not in HARDENED_ENVIRONMENTS:
             return self
@@ -118,6 +159,8 @@ class Settings(BaseSettings):
             problems.append("SECRET_KEY não pode usar o valor de desenvolvimento por omissão")
         if self.database_url.startswith("sqlite"):
             problems.append("DATABASE_URL não pode ser SQLite")
+        if self.entra_validation_mode != "real":
+            problems.append("ENTRA_VALIDATION_MODE tem de ser 'real' (nunca 'mock')")
 
         if problems:
             raise ValueError(
