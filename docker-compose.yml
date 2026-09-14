@@ -1,0 +1,27 @@
+# Ambiente local opcional com PostgreSQL real (a fonte de verdade-alvo —
+# ver docs/ARCHITECTURE_PROPOSAL.md). Não usado pelos testes automatizados
+# nem por `npm run dev`/`uvicorn` por omissão, que usam SQLite local sem
+# dependências externas (ver backend/.env.example). Usar isto quando quiser
+# validar o backend contra PostgreSQL de verdade.
+#
+# NOTA: não foi possível validar este ficheiro neste ambiente de execução
+# (sem Docker disponível) — reveja antes da primeira utilização.
+#
+#   docker compose up -d db
+#   DATABASE_URL=postgresql+psycopg://op_pm:op_pm_dev_only@localhost:5432/op_pm \
+#     backend/.venv/Scripts/python -m alembic upgrade head
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: op_pm
+      POSTGRES_PASSWORD: op_pm_dev_only
+      POSTGRES_DB: op_pm
+    ports:
+      - "5432:5432"
+    volumes:
+      - op_pm_pg_data:/var/lib/postgresql/data
+
+volumes:
+  op_pm_pg_data:
