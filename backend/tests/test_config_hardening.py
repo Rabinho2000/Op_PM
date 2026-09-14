@@ -20,6 +20,10 @@ def _valid_production_kwargs(**overrides) -> dict:
         auth_enabled=True,
         secret_key="a-real-production-secret-value",
         database_url="postgresql+psycopg://user:pass@host:5432/op_pm",
+        entra_tenant_id="11111111-1111-1111-1111-111111111111",
+        entra_client_id="22222222-2222-2222-2222-222222222222",
+        entra_required_scope="access_as_user",
+        cors_allowed_origins="https://op-pm.example.invalid",
     )
     base.update(overrides)
     return base
@@ -52,8 +56,68 @@ def test_blocks_startup_with_mock_entra_validation(app_env):
         Settings(**_valid_production_kwargs(app_env=app_env, entra_validation_mode="mock"))
 
 
+@pytest.mark.parametrize("app_env", ["staging", "production"])
+def test_blocks_startup_without_entra_tenant_id(app_env):
+    with pytest.raises(ValidationError, match="ENTRA_TENANT_ID"):
+        Settings(**_valid_production_kwargs(app_env=app_env, entra_tenant_id=""))
+
+
+@pytest.mark.parametrize("app_env", ["staging", "production"])
+def test_blocks_startup_without_entra_client_id(app_env):
+    with pytest.raises(ValidationError, match="ENTRA_CLIENT_ID"):
+        Settings(**_valid_production_kwargs(app_env=app_env, entra_client_id=""))
+
+
+@pytest.mark.parametrize("app_env", ["staging", "production"])
+def test_blocks_startup_without_entra_required_scope(app_env):
+    with pytest.raises(ValidationError, match="ENTRA_REQUIRED_SCOPE"):
+        Settings(**_valid_production_kwargs(app_env=app_env, entra_required_scope=""))
+
+
+@pytest.mark.parametrize("app_env", ["staging", "production"])
+def test_blocks_startup_without_cors_allowed_origins(app_env):
+    with pytest.raises(ValidationError, match="CORS_ALLOWED_ORIGINS"):
+        Settings(**_valid_production_kwargs(app_env=app_env, cors_allowed_origins=""))
+
+
+@pytest.mark.parametrize("app_env", ["staging", "production"])
+def test_blocks_startup_with_empty_secret_key(app_env):
+    with pytest.raises(ValidationError, match="SECRET_KEY"):
+        Settings(**_valid_production_kwargs(app_env=app_env, secret_key="   "))
+
+
+@pytest.mark.parametrize(
+    "override_field,override_value",
+    [
+        ("entra_issuer", "https://issuer.example.invalid/v2.0"),
+        ("entra_jwks_url", "https://issuer.example.invalid/keys"),
+        ("entra_audience", "api://alguma-audiencia"),
+    ],
+)
+@pytest.mark.parametrize("app_env", ["staging", "production"])
+def test_blocks_startup_with_partial_entra_issuer_audience_jwks_override(app_env, override_field, override_value):
+    """Definir só um de ENTRA_ISSUER/ENTRA_JWKS_URL/ENTRA_AUDIENCE é quase
+    sempre um erro de configuração — os outros dois cairiam para o valor
+    derivado de ENTRA_TENANT_ID/ENTRA_CLIENT_ID, uma mistura inesperada."""
+    with pytest.raises(ValidationError, match="ENTRA_ISSUER/ENTRA_JWKS_URL/ENTRA_AUDIENCE"):
+        Settings(**_valid_production_kwargs(app_env=app_env, **{override_field: override_value}))
+
+
+@pytest.mark.parametrize("app_env", ["staging", "production"])
+def test_allows_startup_with_complete_entra_issuer_audience_jwks_override(app_env):
+    settings = Settings(
+        **_valid_production_kwargs(
+            app_env=app_env,
+            entra_issuer="https://issuer.example.invalid/v2.0",
+            entra_jwks_url="https://issuer.example.invalid/keys",
+            entra_audience="api://alguma-audiencia",
+        )
+    )
+    assert settings.resolved_entra_issuer() == "https://issuer.example.invalid/v2.0"
+
+
 def test_blocks_startup_reports_all_problems_at_once():
-    """Quatro problemas em simultâneo devem aparecer todos na mesma
+    """Vários problemas em simultâneo devem aparecer todos na mesma
     mensagem, não só o primeiro — poupa ciclos de tentativa-erro a quem
     configura."""
     with pytest.raises(ValidationError) as exc_info:
@@ -63,12 +127,20 @@ def test_blocks_startup_reports_all_problems_at_once():
             secret_key=DEFAULT_DEV_SECRET_KEY,
             database_url="sqlite:///./data/x.db",
             entra_validation_mode="mock",
+            entra_tenant_id="",
+            entra_client_id="",
+            entra_required_scope="",
+            cors_allowed_origins="",
         )
     message = str(exc_info.value)
     assert "AUTH_ENABLED" in message
     assert "SECRET_KEY" in message
     assert "DATABASE_URL" in message
     assert "ENTRA_VALIDATION_MODE" in message
+    assert "ENTRA_TENANT_ID" in message
+    assert "ENTRA_CLIENT_ID" in message
+    assert "ENTRA_REQUIRED_SCOPE" in message
+    assert "CORS_ALLOWED_ORIGINS" in message
 
 
 def test_valid_production_config_does_not_raise():

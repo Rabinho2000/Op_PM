@@ -825,3 +825,48 @@ visivelmente desativado com a explicação, secção de desenvolvimento
 separada por um divisor visual; login de desenvolvimento continua
 funcional ponta-a-ponta (entrar, `NavBar` a mostrar a sessão, listagem de
 projetos a carregar, logout a limpar a sessão e devolver a `/login`).
+
+## D-032 — Validação de configuração obrigatória, completa, em staging/produção
+
+**Decisão:** `Settings._enforce_hardening_in_non_local_envs` (D-020,
+`app/config.py`) passa a exigir, além das quatro condições já existentes
+(`AUTH_ENABLED=true`, `SECRET_KEY` real e não vazio, `DATABASE_URL`
+PostgreSQL, `ENTRA_VALIDATION_MODE=real`):
+
+- `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID` e `ENTRA_REQUIRED_SCOPE`
+  preenchidos — sem eles não há tenant/scope real a validar, e
+  `resolved_entra_issuer()`/`resolved_entra_jwks_url()` apontariam para um
+  URL Entra ID sintaticamente válido mas apontado a um tenant vazio
+  (`.../v2.0`), um erro silencioso só visível ao primeiro pedido real.
+- `CORS_ALLOWED_ORIGINS` não vazio — em staging/produção, vazio significa
+  "nenhuma origem aceite" (`resolved_cors_origins`), que quase certamente
+  não é a intenção de quem está a configurar; falha já no arranque em vez
+  de deixar a API inacessível a qualquer frontend sem explicação.
+- Se algum de `ENTRA_ISSUER`/`ENTRA_JWKS_URL`/`ENTRA_AUDIENCE` for
+  definido explicitamente, os três têm de estar — um override parcial
+  deixaria os campos não definidos a cair para o valor derivado de
+  `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID`, uma mistura inesperada entre um
+  valor manual e um valor derivado que nunca foi pedida como
+  funcionalidade e é fácil de configurar por engano.
+
+Todos os problemas continuam a ser reportados de uma vez na mesma mensagem
+(comportamento já existente desde D-020), nunca só o primeiro — poupa
+ciclos de tentativa-erro em staging.
+
+**Porquê agora:** parte do fecho técnico da Fase 1 antes da preparação de
+staging/produção — a validação anterior já impedia as combinações mais
+óbvias, mas deixava passar uma configuração "tecnicamente válida" (auth
+ligado, Postgres, modo real) que na prática nunca conseguiria autenticar
+ninguém (tenant/scope em falta) ou nunca seria alcançável por um frontend
+real (CORS vazio).
+
+**Testado em** `tests/test_config_hardening.py` — um teste por condição
+nova (staging e produção), mais o override parcial de
+issuer/jwks/audience (com e sem os três presentes) e a mensagem agregada
+com todos os problemas em simultâneo. `local`/`test` continuam nunca
+bloqueados (mesmos testes de sempre, sem alteração).
+
+**Sem impacto em `local`/`test`:** estas variáveis continuam opcionais
+nesses ambientes — a Fase 1 já funciona sem tenant real via o mecanismo de
+desenvolvimento (D-012); só passam a ser exigidas quando `APP_ENV` é
+`staging`/`production`.
