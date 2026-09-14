@@ -13,10 +13,11 @@ export default function Dashboard() {
 
   return (
     <div style={{ fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 720 }}>
-      <h1>Op_PM — Fase 0</h1>
+      <h1>Op_PM — Estado do sistema</h1>
       <p style={{ color: "#666" }}>
-        Fundação técnica apenas. Sem integrações reais ativas (ClickUp, Microsoft Graph,
-        Financial, Claude), sem login real (Entra ID por implementar) e sem dados de produção.
+        Sem integrações reais ativas (ClickUp, Microsoft Graph, Financial, Claude) e sem dados
+        de produção. Autenticação real via Entra ID já implementada no backend, pendente de
+        configuração do tenant (ver docs/OPEN_QUESTIONS.md).
       </p>
 
       {error && <p style={{ color: "crimson" }}>Erro a contactar a API: {error}</p>}
