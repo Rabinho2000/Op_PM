@@ -16,10 +16,21 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["local", "test", "staging", "production"]
+
+# Valor de segredo que só é aceitável em 'local'/'test'. Mantido como
+# constante nomeada (em vez de repetir a string) para que a validação de
+# arranque (ver `Settings._enforce_hardening_in_non_local_envs`) e
+# `.env.example` nunca divirjam silenciosamente.
+DEFAULT_DEV_SECRET_KEY = "dev-only-insecure-secret-change-me"
+
+# Ambientes onde a aplicação só arranca com configuração de produção real —
+# nunca com o mecanismo de utilizador de desenvolvimento, segredo por
+# omissão, ou SQLite. Ver docs/DECISIONS.md.
+HARDENED_ENVIRONMENTS: frozenset[Environment] = frozenset({"staging", "production"})
 
 
 class Settings(BaseSettings):
@@ -33,7 +44,7 @@ class Settings(BaseSettings):
     app_env: Environment = Field(default="local", alias="APP_ENV")
     app_name: str = Field(default="Op_PM API", alias="APP_NAME")
     secret_key: str = Field(
-        default="dev-only-insecure-secret-change-me",
+        default=DEFAULT_DEV_SECRET_KEY,
         alias="SECRET_KEY",
         description="Nunca usar o valor por omissão fora de 'local'/'test'.",
     )
@@ -82,6 +93,39 @@ class Settings(BaseSettings):
     claude_enabled: bool = Field(default=False, alias="CLAUDE_ENABLED")
     claude_api_key: str = Field(default="", alias="CLAUDE_API_KEY")
     claude_model: str = Field(default="claude-sonnet-5", alias="CLAUDE_MODEL")
+
+    @model_validator(mode="after")
+    def _enforce_hardening_in_non_local_envs(self) -> "Settings":
+        """Impede o arranque em staging/produção com configuração de
+        desenvolvimento. Isto corre sempre que `Settings()` é construído —
+        incluindo em `get_settings()`, chamado no import de `app.main` — por
+        isso uma configuração insegura impede mesmo o processo de arrancar,
+        não é só um aviso em runtime.
+
+        Regra explícita (ver docs/DECISIONS.md): em 'staging'/'production',
+        AUTH_ENABLED tem de ser verdadeiro, SECRET_KEY não pode ser o valor
+        de desenvolvimento, e DATABASE_URL não pode ser SQLite. O mecanismo
+        de utilizador de desenvolvimento (`X-Dev-User-Email` — ver
+        `app/security/current_user.py`) tem uma segunda verificação
+        independente, feita a cada pedido, para o mesmo efeito."""
+        if self.app_env not in HARDENED_ENVIRONMENTS:
+            return self
+
+        problems: list[str] = []
+        if not self.auth_enabled:
+            problems.append("AUTH_ENABLED tem de ser 'true'")
+        if self.secret_key == DEFAULT_DEV_SECRET_KEY:
+            problems.append("SECRET_KEY não pode usar o valor de desenvolvimento por omissão")
+        if self.database_url.startswith("sqlite"):
+            problems.append("DATABASE_URL não pode ser SQLite")
+
+        if problems:
+            raise ValueError(
+                f"Configuração insegura para APP_ENV={self.app_env!r}: "
+                + "; ".join(problems)
+                + ". Corrigir as variáveis de ambiente antes de arrancar."
+            )
+        return self
 
     @property
     def is_production(self) -> bool:
