@@ -290,17 +290,25 @@ engano; ver `docs/PLAN.md` Fase 3 para o detalhe de cada pendência.
 
 ## Podem ser decididas mais tarde
 
-- **Atualização major de `vite` (5→8) e `react-router-dom` (6→7).**
-  `npm audit` no frontend reporta 4 vulnerabilidades (3 moderadas, 1
-  alta) sem correção dentro do intervalo semver instalado — só resolvidas
-  com um salto de versão maior, uma alteração significativa e fora do
-  âmbito da revisão de hardening que as identificou (D-031). Nenhuma é
+- **Atualização major de `vite` (5→8), `react-router-dom` (6→7) e
+  `vitest`/`@vitest/mocker` (3→5).** `npm audit` no frontend reporta 6
+  vulnerabilidades (5 moderadas, 1 alta) sem correção dentro do intervalo
+  semver instalado — só resolvidas com um salto de versão maior de cada
+  pacote, fora do âmbito das revisões de hardening que as identificaram
+  (D-031, e D-033 que acrescentou `vitest` como primeira dependência de
+  testes do frontend — já atualizado uma vez, de `vitest@2` para
+  `vitest@3.2.7`, especificamente para eliminar uma vulnerabilidade
+  **crítica** do servidor de UI do Vitest, `GHSA-5xrq-8626-4rwp`; a
+  moderada remanescente de `@vitest/mocker`, `GHSA-82fw-gwwq-j7x9`, só se
+  resolve saltando para `vitest@5`, que exige `vite@6+`). Nenhuma destas é
   exploratória à distância no código deste repositório tal como está hoje
-  (`esbuild`/`vite` — só afeta quem tem o servidor de desenvolvimento
-  exposto; `react-router-dom` — open-redirect, relevante sobretudo com
-  entrada de utilizador não confiável nas rotas, que esta app não tem
-  ainda). Decidir quando fazer esta migração (e testar as mudanças de
-  API do `react-router-dom` v7) antes de um primeiro deployment público.
+  (`esbuild`/`vite`/`vitest`/`@vitest/mocker` — todas dependências só de
+  desenvolvimento/teste, nunca incluídas no bundle de produção
+  (`vite build`); `react-router-dom` — open-redirect, relevante sobretudo
+  com entrada de utilizador não confiável nas rotas, que esta app não tem
+  ainda). Decidir quando fazer estas migrações (e testar as mudanças de
+  API do `react-router-dom` v7 e do `vitest` v5) antes de um primeiro
+  deployment público.
 - Fornecedor do serviço de mapas/rotas.
 - Modelo específico do Claude a usar em produção (a interface já é
   agnóstica ao modelo — `Settings.claude_model`).

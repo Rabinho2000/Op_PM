@@ -902,8 +902,17 @@ carregar o módulo; um pedido HTTP nunca leva `X-Dev-User-Email` mesmo com
 `localStorage` manipulado depois de o módulo já estar carregado. CI
 (`frontend` job) passa a correr `npm run test` antes de `npm run build`.
 
-**Dependências novas (dev):** `vitest`, `jsdom` — só para testes, sem
-impacto no bundle de produção (`vite build` não os inclui).
+**Dependências novas (dev):** `vitest@^3.2.7`, `jsdom` — só para testes,
+sem impacto no bundle de produção (`vite build` não os inclui). Fixado em
+`3.2.7` (não `^2`, a versão inicialmente instalada) especificamente porque
+`npm audit` reportou uma vulnerabilidade **crítica** no servidor de UI do
+Vitest (`GHSA-5xrq-8626-4rwp`, corrigida em `vitest@3.2.6`) — nunca
+aceitável deixar por corrigir só porque é uma dependência de
+desenvolvimento. Uma vulnerabilidade moderada remanescente em
+`@vitest/mocker` (`GHSA-82fw-gwwq-j7x9`) só se resolve com `vitest@5`
+(exige `vite@6+`, fora do âmbito desta revisão) — registada em
+`docs/OPEN_QUESTIONS.md` junto das outras atualizações major já adiadas
+(`vite`, `react-router-dom`).
 
 ## D-034 — Provisionamento administrativo de `User.entra_object_id`: comando controlado, nunca um endpoint HTTP
 
