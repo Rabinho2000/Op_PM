@@ -1,0 +1,6 @@
+# Driver PostgreSQL — só necessário quando DATABASE_URL aponta para
+# postgresql+psycopg://... (staging/produção, ou dev local com
+# docker-compose). Não instalado por omissão porque os testes/arranque
+# local de Fase 0 usam SQLite (ver backend/.env.example e
+# docs/DECISIONS.md).
+psycopg[binary]>=3.2,<4.0
