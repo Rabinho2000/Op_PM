@@ -902,3 +902,58 @@ carregar o módulo; um pedido HTTP nunca leva `X-Dev-User-Email` mesmo com
 
 **Dependências novas (dev):** `vitest`, `jsdom` — só para testes, sem
 impacto no bundle de produção (`vite build` não os inclui).
+
+## D-034 — Provisionamento administrativo de `User.entra_object_id`: comando controlado, nunca um endpoint HTTP
+
+**Decisão:** `app/cli/provision_entra_user.py` — comando de linha de
+comandos (`python -m app.cli.provision_entra_user`), corrido manualmente
+por alguém com acesso direto ao servidor/base de dados de
+staging/produção, nunca um endpoint da API. Liga `User.entra_object_id` a
+um `User` já existente e ativo — este é o mecanismo real de
+provisionamento dos 5 utilizadores em staging/produção, onde o JIT linking
+por email fica desligado por omissão (`resolved_entra_jit_link_by_email`,
+D-029).
+
+**Regras, sempre no núcleo `link_user_to_entra_object_id`** (nunca só no
+`main()` da CLI, para que os testes exerçam exatamente a mesma lógica):
+
+- **Nunca cria um `User` novo** — só liga a um já existente e ativo; email
+  desconhecido ou inativo é sempre erro.
+- **Nunca reatribui** — um `User` já ligado a qualquer `entra_object_id`
+  (mesmo repetir o mesmo valor) é sempre erro; desligar fica fora do
+  âmbito deste comando, de propósito (mantém-no pequeno e sem
+  ambiguidade).
+- **Nunca reutiliza um `entra_object_id` em dois utilizadores** —
+  verificação explícita (mensagem compreensível) mais a restrição UNIQUE
+  já existente em `User.entra_object_id` na base de dados como barreira
+  final, independente da aplicação.
+- **Sempre auditado** — uma entrada `AuthAuditLog` (evento
+  `admin_provision_link`) com o email do utilizador, o `entra_object_id`, e
+  `actor_label` (quem executou, obrigatório — sem isto o comando recusa-se
+  a correr).
+- **`--confirm` obrigatório para escrever** — sem essa flag, a CLI só
+  mostra o que faria (dry-run), proteção simples contra execução
+  acidental.
+
+**Porquê um comando, não um endpoint:** até 5 utilizadores (D-003) é uma
+operação rara — um endpoint novo seria uma superfície de API permanente
+para uma ação administrativa esporádica, e manteria `get_current_user`
+livre de qualquer lógica de "criar/ligar identidade" (separação já
+deliberada — ver docstring de `app/security/current_user.py`). Satisfaz o
+requisito "permissão administrativa OU comando administrativo controlado"
+pela segunda via: quem consegue correr este comando já precisa de acesso
+direto ao servidor/base de dados, um controlo de acesso independente do
+`admin.manage_users` da aplicação.
+
+**JIT linking continua desligado em produção por omissão** (D-029, sem
+alteração aqui) — este comando é o caminho normal; o JIT por email
+continua disponível só como conveniência de local/test, ou se alguém
+definir `ENTRA_JIT_LINK_BY_EMAIL=true` explicitamente em staging/produção
+(decisão de negócio explícita, não a omissão).
+
+**Testado em** `tests/test_provision_entra_user.py` (12 testes): ligação
+bem-sucedida, entrada de auditoria correta, case-insensitive no email,
+email desconhecido/inativo rejeitados, nunca cria `User`, reatribuição
+rejeitada, `entra_object_id` duplicado rejeitado (com e sem a verificação
+explícita — o teste da restrição UNIQUE da base de dados confirma a
+barreira final independente da aplicação), argumentos vazios rejeitados.
