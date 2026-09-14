@@ -13,6 +13,12 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    env:
+      DATABASE_URL: "sqlite:///./data/ci_op_pm.db"
+      # Declarado explicitamente (mesmo aqui, onde já se sabe que é
+      # SQLite) para simetria com o job PostgreSQL abaixo e para que
+      # tests/test_database_dialect.py também corra aqui, não só lá.
+      EXPECTED_DB_DIALECT: "sqlite"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -23,12 +29,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       - name: Aplicar migrações (SQLite local, sem dados reais)
-        env:
-          DATABASE_URL: "sqlite:///./data/ci_op_pm.db"
         run: python -m alembic upgrade head
       - name: Testes
-        env:
-          DATABASE_URL: "sqlite:///./data/ci_op_pm.db"
         run: python -m pytest -q
 
   backend-postgres:
@@ -56,6 +58,13 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: "postgresql+psycopg://op_pm:op_pm_ci_only@localhost:5432/op_pm_ci"
+      # Lido por tests/conftest.py::_prepare_database (pytest.exit duro,
+      # antes de qualquer teste correr) e por
+      # tests/test_database_dialect.py — a dupla garantia de que este job
+      # nunca pode passar silenciosamente contra SQLite (D-022). A causa
+      # raiz que isto protege: conftest.py costumava sobrescrever sempre
+      # DATABASE_URL com um SQLite temporário, ignorando este valor.
+      EXPECTED_DB_DIALECT: "postgresql"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -65,6 +74,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-postgres.txt
+      - name: Confirmar ligação real ao PostgreSQL antes de migrar
+        # Verificação independente das duas de cima, escrita diretamente
+        # no workflow para ser auditável só de olhar para este ficheiro,
+        # sem precisar de correr Python nenhum: falha o job já aqui se
+        # DATABASE_URL não apontar para PostgreSQL.
+        run: |
+          python -c "
+          import os
+          url = os.environ['DATABASE_URL']
+          assert url.startswith('postgresql'), f'DATABASE_URL nao aponta para PostgreSQL: {url!r}'
+          print('DATABASE_URL confirmado como PostgreSQL:', url)
+          "
       - name: Aplicar migrações (PostgreSQL, sem dados reais)
         run: python -m alembic upgrade head
       - name: Testes
