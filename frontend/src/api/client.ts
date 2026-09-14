@@ -7,12 +7,23 @@
 // tempo que um Bearer token — os dois caminhos são mutuamente exclusivos,
 // tal como no backend. Nenhuma chave/segredo de integração (Claude, Graph,
 // ClickUp, Financial, Entra) é colocada aqui: essas só existem no backend.
-import { SessionExpiredError, getActiveMsalAccount, getApiAccessToken, logoutFromMicrosoft } from "../auth/msal";
+import { SessionExpiredError, devLoginEnabled, getActiveMsalAccount, getApiAccessToken, logoutFromMicrosoft } from "../auth/msal";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const DEV_USER_STORAGE_KEY = "op_pm_dev_user_email";
 
+// Hardening (fecho da Fase 1): `devLoginEnabled` já desliga a SECÇÃO da UI
+// de login de desenvolvimento (src/pages/Login.tsx) fora de local/test —
+// mas isso sozinho não impedia um valor antigo, guardado em localStorage
+// antes de um build de produção (ou antes de alguém desligar
+// VITE_ENABLE_DEV_LOGIN), de continuar a ser lido e enviado como
+// `X-Dev-User-Email` para sempre. As três funções abaixo tratam
+// `devLoginEnabled=false` como "não há utilizador de desenvolvimento
+// nenhum", ponto final — nunca leem nem escrevem localStorage nesse caso —
+// e uma limpeza corre uma vez ao carregar este módulo para remover
+// qualquer valor antigo já guardado.
 export function getDevUser(): string | null {
+  if (!devLoginEnabled) return null;
   try {
     return localStorage.getItem(DEV_USER_STORAGE_KEY);
   } catch {
@@ -21,6 +32,7 @@ export function getDevUser(): string | null {
 }
 
 export function setDevUser(email: string): void {
+  if (!devLoginEnabled) return; // nunca grava um login de desenvolvimento fora de local/test
   try {
     localStorage.setItem(DEV_USER_STORAGE_KEY, email);
   } catch {
@@ -35,6 +47,13 @@ export function clearDevUser(): void {
   } catch {
     // ver setDevUser
   }
+}
+
+if (!devLoginEnabled) {
+  // Limpa qualquer valor antigo (ex. gravado numa sessão de
+  // desenvolvimento anterior, antes de um build de produção) — nunca deve
+  // sobreviver silenciosamente a uma mudança de VITE_ENABLE_DEV_LOGIN.
+  clearDevUser();
 }
 
 // true quando há uma sessão MSAL real ativa — App.tsx/NavBar.tsx usam

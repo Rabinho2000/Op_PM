@@ -870,3 +870,35 @@ bloqueados (mesmos testes de sempre, sem alteração).
 nesses ambientes — a Fase 1 já funciona sem tenant real via o mecanismo de
 desenvolvimento (D-012); só passam a ser exigidas quando `APP_ENV` é
 `staging`/`production`.
+
+## D-033 — Login de desenvolvimento nunca sobrevive num build de produção, mesmo com `localStorage` antigo
+
+**Decisão:** `src/pages/Login.tsx` já só renderizava a secção de login de
+desenvolvimento quando `devLoginEnabled` (D-031); mas `src/api/client.ts`
+continuava a ler/escrever `localStorage` incondicionalmente
+(`getDevUser`/`setDevUser`/`hasActiveSession`/`request()`), pelo que um
+valor gravado numa sessão de desenvolvimento anterior (ou escrito
+manualmente por alguém a inspecionar o browser) continuava a ser enviado
+como `X-Dev-User-Email` mesmo num build com `devLoginEnabled=false`.
+Corrigido:
+
+- `getDevUser()`/`setDevUser()` devolvem/ignoram sempre que
+  `devLoginEnabled` é `false` — nunca tocam em `localStorage` nesse caso;
+  `clearDevUser()` continua incondicional (limpar é sempre seguro).
+- Ao carregar o módulo com `devLoginEnabled=false`, qualquer valor antigo
+  já em `localStorage` é limpo imediatamente — nunca fica só "invisível
+  para a leitura seguinte", é removido.
+- `hasActiveSession()`/`getSessionDisplayName()`/`request()` já usavam
+  `getDevUser()`, por isso herdam o bloqueio sem alteração adicional.
+
+**Testado em** `frontend/src/api/client.dev-login.test.ts` (Vitest, novo —
+o frontend não tinha nenhum framework de testes automatizados até agora,
+só validação manual ponta-a-ponta e `tsc --noEmit`/`vite build`): grava e
+lê corretamente com `devLoginEnabled=true`; nunca grava nem lê com
+`devLoginEnabled=false`; um valor antigo em `localStorage` é limpo ao
+carregar o módulo; um pedido HTTP nunca leva `X-Dev-User-Email` mesmo com
+`localStorage` manipulado depois de o módulo já estar carregado. CI
+(`frontend` job) passa a correr `npm run test` antes de `npm run build`.
+
+**Dependências novas (dev):** `vitest`, `jsdom` — só para testes, sem
+impacto no bundle de produção (`vite build` não os inclui).
