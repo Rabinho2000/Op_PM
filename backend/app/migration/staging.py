@@ -386,6 +386,47 @@ def ingest_export(
     return batch
 
 
+def summarize_import_batch(db: Session, batch: ImportBatch) -> dict[str, int]:
+    """Contagens de um lote de ingestão, para revisão humana antes de
+    resolver conflitos/promover — usado pelo comando de ingestão
+    controlada (`app/cli/ingest_staging.py`) e disponível a quem quiser o
+    mesmo resumo por outra via (ex. um futuro endpoint só de leitura).
+    Lê sempre `mapped_fields_json` dos registos já persistidos, nunca o
+    payload bruto de novo — para nunca divergir de que campos
+    `_map_legacy_fields` realmente extraiu.
+
+    Nunca inclui informação alguma sobre PROJECTS — só sobre os registos de
+    STAGING deste lote, porque a ingestão nunca lê nem escreve em
+    `projects` (D-005/D-017)."""
+    records = db.query(StagingProjectRecord).filter(StagingProjectRecord.import_batch_id == batch.id).all()
+
+    distinct_pm_names: set[str] = set()
+    with_email = 0
+    with_contact = 0
+    with_coordinates = 0
+    for record in records:
+        mapped = json.loads(record.mapped_fields_json)
+        pm_name_raw = mapped.get("pm_name_raw")
+        if pm_name_raw and str(pm_name_raw).strip():
+            distinct_pm_names.add(str(pm_name_raw).strip().lower())
+        if mapped.get("email"):
+            with_email += 1
+        if mapped.get("contact"):
+            with_contact += 1
+        if mapped.get("lat") is not None and mapped.get("lon") is not None:
+            with_coordinates += 1
+
+    return {
+        "projects_seen": batch.records_seen,
+        "ready_to_promote": batch.records_ready,
+        "conflicts": batch.records_conflicted,
+        "distinct_pm_names": len(distinct_pm_names),
+        "with_email": with_email,
+        "with_contact": with_contact,
+        "with_coordinates": with_coordinates,
+    }
+
+
 # --------------------------------------------------------------------------
 # 2) Revisão de conflitos — só isto tira um registo de `conflict`.
 # --------------------------------------------------------------------------

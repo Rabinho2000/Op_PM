@@ -1043,3 +1043,45 @@ nunca revertido) e `tests/test_migration_api.py` (2 testes: ciclo completo
 via API — promover → reverter → repetir → promover, mesmo `project_id`; e
 a permissão `migration.resolve` exigida, PM sem essa permissão recebe
 403).
+
+## D-037 — Ingestão controlada para staging: comando administrativo, modo staging-only, contagens de revisão
+
+**Decisão:** `app/cli/ingest_staging.py` — comando de linha de comandos
+(`python -m app.cli.ingest_staging --file <export.json> [--actor-email
+...]`), a única forma de invocar `ingest_export` fora dos testes. Nunca um
+endpoint HTTP (D-026 já excluía isso deliberadamente da API).
+
+- **Modo staging-only:** `assert_staging_only_environment` recusa-se a
+  correr com `APP_ENV=production` — a migração real passa sempre primeiro
+  por `staging` para revisão manual da fila de conflitos
+  (docs/DATA_MIGRATION_RUNBOOK.md), nunca diretamente para produção por
+  este comando. `local`/`test` continuam permitidos, para ensaiar o fluxo
+  com fixtures sintéticas. Segunda barreira independente: em `production`
+  real (configuração completa — D-032), `get_settings()` já teria
+  bloqueado o processo inteiro no arranque (`AUTH_ENABLED`, PostgreSQL,
+  etc.) antes mesmo deste comando correr — mas esta verificação cobre
+  também o caso (impossível em produção real, mas possível num ambiente
+  mal configurado) de alguém correr o comando com `APP_ENV=production`
+  apontado a uma base de dados que não devia.
+- **Contagens de revisão** (`app/migration/staging.py:summarize_import_batch`):
+  `projects_seen`, `ready_to_promote`, `conflicts`, `distinct_pm_names`,
+  `with_email`, `with_contact`, `with_coordinates` — sempre derivadas de
+  `mapped_fields_json` já persistido, nunca relidas do payload bruto (para
+  nunca divergir de `_map_legacy_fields`). Nunca inclui nada sobre
+  `projects` — só sobre os registos de staging deste lote.
+- **`--actor-email` opcional** — quando fornecido, tem de corresponder a um
+  `User` ativo já existente (nunca inventa nem ignora silenciosamente um
+  email desconhecido); grava `ImportBatch.started_by_person_id`.
+- **Nunca escreve em `projects`** (comportamento herdado de `ingest_export`,
+  sem alteração) — a mensagem final do comando lembra sempre isto e aponta
+  para o endpoint de revisão da fila de conflitos.
+
+**Testado em** `tests/test_ingest_staging_cli.py` (10 testes): barreira
+staging-only (produção rejeitada, os restantes ambientes permitidos);
+nunca escreve em `projects`; payload preservado verbatim; contagens
+corretas contra a fixture sintética (`synthetic_legacy_export.json`, 3
+projetos: 2 PMs distintos, 2 com email, 2 com contacto, 2 com
+coordenadas); resolução de `--actor-email` (existente, desconhecido,
+omitido). Validado manualmente também via linha de comandos: recusa
+correta em `APP_ENV=production` (bloqueado já pela validação de
+configuração — D-032) e execução completa com resumo correto em `local`.
