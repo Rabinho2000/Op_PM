@@ -1,0 +1,4 @@
+external_project_ref,category,amount,currency,reference
+fin_synth_001,material,1234.56,EUR,FAT-SYNTH-0001
+fin_synth_002,subempreiteiro,2500.00,EUR,FAT-SYNTH-0002
+fin_synth_003,mao_obra,800.00,EUR,FAT-SYNTH-0003

@@ -1,0 +1,32 @@
+{
+  "app": "solcor-percurso",
+  "kind": "assign",
+  "updatedAt": "2026-01-01T00:00:00.000Z",
+  "_note": "Dados inteiramente fictícios, moldados na forma do export legado (files/atribuicoes.json) só para testar a importação em staging. Nenhum nome, morada, email ou coordenada aqui corresponde a um cliente ou projeto real.",
+  "projects": {
+    "synth_p001": {
+      "name": "Instalação Fictícia Quinta do Exemplo",
+      "pm": "PM Sintético Um",
+      "contact": "Cliente Fictício A",
+      "email": "cliente.ficticio.a@example.invalid",
+      "coords": {"lat": 38.7, "lon": -9.1},
+      "power": 10.5
+    },
+    "synth_p002": {
+      "name": "Instalação Fictícia Armazém Beta",
+      "pm": null,
+      "contact": null,
+      "email": null,
+      "coords": null,
+      "power": 22.0
+    },
+    "synth_p003": {
+      "name": "Instalação Fictícia Quinta do Exemplo",
+      "pm": "PM Sintético Dois",
+      "contact": "Cliente Fictício C (possível duplicado de synth_p001)",
+      "email": "cliente.ficticio.c@example.invalid",
+      "coords": {"lat": 38.71, "lon": -9.11},
+      "power": 10.5
+    }
+  }
+}

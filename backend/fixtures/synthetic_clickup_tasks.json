@@ -1,0 +1,20 @@
+[
+  {
+    "task_id": "cu_synth_001",
+    "name": "Instalação Fictícia Solar A",
+    "status": "em execução",
+    "custom_fields": {"potencia_kwp": 12.5, "ano_adjudicacao": "2026"}
+  },
+  {
+    "task_id": "cu_synth_002",
+    "name": "Instalação Fictícia Solar B",
+    "status": "certificado final",
+    "custom_fields": {"potencia_kwp": 8.0, "ano_adjudicacao": "2025"}
+  },
+  {
+    "task_id": "cu_synth_003",
+    "name": "Instalação Fictícia Solar C — Ambígua",
+    "status": "em preparação",
+    "custom_fields": {"potencia_kwp": 5.0, "ano_adjudicacao": "2026"}
+  }
+]
