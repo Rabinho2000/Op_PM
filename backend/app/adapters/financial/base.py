@@ -8,6 +8,7 @@ export estruturado), API/Excel ficam como interface preparada.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Protocol
 
 
@@ -15,7 +16,9 @@ from typing import Protocol
 class FinancialCostRecord:
     external_project_ref: str
     category: str
-    amount: float
+    # Decimal, nunca float — ver app/models/cost.py:MONEY e
+    # tests/test_monetary_precision.py.
+    amount: Decimal
     currency: str
     reference: str | None = None
 

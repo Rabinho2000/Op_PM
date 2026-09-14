@@ -9,6 +9,7 @@ exporta um CSV manualmente e aponta `FINANCIAL_CSV_PATH` para ele.
 from __future__ import annotations
 
 import csv
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from app.adapters.financial.base import FinancialCostRecord
@@ -32,11 +33,21 @@ class CsvFinancialAdapter:
 
             records = []
             for row in reader:
+                # Decimal(str) diretamente a partir do texto do CSV — nunca
+                # `float(...)` a meio do caminho, que já introduziria erro de
+                # arredondamento binário antes da conversão.
+                try:
+                    amount = Decimal(row["amount"])
+                except InvalidOperation as exc:
+                    raise ValueError(
+                        f"Valor monetário inválido no CSV do Financial: {row['amount']!r} "
+                        f"(linha para {row.get('external_project_ref')!r})"
+                    ) from exc
                 records.append(
                     FinancialCostRecord(
                         external_project_ref=row["external_project_ref"],
                         category=row["category"],
-                        amount=float(row["amount"]),
+                        amount=amount,
                         currency=row["currency"],
                         reference=row.get("reference") or None,
                     )

@@ -10,12 +10,14 @@ cálculo; nesta fase só o modelo/ledger está definido.
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 
 from sqlalchemy import Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
+from app.models.cost import MONEY
 
 
 class InventoryItem(UUIDPk, TimestampMixin, Base):
@@ -73,6 +75,7 @@ class MaterialRequestItem(UUIDPk, TimestampMixin, Base):
     item_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("inventory_items.id"), nullable=True)
     description: Mapped[str] = mapped_column(String(512), default="")
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
-    unit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Monetário — Numeric, nunca Float (ver app/models/cost.py:MONEY).
+    unit_price: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
 
     request: Mapped["MaterialRequest"] = relationship(back_populates="items")
