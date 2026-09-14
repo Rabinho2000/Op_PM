@@ -128,6 +128,61 @@ def test_pm_without_migration_permission_cannot_view_or_resolve(db_session, api_
     assert resp.status_code == 403
 
 
+def test_retry_promotion_endpoint_reactivates_after_rollback(db_session, api_client):
+    """D-036: rollback → retry-promotion → promote outra vez, tudo via API,
+    reativa o MESMO projeto (nunca cria um segundo)."""
+    db = db_session
+    actor = db.query(User).filter(User.email == "chefe.sintetico@example.invalid").one().person_id
+    payload = {"projects": {"synth_api_retry": {"name": "Instalação Sintética API Retry"}}}
+    batch = ingest_export(db, payload=payload, actor_person_id=actor)
+    record = db.query(StagingProjectRecord).filter(StagingProjectRecord.import_batch_id == batch.id).one()
+    headers = _headers("chefe.sintetico@example.invalid")
+
+    resp_promote = api_client.post(f"/api/migration/staging-records/{record.id}/promote", headers=headers)
+    assert resp_promote.status_code == 200
+    project_id = resp_promote.json()["promoted_project_id"]
+    assert project_id is not None
+
+    resp_rollback = api_client.post(
+        f"/api/migration/staging-records/{record.id}/rollback",
+        json={"reason": "Teste de repetição segura via API."},
+        headers=headers,
+    )
+    assert resp_rollback.status_code == 200
+    assert resp_rollback.json()["status"] == "pending_review"
+
+    resp_retry = api_client.post(f"/api/migration/staging-records/{record.id}/retry-promotion", headers=headers)
+    assert resp_retry.status_code == 200
+    assert resp_retry.json()["status"] == "ready_to_promote"
+    assert resp_retry.json()["resolved_action"] == "update_existing"
+
+    resp_promote_again = api_client.post(f"/api/migration/staging-records/{record.id}/promote", headers=headers)
+    assert resp_promote_again.status_code == 200
+    assert resp_promote_again.json()["promoted_project_id"] == project_id  # o MESMO projeto
+
+
+def test_retry_promotion_endpoint_requires_migration_resolve_permission(db_session, api_client):
+    db = db_session
+    actor = db.query(User).filter(User.email == "chefe.sintetico@example.invalid").one().person_id
+    payload = {"projects": {"synth_api_retry_perm": {"name": "Instalação Sintética API Retry Permissão"}}}
+    batch = ingest_export(db, payload=payload, actor_person_id=actor)
+    record = db.query(StagingProjectRecord).filter(StagingProjectRecord.import_batch_id == batch.id).one()
+    headers = _headers("chefe.sintetico@example.invalid")
+
+    api_client.post(f"/api/migration/staging-records/{record.id}/promote", headers=headers)
+    api_client.post(
+        f"/api/migration/staging-records/{record.id}/rollback",
+        json={"reason": "Teste de permissão."},
+        headers=headers,
+    )
+
+    resp = api_client.post(
+        f"/api/migration/staging-records/{record.id}/retry-promotion",
+        headers=_headers("pm.um.sintetico@example.invalid"),
+    )
+    assert resp.status_code == 403
+
+
 def test_import_batches_visible_to_chefe_operacoes(db_session, api_client):
     db = db_session
     actor = db.query(User).filter(User.email == "chefe.sintetico@example.invalid").one().person_id

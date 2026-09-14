@@ -994,3 +994,52 @@ confirma explicitamente que os oito campos ficam em
 `power_kwp` no seu próprio projeto; os testes existentes (disjunção,
 cobertura total de `ProjectUpdate`, `notes` continua PM-editável)
 continuam a passar sem alteração.
+
+## D-036 — Repetir a promoção depois de um rollback: nunca um segundo projeto
+
+**Problema encontrado:** `rollback_promotion` (D-017) desativa o projeto
+(caso `create_new`) ou restaura os valores anteriores (caso
+`update_existing`/`link_existing`), e deixa o registo de staging em
+`pending_review`. Nenhuma função existente devolvia esse registo a
+`ready_to_promote` — `promote_staging_record` exige exatamente esse
+estado, `resolve_conflict` exige `conflict`. Pior: mesmo que alguém forçasse
+manualmente `status='ready_to_promote'` num registo `resolved_action=
+'create_new'` já revertido, promover outra vez criaria um **segundo**
+`Project` com o mesmo `external_id` — violando a restrição UNIQUE
+`(source_system, external_id)` de `ProjectExternalId` já a meio da
+transação, ou pior, duplicando o projeto se a violação não fosse
+apanhada a tempo. Isto é exatamente o cenário "promover → algo está
+errado → reverter → corrigir → promover outra vez" que uma migração real
+dos 295 projetos vai precisar.
+
+**Decisão:** `app/migration/staging.py:retry_promotion_after_rollback` —
+passo explícito e obrigatório entre um rollback e uma nova promoção (nunca
+automático, tal como `resolve_conflict`/`promote_staging_record` já eram
+dois passos distintos):
+
+- Só aceita um registo `pending_review` com `reverted_at` preenchido
+  (ou seja, que passou mesmo por `rollback_promotion`) — rejeita qualquer
+  outro estado, incluindo um registo nunca promovido.
+- Se `resolved_action` era `'create_new'`, reescreve para
+  `'update_existing'` apontado ao `promoted_project_id` já existente —
+  **nunca volta a passar por `create_new`**, eliminando a via de
+  duplicação. Para `'update_existing'`/`'link_existing'`, o alvo já
+  estava certo, sem alteração.
+- Reativa o projeto (`is_active=True`) se necessário, com uma entrada de
+  `project_history` própria (fonte nova `migration_retry`, distinta de
+  `migration_rollback` — nunca esconde que uma reativação aconteceu numa
+  entrada que parece um rollback).
+- Reaplica a mesma verificação de PM (`_finalize_status_given_pm`) das
+  outras etapas — nunca duas lógicas divergentes sobre quando promover.
+
+Endpoint novo, mesma permissão (`migration.resolve`):
+`POST /api/migration/staging-records/{id}/retry-promotion`.
+
+**Testado em** `tests/test_staging_persistence.py` (3 testes: caso
+`create_new` confirma mesmo `project.id`, nenhuma duplicação de
+`ProjectExternalId`, contagem de projetos inalterada; caso
+`update_existing` confirma reaplicação do campo; rejeição de um registo
+nunca revertido) e `tests/test_migration_api.py` (2 testes: ciclo completo
+via API — promover → reverter → repetir → promover, mesmo `project_id`; e
+a permissão `migration.resolve` exigida, PM sem essa permissão recebe
+403).

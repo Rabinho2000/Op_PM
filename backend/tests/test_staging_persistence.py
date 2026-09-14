@@ -17,6 +17,7 @@ from app.migration.staging import (
     ingest_export,
     promote_staging_record,
     resolve_conflict,
+    retry_promotion_after_rollback,
     rollback_promotion,
 )
 from app.models.identity import User
@@ -458,3 +459,107 @@ def test_rollback_only_allowed_for_promoted_records(db_session):
     )
     with pytest.raises(ValueError, match="promovido"):
         rollback_promotion(db, staging_record_id=not_promoted.id, actor_person_id=actor, reason="teste")
+
+
+# --------------------------------------------------------------------------
+# Repetição segura: promover → reverter → promover outra vez (D-036).
+# --------------------------------------------------------------------------
+
+
+def test_retry_promotion_after_rollback_reactivates_the_same_project_never_a_duplicate(db_session):
+    """O caso crítico: a promoção original era 'create_new' — repetir tem
+    de reativar o MESMO projeto (mesmo id), nunca criar um segundo (o que
+    violaria a unicidade de ProjectExternalId e duplicaria o registo)."""
+    db = db_session
+    actor = _actor(db)
+    batch = ingest_export(db, payload=_load_fixture(), actor_person_id=actor)
+    record = (
+        db.query(StagingProjectRecord)
+        .filter(StagingProjectRecord.import_batch_id == batch.id, StagingProjectRecord.external_id == "synth_p002")
+        .one()
+    )
+    projects_before = db.query(Project).count()
+
+    project = promote_staging_record(db, staging_record_id=record.id, actor_person_id=actor)
+    original_project_id = project.id
+    rollback_promotion(db, staging_record_id=record.id, actor_person_id=actor, reason="Teste de repetição segura.")
+    db.refresh(project)
+    assert project.is_active is False
+
+    retried = retry_promotion_after_rollback(db, staging_record_id=record.id, actor_person_id=actor)
+    assert retried.status == "ready_to_promote"
+    assert retried.resolved_action == "update_existing"  # reescrito, nunca continua 'create_new'
+    assert retried.resolved_target_project_id == original_project_id
+
+    reactivated_project = promote_staging_record(db, staging_record_id=record.id, actor_person_id=actor)
+    assert reactivated_project.id == original_project_id  # o MESMO projeto, nunca um novo
+    assert reactivated_project.is_active is True
+
+    # Nunca duplicou: mesma contagem de projetos e de IDs externos que antes.
+    assert db.query(Project).count() == projects_before + 1
+    external_links = (
+        db.query(ProjectExternalId)
+        .filter(ProjectExternalId.source_system == SOURCE_LEGACY_JSON, ProjectExternalId.external_id == "synth_p002")
+        .all()
+    )
+    assert len(external_links) == 1
+
+    final_record = db.get(StagingProjectRecord, record.id)
+    assert final_record.status == "promoted"
+    assert final_record.promoted_project_id == original_project_id
+
+
+def test_retry_promotion_after_rollback_of_an_update_reapplies_the_field(db_session):
+    """Quando a promoção original era 'update_existing' (não 'create_new'),
+    repetir não precisa de reescrever resolved_action — só reativa o
+    projeto se necessário e reaplica os campos mapeados."""
+    db = db_session
+    actor = _actor(db)
+    fixture = _load_fixture()
+
+    first_batch = ingest_export(db, payload=fixture, actor_person_id=actor)
+    create_record = (
+        db.query(StagingProjectRecord)
+        .filter(StagingProjectRecord.import_batch_id == first_batch.id, StagingProjectRecord.external_id == "synth_p001")
+        .one()
+    )
+    project = promote_staging_record(db, staging_record_id=create_record.id, actor_person_id=actor)
+
+    updated_fixture = json.loads(json.dumps(fixture))
+    updated_fixture["projects"]["synth_p001"]["contact"] = "Cliente Fictício A (atualizado)"
+    second_batch = ingest_export(db, payload=updated_fixture, actor_person_id=actor)
+    update_record = (
+        db.query(StagingProjectRecord)
+        .filter(StagingProjectRecord.import_batch_id == second_batch.id, StagingProjectRecord.external_id == "synth_p001")
+        .one()
+    )
+    promote_staging_record(db, staging_record_id=update_record.id, actor_person_id=actor)
+    rollback_promotion(db, staging_record_id=update_record.id, actor_person_id=actor, reason="Teste de repetição segura.")
+    db.refresh(project)
+    assert project.client_contact == "Cliente Fictício A"  # revertido
+
+    retried = retry_promotion_after_rollback(db, staging_record_id=update_record.id, actor_person_id=actor)
+    assert retried.resolved_action == "update_existing"  # já era, não muda
+    assert retried.status == "ready_to_promote"
+
+    promote_staging_record(db, staging_record_id=update_record.id, actor_person_id=actor)
+    db.refresh(project)
+    assert project.client_contact == "Cliente Fictício A (atualizado)"  # reaplicado
+
+
+def test_retry_promotion_after_rollback_rejects_a_record_never_rolled_back(db_session):
+    db = db_session
+    actor = _actor(db)
+    batch = ingest_export(db, payload=_load_fixture(), actor_person_id=actor)
+    record = (
+        db.query(StagingProjectRecord)
+        .filter(StagingProjectRecord.import_batch_id == batch.id, StagingProjectRecord.external_id == "synth_p002")
+        .one()
+    )
+    with pytest.raises(ValueError, match="rollback_promotion"):
+        retry_promotion_after_rollback(db, staging_record_id=record.id, actor_person_id=actor)
+
+    promote_staging_record(db, staging_record_id=record.id, actor_person_id=actor)
+    with pytest.raises(ValueError, match="rollback_promotion"):
+        # promovido mas nunca revertido — continua rejeitado
+        retry_promotion_after_rollback(db, staging_record_id=record.id, actor_person_id=actor)

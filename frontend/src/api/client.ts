@@ -335,5 +335,9 @@ export const resolveStagingConflict = (id: string, payload: ResolveConflictPaylo
   apiPost<StagingProjectRecord>(`/api/migration/staging-records/${id}/resolve-conflict`, payload);
 export const promoteStagingRecord = (id: string) =>
   apiPost<StagingProjectRecord>(`/api/migration/staging-records/${id}/promote`);
+export const rollbackStagingRecord = (id: string, reason: string) =>
+  apiPost<StagingProjectRecord>(`/api/migration/staging-records/${id}/rollback`, { reason });
+export const retryPromotionAfterRollback = (id: string) =>
+  apiPost<StagingProjectRecord>(`/api/migration/staging-records/${id}/retry-promotion`);
 export const retryPmResolution = (id: string) =>
   apiPost<StagingProjectRecord>(`/api/migration/staging-records/${id}/retry-pm-resolution`);
