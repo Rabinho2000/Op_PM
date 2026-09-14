@@ -23,5 +23,5 @@ from app.models.cost import CostLine  # noqa: F401
 from app.models.document import Document, Photo  # noqa: F401
 from app.models.form import FormResponse, FormTemplate  # noqa: F401
 from app.models.notification import Notification  # noqa: F401
-from app.models.migration import ImportBatch, StagingProjectRecord  # noqa: F401
+from app.models.migration import ImportBatch, PersonReconciliationItem, StagingProjectRecord  # noqa: F401
 from app.models.ai import AiAuditLog  # noqa: F401

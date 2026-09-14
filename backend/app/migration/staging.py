@@ -1,26 +1,44 @@
-"""Migração em staging: ingestão → revisão de conflitos → promoção
-explícita. Ver `app/models/migration.py` para o modelo de dados e
-docs/DECISIONS.md (D-005, D-017) para a justificação do desenho.
+"""Migração em staging: reconciliação de PM → ingestão → revisão de
+conflitos → promoção explícita. Ver `app/models/migration.py` para o
+modelo de dados e docs/DECISIONS.md (D-005, D-017, D-023) para a
+justificação do desenho.
 
-Três funções fazem as três etapas exigidas, nunca misturadas:
+Etapa 0, ANTES desta: `app.migration.people_reconciliation.reconcile_pm_names`
+regista, para revisão humana, qualquer nome de PM do export que não
+corresponda sem ambiguidade a um `Person` conhecido. As funções abaixo
+nunca resolvem isso sozinhas — usam sempre
+`people_reconciliation.classify_pm_name` para saber se um PM está
+resolvido, ignorado (decisão humana explícita), ou ainda por resolver.
+
+Quatro funções fazem as etapas exigidas, nunca misturadas:
 
 - `ingest_export`: lê um export externo e cria registos de staging.
   NUNCA escreve em `projects`. Sempre persistente (commit imediato) — não
   há "dry run", porque não há nada arriscado a simular: nada aqui pode
-  corromper dados canónicos.
+  corromper dados canónicos. Um registo com PM presente mas não resolvido
+  fica em `conflict` (`pm_unresolved`) — nunca segue para promoção como se
+  não tivesse PM.
 - `resolve_conflict`: decisão humana sobre um registo em conflito
-  (`create_new` / `link_existing` / `skip`). Só isto pode tirar um registo
-  do estado `conflict`.
+  (`create_new` / `link_existing` / `skip` para conflitos de projeto;
+  `proceed_without_pm` só para `pm_unresolved`). Só isto (ou
+  `retry_pm_resolution`) tira um registo do estado `conflict`.
+- `retry_pm_resolution`: reclassifica o PM de um registo bloqueado por
+  `pm_unresolved` — usado depois de a reconciliação de pessoas resolver o
+  nome em causa, para desbloquear sem repetir a ingestão.
 - `promote_staging_record`: só isto escreve em `projects`. Gera sempre
-  entradas de `project_history` (nunca uma escrita silenciosa).
+  entradas de `project_history` (nunca uma escrita silenciosa) e
+  recusa-se a promover um registo com PM presente, não resolvido, e sem
+  decisão explícita de prosseguir sem PM — mesmo que o estado do registo
+  tenha sido manipulado diretamente (defesa em profundidade, D-023).
 - `rollback_promotion`: desfaz uma promoção. Nunca apaga histórico — só
   acrescenta novas entradas que revertem os valores, e marca o registo de
   staging como pendente de nova decisão.
 
 Nesta fase, estas funções só são exercidas com dados sintéticos
-(`backend/fixtures/`, `backend/tests/test_staging_persistence.py`). Migrar
-os 295 projetos reais é trabalho de uma fase futura, nunca a partir deste
-repositório público — ver docs/PLAN.md.
+(`backend/fixtures/`, `backend/tests/test_staging_persistence.py`,
+`backend/tests/test_people_reconciliation.py`). Migrar os 295 projetos
+reais é trabalho de uma fase futura, nunca a partir deste repositório
+público — ver docs/PLAN.md.
 """
 from __future__ import annotations
 
@@ -35,13 +53,13 @@ from sqlalchemy.orm import Session
 
 from app.audit.log import record_project_change
 from app.db import new_uuid
+from app.migration.people_reconciliation import classify_pm_name
 from app.models.migration import ImportBatch, StagingProjectRecord
-from app.models.people import Person
 from app.models.project import Project, ProjectExternalId, ProjectHistory
 
 SOURCE_LEGACY_JSON = "legacy_json"
 
-ResolvedAction = Literal["create_new", "link_existing", "skip"]
+ResolvedAction = Literal["create_new", "link_existing", "skip", "proceed_without_pm"]
 
 # Campos canónicos que uma promoção pode escrever em `Project`, e como
 # extraí-los de `mapped_fields_json`. Mantido como uma única lista para que
@@ -65,6 +83,7 @@ _CANONICAL_TEXT_FIELDS = (
 )
 _CANONICAL_FLOAT_FIELDS = ("lat", "lon", "power_kwp")
 _CANONICAL_DATE_FIELDS = ("start_date",)
+_CANONICAL_UUID_FIELDS = ("pm_person_id",)
 
 
 # --------------------------------------------------------------------------
@@ -161,23 +180,6 @@ def _build_canonical_fields(mapped: dict) -> dict:
     }
 
 
-def _resolve_pm_person(db: Session, pm_name_raw: Any) -> Person | None:
-    """Tenta ligar o nome de PM do export legado a um `Person` existente,
-    por nome exato normalizado. Nunca cria uma pessoa nova aqui, e nunca
-    liga quando o nome é ambíguo (mais do que uma pessoa com o mesmo nome)
-    — nesse caso o projeto fica sem PM atribuído, para correção manual, em
-    vez de adivinhar."""
-    if not pm_name_raw or not isinstance(pm_name_raw, str):
-        return None
-    normalized = pm_name_raw.strip().lower()
-    if not normalized:
-        return None
-    candidates = db.query(Person).filter(func.lower(func.trim(Person.display_name)) == normalized).all()
-    if len(candidates) == 1:
-        return candidates[0]
-    return None
-
-
 def _string_to_field_value(field_name: str, raw: str | None) -> Any:
     """Inverso (best-effort) da conversão texto->valor usada ao escrever
     `ProjectHistory.old_value`/`new_value`. Usado só pelo rollback, para
@@ -192,6 +194,11 @@ def _string_to_field_value(field_name: str, raw: str | None) -> Any:
     if field_name in _CANONICAL_DATE_FIELDS:
         try:
             return dt.date.fromisoformat(raw)
+        except ValueError:
+            return None
+    if field_name in _CANONICAL_UUID_FIELDS:
+        try:
+            return uuid.UUID(raw)
         except ValueError:
             return None
     return raw
@@ -218,6 +225,29 @@ def _find_external_link(db: Session, *, source_system: str, external_id: str) ->
 def _find_project_candidates_by_name(db: Session, *, name: str) -> list[Project]:
     normalized = name.strip().lower()
     return db.query(Project).filter(func.lower(func.trim(Project.name)) == normalized).all()
+
+
+def _finalize_status_given_pm(record: StagingProjectRecord, pm_classification) -> None:
+    """Ponto único de decisão: dado que a parte de PROJETO da resolução já
+    está definida em `record.resolved_action`/`resolved_target_project_id`,
+    decide o status final consoante o PM. Usado tanto pela ingestão (para
+    os casos sem conflito de projeto) como por `resolve_conflict` (depois
+    de um conflito de projeto ser resolvido) — nunca duas lógicas
+    divergentes para a mesma decisão (D-023).
+
+    Bloqueia sempre que o PM está presente e não resolvido, mesmo que o
+    conflito original do registo fosse sobre outra coisa (nome
+    ambíguo/duplicado) — nunca deixa um PM por resolver passar só porque
+    o problema que o trouxe a 'conflict' era outro."""
+    if pm_classification.status == "unresolved" and not record.pm_explicitly_unassigned:
+        record.status = "conflict"
+        record.conflict_reason = "pm_unresolved"
+        record.candidate_person_ids_json = json.dumps(pm_classification.candidate_person_ids)
+        return
+    if pm_classification.status == "ignored":
+        record.pm_explicitly_unassigned = True
+    record.status = "ready_to_promote"
+    record.conflict_reason = None
 
 
 # --------------------------------------------------------------------------
@@ -264,6 +294,7 @@ def ingest_export(
         external_id = str(legacy_id)
         mapped = _map_legacy_fields(record)
         name = mapped["name"]
+        pm_classification = classify_pm_name(db, mapped.get("pm_name_raw"))
 
         staging = StagingProjectRecord(
             id=new_uuid(),
@@ -272,16 +303,21 @@ def ingest_export(
             external_id=external_id,
             raw_record_json=json.dumps(record, ensure_ascii=False),
             mapped_fields_json=json.dumps(mapped, ensure_ascii=False),
+            pm_name_raw=mapped.get("pm_name_raw") or None,
+            pm_explicitly_unassigned=(pm_classification.status == "ignored"),
         )
 
         existing_link = _find_external_link(db, source_system=source_system, external_id=external_id)
         if existing_link is not None:
-            staging.status = "ready_to_promote"
             staging.resolved_action = "update_existing"
             staging.resolved_target_project_id = existing_link.project_id
             staging.resolved_at = now
             staging.resolution_note = "Ligação já existente por ID externo — atualização, não é conflito."
-            batch.records_ready += 1
+            _finalize_status_given_pm(staging, pm_classification)
+            if staging.status == "conflict":
+                batch.records_conflicted += 1
+            else:
+                batch.records_ready += 1
             db.add(staging)
             continue
 
@@ -296,22 +332,28 @@ def ingest_export(
         db_candidates = _find_project_candidates_by_name(db, name=name)
         batch_candidates = seen_in_batch.get(normalized_name, [])
         candidate_refs = [str(c.id) for c in db_candidates] + [f"batch:{ref}" for ref in batch_candidates]
+        seen_in_batch.setdefault(normalized_name, []).append(external_id)
 
         if candidate_refs:
+            # Conflito de nome de projeto — o PM só será verificado quando
+            # este conflito for resolvido (ver resolve_conflict), porque
+            # ainda não se sabe se resolved_action será create_new ou
+            # link_existing a outro projeto (que pode já ter PM).
             staging.status = "conflict"
             staging.conflict_reason = "ambiguous_match" if len(candidate_refs) > 1 else "duplicate"
             staging.candidate_project_ids_json = json.dumps(candidate_refs)
             batch.records_conflicted += 1
-            seen_in_batch.setdefault(normalized_name, []).append(external_id)
             db.add(staging)
             continue
 
-        staging.status = "ready_to_promote"
         staging.resolved_action = "create_new"
         staging.resolved_at = now
         staging.resolution_note = "Sem candidatos — auto-resolvido para criação."
-        batch.records_ready += 1
-        seen_in_batch.setdefault(normalized_name, []).append(external_id)
+        _finalize_status_given_pm(staging, pm_classification)
+        if staging.status == "conflict":
+            batch.records_conflicted += 1
+        else:
+            batch.records_ready += 1
         db.add(staging)
 
     db.commit()
@@ -340,6 +382,31 @@ def resolve_conflict(
         raise ValueError(
             f"só é possível resolver um registo em conflito (estado atual: {record.status!r})"
         )
+
+    if action == "proceed_without_pm":
+        if record.conflict_reason != "pm_unresolved":
+            raise ValueError(
+                "a ação 'proceed_without_pm' só é válida para conflitos 'pm_unresolved' "
+                f"(razão atual: {record.conflict_reason!r})"
+            )
+        # O resolved_action/resolved_target_project_id do PROJETO já
+        # tinham sido calculados na ingestão (D-023) — só a barreira do PM
+        # é levantada aqui, por decisão humana explícita.
+        record.pm_explicitly_unassigned = True
+        record.resolved_by_person_id = actor_person_id
+        record.resolved_at = dt.datetime.now(dt.timezone.utc)
+        record.resolution_note = note or "Prosseguir sem PM (decisão humana explícita)."
+        record.status = "ready_to_promote"
+        db.commit()
+        db.refresh(record)
+        return record
+
+    if record.conflict_reason == "pm_unresolved":
+        raise ValueError(
+            f"registo {record.id} está bloqueado por PM não resolvido — use "
+            "'proceed_without_pm' ou resolva o PM (app.migration.people_reconciliation) "
+            "e chame retry_pm_resolution, não resolve_conflict com outras ações"
+        )
     if action == "link_existing" and target_project_id is None:
         raise ValueError("a ação 'link_existing' exige target_project_id")
 
@@ -348,7 +415,53 @@ def resolve_conflict(
     record.resolved_by_person_id = actor_person_id
     record.resolved_at = dt.datetime.now(dt.timezone.utc)
     record.resolution_note = note
-    record.status = "rejected" if action == "skip" else "ready_to_promote"
+
+    if action == "skip":
+        record.status = "rejected"
+    else:
+        # O conflito de PROJETO ficou resolvido — mas só agora é que se
+        # sabe resolved_action/resolved_target_project_id, por isso o PM
+        # só é verificado aqui (nunca antes) para este caminho. Reusa a
+        # mesma decisão de app/migration/staging.py:_finalize_status_given_pm
+        # usada na ingestão, para nunca haver duas lógicas divergentes.
+        mapped = json.loads(record.mapped_fields_json)
+        pm_classification = classify_pm_name(db, mapped.get("pm_name_raw"))
+        _finalize_status_given_pm(record, pm_classification)
+
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def retry_pm_resolution(db: Session, *, staging_record_id: uuid.UUID) -> StagingProjectRecord:
+    """Reclassifica o PM de um registo bloqueado por `pm_unresolved` —
+    chamar depois de `people_reconciliation.resolve_person_reconciliation`
+    resolver o nome em causa, para desbloquear sem repetir a ingestão."""
+    record = db.get(StagingProjectRecord, staging_record_id)
+    if record is None:
+        raise ValueError(f"registo de staging não encontrado: {staging_record_id}")
+    if record.status != "conflict" or record.conflict_reason != "pm_unresolved":
+        raise ValueError(
+            "só aplicável a um registo bloqueado por 'pm_unresolved' "
+            f"(estado atual: {record.status!r}/{record.conflict_reason!r})"
+        )
+
+    mapped = json.loads(record.mapped_fields_json)
+    classification = classify_pm_name(db, mapped.get("pm_name_raw"))
+
+    if classification.status == "unresolved":
+        record.candidate_person_ids_json = json.dumps(classification.candidate_person_ids)
+        db.commit()
+        db.refresh(record)
+        return record  # continua em conflito — reconciliação ainda não resolveu este nome
+
+    if classification.status == "ignored":
+        record.pm_explicitly_unassigned = True
+
+    record.status = "ready_to_promote"
+    record.conflict_reason = None
+    record.resolved_at = dt.datetime.now(dt.timezone.utc)
+    record.resolution_note = (record.resolution_note or "") + " | PM resolvido via reconciliação."
 
     db.commit()
     db.refresh(record)
@@ -378,8 +491,24 @@ def promote_staging_record(
     canonical = _build_canonical_fields(mapped)
     now = dt.datetime.now(dt.timezone.utc)
 
+    # Defesa em profundidade (D-023): mesmo que o estado do registo tenha
+    # chegado aqui como 'ready_to_promote' por alguma via que não passou
+    # pelas barreiras normais de ingest_export/resolve_conflict, a
+    # promoção NUNCA prossegue com um PM presente e não resolvido sem uma
+    # decisão explícita de prosseguir sem ele.
+    pm_classification = classify_pm_name(db, mapped.get("pm_name_raw"))
+    if pm_classification.status == "unresolved" and not record.pm_explicitly_unassigned:
+        raise ValueError(
+            f"registo {record.id} tem um PM presente ('{mapped.get('pm_name_raw')}') "
+            "mas não resolvido, e não foi marcado para prosseguir sem PM — promoção "
+            "bloqueada (nunca promover silenciosamente um projeto com PM conhecido "
+            "mas não resolvido). Use resolve_conflict('proceed_without_pm') ou "
+            "resolva o nome em app.migration.people_reconciliation e chame "
+            "retry_pm_resolution."
+        )
+    pm_person = pm_classification.person
+
     if record.resolved_action == "create_new":
-        pm_person = _resolve_pm_person(db, mapped.get("pm_name_raw"))
         project = Project(id=new_uuid(), is_active=True, **canonical)
         project.pm_person_id = pm_person.id if pm_person else None
         db.add(project)
@@ -418,7 +547,6 @@ def promote_staging_record(
         if project is None:
             raise ValueError(f"projeto alvo não encontrado: {target_project_id}")
 
-        pm_person = _resolve_pm_person(db, mapped.get("pm_name_raw"))
         fields_to_apply = dict(canonical)
         if pm_person is not None:
             fields_to_apply["pm_person_id"] = pm_person.id

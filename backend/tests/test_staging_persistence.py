@@ -267,6 +267,7 @@ def test_resolve_conflict_then_promote_links_to_target_project(db_session):
         .one()
     )
     assert duplicate.status == "conflict"
+    assert duplicate.conflict_reason in ("ambiguous_match", "duplicate")
 
     canonical_project = promote_staging_record(db, staging_record_id=original.id, actor_person_id=actor)
 
@@ -277,6 +278,19 @@ def test_resolve_conflict_then_promote_links_to_target_project(db_session):
         target_project_id=canonical_project.id,
         actor_person_id=actor,
         note="Confirmado como o mesmo projeto físico.",
+    )
+    # synth_p003 tem pm="PM Sintético Dois", que não está seedado — o
+    # conflito de nome fica resolvido, mas o registo permanece bloqueado
+    # por PM não resolvido (D-023) até uma segunda decisão explícita.
+    assert resolved.status == "conflict"
+    assert resolved.conflict_reason == "pm_unresolved"
+
+    resolved = resolve_conflict(
+        db,
+        staging_record_id=duplicate.id,
+        action="proceed_without_pm",
+        actor_person_id=actor,
+        note="PM Sintético Dois não seedado neste teste — prosseguir sem PM.",
     )
     assert resolved.status == "ready_to_promote"
 

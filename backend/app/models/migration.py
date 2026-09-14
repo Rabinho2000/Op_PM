@@ -12,10 +12,22 @@ Fluxo de uma `StagingProjectRecord`:
 
     pending_review ──(sem nome)──────────────► conflict (no_name)
                     ──(nome ambíguo/duplicado)─► conflict (ambiguous_match|duplicate)
-                    ──(sem candidato / já ligado)► ready_to_promote
+                    ──(PM presente mas não resolvido)► conflict (pm_unresolved)
+                    ──(sem candidato / já ligado, PM ok)► ready_to_promote
     conflict        ──(resolve_conflict)───────► ready_to_promote | rejected
+    conflict (pm_unresolved) ──(resolve_conflict 'proceed_without_pm')──► ready_to_promote
+                              ──(retry_pm_resolution, após reconciliação)──► ready_to_promote | conflict
     ready_to_promote──(promote_staging_record)──► promoted
     promoted        ──(rollback_promotion)─────► pending_review (com reverted_at preenchido)
+
+Reconciliação de PM (ver docs/DECISIONS.md D-023 e
+`app/migration/people_reconciliation.py`): um nome de PM no export legado
+que não corresponda exatamente a um `Person` já conhecido nunca é
+resolvido silenciosamente — nem durante a ingestão, nem durante a
+promoção. Fica registado em `PersonReconciliationItem`, para revisão
+humana explícita, e bloqueia a promoção do(s) projeto(s) correspondente(s)
+até ser resolvido (ligar a uma pessoa existente, criar uma nova, ou marcar
+como "ignorar" — decisão sempre humana).
 """
 from __future__ import annotations
 
@@ -74,8 +86,25 @@ class StagingProjectRecord(UUIDPk, TimestampMixin, Base):
 
     # pending_review | conflict | ready_to_promote | promoted | rejected
     status: Mapped[str] = mapped_column(String(32), default="pending_review", nullable=False)
-    conflict_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)  # no_name|ambiguous_match|duplicate
+    # no_name | ambiguous_match | duplicate | pm_unresolved
+    conflict_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     candidate_project_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+
+    # --- Reconciliação de PM (D-023) ---
+    # Nome de PM tal como veio do export legado (duplicado de
+    # mapped_fields_json.pm_name_raw só para consulta direta, sem ter de
+    # fazer parse do JSON). Vazio/None quando o registo não tem PM.
+    pm_name_raw: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # Candidatos de Person quando conflict_reason == 'pm_unresolved'
+    # (lista vazia = nome desconhecido; mais do que um = nome ambíguo).
+    candidate_person_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    # True só quando um humano decidiu explicitamente prosseguir sem PM
+    # (resolve_conflict 'proceed_without_pm') ou quando a reconciliação
+    # marcou o nome como 'ignore'. promote_staging_record recusa-se a
+    # promover um registo com pm_name_raw preenchido, sem pm resolvido, e
+    # sem esta flag — nunca promove silenciosamente (ver
+    # app/migration/staging.py:promote_staging_record).
+    pm_explicitly_unassigned: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     # Decisão (humana, ou auto-resolução inequívoca na ingestão) sobre o
     # que fazer com este registo.
@@ -106,3 +135,33 @@ class StagingProjectRecord(UUIDPk, TimestampMixin, Base):
     )
     reverted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reverted_reason: Mapped[str] = mapped_column(Text, default="")
+
+
+class PersonReconciliationItem(UUIDPk, TimestampMixin, Base):
+    """Fila de revisão para nomes de PM do export legado que não
+    correspondem, sem ambiguidade, a um `Person` já conhecido — passo
+    explícito ANTES da promoção de qualquer projeto (D-023). Nunca criada
+    nem resolvida automaticamente: só `reconcile_pm_names` (deteção) e
+    `resolve_person_reconciliation` (decisão humana) escrevem aqui.
+    """
+
+    __tablename__ = "person_reconciliation_items"
+
+    # Nome exatamente como apareceu no export (para mostrar ao revisor).
+    raw_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    # unknown (zero correspondências) | ambiguous (mais do que uma)
+    reason: Mapped[str] = mapped_column(String(32), nullable=False)
+    candidate_person_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+
+    # pending | resolved (ligado a Person existente) | created_new
+    # (nova Person criada) | ignored (decisão explícita de não associar)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
+    resolved_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("people.id"), nullable=True
+    )
+    resolved_by_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("people.id"), nullable=True
+    )
+    resolved_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolution_note: Mapped[str] = mapped_column(Text, default="")
