@@ -9,9 +9,16 @@ desenvolvimento) são sintéticos.
 
 ## Estado atual
 
-**Fase 0 — fundação técnica**, implementada e testada. Sem integrações externas reais
-ligadas (Claude, Microsoft Graph, ClickUp, Financial); sem migração de dados reais; sem
-envio de email ou criação de eventos reais. Ver `docs/PLAN.md` para o roadmap completo.
+**Fase 0 — fundação técnica, com a revisão de hardening concluída**, implementada e
+testada (56 testes automatizados). Sem integrações externas reais ligadas (Claude,
+Microsoft Graph, ClickUp, Financial); sem migração de dados reais; sem envio de email ou
+criação de eventos reais. Ver `docs/PLAN.md` para o roadmap completo.
+
+Pontos-chave do hardening: a aplicação recusa-se a arrancar em `staging`/`production`
+com configuração de desenvolvimento (ver secção "Segurança" abaixo); a migração nunca
+escreve diretamente em `projects` — passa sempre por ingestão em staging, revisão de
+conflitos, e promoção explícita e reversível (`app/migration/staging.py`); valores
+monetários usam `Numeric`/`Decimal`, nunca `Float`.
 
 Documentação:
 
@@ -108,5 +115,15 @@ Ativar qualquer uma destas para chamadas reais é trabalho de uma fase futura �
 - Nenhum dado de produção — só fixtures sintéticas (ver `backend/fixtures/`).
 - `.gitignore` bloqueia `.env`, `.secrets/`, `data/`, `files/`, backups e bases de
   dados locais.
+- **A aplicação recusa-se a arrancar em `APP_ENV=staging`/`production`** se
+  `AUTH_ENABLED=false`, `SECRET_KEY` for o valor de desenvolvimento, ou `DATABASE_URL`
+  for SQLite — ver `app/config.py` e `docs/DECISIONS.md` D-020. O mecanismo de
+  utilizador de desenvolvimento (`X-Dev-User-Email`) tem uma segunda verificação
+  independente e só funciona em `local`/`test`.
+- Nenhuma migração escreve diretamente em `projects` — passa sempre por ingestão em
+  staging (`import_batches`/`staging_project_records`), revisão de conflitos, e
+  promoção explícita, sempre com auditoria e rollback (`app/migration/staging.py`,
+  docs/DECISIONS.md D-017).
+- Valores monetários usam `Numeric`/`Decimal`, nunca `Float` (D-018).
 - Antes de expor este backend fora de uma rede de confiança, correr uma revisão de
   segurança dedicada (ver `docs/PLAN.md`, secção de segurança).

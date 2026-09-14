@@ -44,6 +44,58 @@ ver `docs/DECISIONS.md` D-015 e o `.gitignore`.
   sem erros; `pytest -q` — 27/27 testes passam; `npm run build` do frontend
   conclui sem erros; nenhuma flag de integração real ativa por omissão.
 
+## Fase 0 — Revisão de hardening (IMPLEMENTADA, antes da Fase 1)
+
+Pedida explicitamente antes de iniciar a Fase 1 — nenhum item liga
+integrações reais (Entra ID, Graph, ClickUp, Financial, Claude continuam
+mock/fallback). Ver `docs/DECISIONS.md` D-017 a D-021 para o detalhe.
+
+- **Objetivo:** fechar os riscos identificados na fundação da Fase 0 antes
+  de expor a aplicação a autenticação real ou dados reais.
+- **Funcionalidades/correções:**
+  1. Bloqueio de arranque em `staging`/`production` com `AUTH_ENABLED=false`,
+     `SECRET_KEY` de desenvolvimento, ou `DATABASE_URL` SQLite — mais uma
+     segunda verificação independente no mecanismo de utilizador de
+     desenvolvimento (D-020).
+  2. Migração redesenhada: `SyncRun`/`SyncConflict` (decidiam tudo numa
+     função `dry_run`/`apply`) substituídos por `ImportBatch`/
+     `StagingProjectRecord`, persistentes, com `ingest_export` →
+     `resolve_conflict` → `promote_staging_record` como três etapas
+     distintas, e `rollback_promotion` com auditoria completa (D-017).
+  3. Mapeamento expandido: PM, email, contacto, coordenadas, data de
+     início, estado ClickUp, e os restantes campos legados relevantes
+     (`role`, `equip`, `injecao`, `om`, `assum`, `upacRegisto`, `m2mCard`,
+     `upacConnDate`, `anoAdjudicacao`, `power` com extração numérica
+     best-effort a partir de texto livre) — ver ARCHITECTURE_PROPOSAL.md
+     secção 5.
+  4. `cost_lines.amount` e `material_request_items.unit_price`:
+     `Float` → `Numeric(12, 2)`/`Decimal` (D-018).
+  5. Documentação campo-a-campo da fonte de verdade do `Project`
+     (ARCHITECTURE_PROPOSAL.md secção 5).
+  6. Testes novos: hardening de configuração, staging persistente,
+     promoção após resolução de conflito, preservação de campos legados,
+     precisão monetária.
+  7. CI: job PostgreSQL adicional, mantendo o job SQLite (D-021).
+- **Entidades:** `import_batches`, `staging_project_records` (substituem
+  `sync_runs`/`sync_conflicts`); `projects` ganha `power_raw`, `role`,
+  `equipment_notes`, `injection_notes`, `om_notes`,
+  `commercial_assumptions`, `upac_registration`, `m2m_card`,
+  `upac_connection_date_raw`, `award_year_raw`; `project_history` ganha
+  `related_staging_record_id`.
+- **Integrações:** nenhuma — continuam todas mock/fallback.
+- **Testes:** `test_config_hardening.py`, `test_staging_persistence.py`
+  (substitui `test_staging_migration.py`), `test_monetary_precision.py`;
+  suite completa a passar em SQLite e (não executável neste ambiente —
+  ver D-021) desenhada para passar em PostgreSQL via CI.
+- **Riscos:** ver secção "Riscos ainda existentes" no final deste
+  documento.
+- **Rollback:** reverter para o commit anterior a esta revisão — nenhuma
+  integração real foi tocada, nenhum dado real existe ainda; o único
+  efeito é no schema local (recriável via `alembic downgrade`/`upgrade`).
+- **Critérios de conclusão (cumpridos):** `pytest -q` passa por completo em
+  SQLite; migração de hardening testada em `upgrade`→`downgrade`→`upgrade`;
+  nenhuma integração real ativada; documentos atualizados.
+
 ## Fase 1 — Autenticação real e primeiros endpoints CRUD
 
 - **Objetivo:** ligar Microsoft Entra ID a sério (substituir o mecanismo de
@@ -73,19 +125,22 @@ ver `docs/DECISIONS.md` D-015 e o `.gitignore`.
   (`files/atribuicoes.json`, fora deste repositório público) para a base de
   dados de staging, resolver a fila de conflitos manualmente, e só depois
   aplicar em produção.
-- **Entidades:** todas as tocadas por `staging_import` — `projects`,
-  `project_external_ids`, `sync_runs`, `sync_conflicts`.
-- **Integrações:** nenhuma nova — reutiliza `app/migration/staging_import.py`
-  já implementado e testado.
+- **Entidades:** todas as tocadas por `app/migration/staging.py` —
+  `projects`, `project_external_ids`, `import_batches`,
+  `staging_project_records`.
+- **Integrações:** nenhuma nova — reutiliza `ingest_export`/
+  `resolve_conflict`/`promote_staging_record` já implementados e testados.
 - **Testes:** contagem de projetos migrados == 295 (ou o número real no
   momento da migração); amostragem de campos antes/depois; nenhum registo
-  de `sync_conflicts` fica sem revisão antes do `apply` final.
+  `staging_project_records.status='conflict'` fica sem revisão antes de
+  qualquer promoção.
 - **Riscos:** divergências já documentadas entre `atribuicoes.json` e
   exports de PM no repositório legado precisam de resolução manual antes
   desta fase — ver a análise desse repositório.
-- **Rollback:** `dry_run` primeiro sempre; `apply` só depois de revisão
-  humana da fila de conflitos; backup da base de dados antes do `apply`
-  final (ver "Plano de backups" abaixo).
+- **Rollback:** `ingest_export` primeiro sempre (nunca toca em `projects`);
+  cada `promote_staging_record` é revertível individualmente via
+  `rollback_promotion`, com auditoria completa; backup da base de dados
+  antes de promover o lote (ver "Plano de backups" abaixo).
 - **Critérios de conclusão:** todos os projetos reais migrados ou
   explicitamente na fila de conflitos com decisão registada; nenhum campo
   incompleto foi inventado; checksum e relatório da execução guardados.
@@ -99,7 +154,7 @@ ver `docs/DECISIONS.md` D-015 e o `.gitignore`.
 - **Integrações:** Microsoft Graph real (`GRAPH_ENABLED=true`).
 - **Testes:** teste de que nenhum email/evento é criado sem aprovação
   explícita; teste de compatibilidade com Outlook clássico e novo (ambos
-  via Graph/Exchange Online — ver `ARCHITECTURE_PROPOSAL.md` secção 7).
+  via Graph/Exchange Online — ver `ARCHITECTURE_PROPOSAL.md` secção 8).
 - **Riscos:** limites de taxa do Graph API; `DECISÃO NECESSÁRIA` sobre
   calendários/equipas a considerar (ver `OPEN_QUESTIONS.md`).
 - **Rollback:** manter `GRAPH_ENABLED=false` (fallback local) como via de
@@ -111,9 +166,9 @@ ver `docs/DECISIONS.md` D-015 e o `.gitignore`.
 
 - **Objetivo:** ligar `ClickUpAdapter` a sério; mapear os projetos migrados
   aos seus `task_id` reais; job agendado (worker — ver
-  `ARCHITECTURE_PROPOSAL.md` secção 6) em vez de execução manual.
+  `ARCHITECTURE_PROPOSAL.md` secção 7) em vez de execução manual.
 - **Entidades:** `project_external_ids` (source_system='clickup'),
-  `sync_runs`, `sync_conflicts`.
+  `import_batches`, `staging_project_records`.
 - **Integrações:** ClickUp REST API real (`CLICKUP_ENABLED=true`).
 - **Testes:** regressão para garantir zero updates falsos num input sem
   alterações (corrige o bug conhecido do script legado — ver
@@ -203,7 +258,9 @@ capacidade de equipa — só a Fase 1 é estritamente bloqueante para todas.
 |---|---|
 | Permissões por perfil | Implementado e testado (`tests/test_permissions.py`) |
 | IDs externos/correspondência estável | Implementado e testado (`tests/test_external_ids.py`) |
-| Migração em staging (dry-run, conflitos, idempotência) | Implementado e testado (`tests/test_staging_migration.py`) |
+| Migração em staging (ingestão, conflitos, promoção, rollback, idempotência) | Implementado e testado (`tests/test_staging_persistence.py`) |
+| Bloqueio de configuração insegura (staging/produção) | Implementado e testado (`tests/test_config_hardening.py`) |
+| Precisão monetária (`Numeric`/`Decimal`) | Implementado e testado (`tests/test_monetary_precision.py`) |
 | Histórico/auditoria (append-only, aprovação de IA) | Implementado e testado (`tests/test_audit.py`) |
 | Adapters (mock/fallback, nunca chamada real) | Implementado e testado (`tests/test_adapters.py`) |
 | Saúde da API | Implementado e testado (`tests/test_health.py`) |
@@ -212,8 +269,10 @@ capacidade de equipa — só a Fase 1 é estritamente bloqueante para todas.
 | Integração Graph/ClickUp/Financial/Claude reais | Por implementar (Fases 3, 4, 5, 7) |
 | Frontend (além do build) | Por implementar — sem testes automatizados de UI nesta fase |
 
-CI (`.github/workflows/ci.yml`) corre backend (`pytest`) e frontend
-(`npm run build`) a cada push/PR, sobre SQLite — sem serviços externos.
+CI (`.github/workflows/ci.yml`) corre a cada push/PR: backend contra SQLite
+(rápido, sem serviços), backend contra um serviço PostgreSQL do próprio
+GitHub Actions (D-021 — valida `batch_alter_table`, `Numeric`, `GUID` no
+motor de produção-alvo), e build do frontend.
 
 ## Plano de segurança e privacidade
 
@@ -271,12 +330,15 @@ staging.
 
 | Risco | Tipo | Mitigação |
 |---|---|---|
-| SQLite em dev/teste divergir de PostgreSQL em produção | Técnico | Tipos portáveis (`GUID`), sem features exclusivas de um motor nos modelos (D-002); recomenda-se um job de CI contra PostgreSQL antes da Fase 2 |
+| SQLite em dev/teste divergir de PostgreSQL em produção | Técnico | Tipos portáveis (`GUID`, `Numeric`), sem features exclusivas de um motor nos modelos (D-002); job de CI contra PostgreSQL adicionado (D-021), mas não executado localmente neste ambiente — primeira execução real fica para o GitHub Actions |
 | Sistema Financial desconhecido | Operacional | Fase 5 isolada para não bloquear as restantes; adapter CSV real já disponível (D-011) |
-| Conflitos de dados não resolvidos na migração real | Técnico | Mecanismo de staging+conflitos já testado; nunca aplicar sem revisão humana (D-005) |
+| Conflitos de dados não resolvidos na migração real | Técnico | Mecanismo de staging+conflitos já testado; nunca aplicar sem revisão humana (D-005, D-017) |
+| Deteção de duplicados não cobre lotes de importação diferentes ainda não promovidos | Técnico | Âmbito conhecido e documentado (D-017); mitigação operacional: promover um lote de cada vez antes de ingerir o seguinte, na migração real |
+| Rollback de uma promoção que atualizou um projeto existente depende de `project_history` correlacionado corretamente | Técnico | Testado explicitamente (`test_staging_persistence.py`); nunca apaga histórico, só acrescenta — um erro de rollback é sempre auditável e corrigível manualmente, nunca silencioso |
 | Equipa pequena (5 utilizadores) com pouca margem para gerir um novo sistema | Operacional | Monólito modular deliberadamente simples (D-001); scheduler leve em vez de fila pesada (D-013) |
 | Repositório público herdar dados reais por engano | Segurança | `.gitignore` + fixtures exclusivamente sintéticas + revisão manual antes de cada commit (D-015) |
-| IA usada como atalho para decisões humanas | Segurança/Operacional | Controlo arquitetural (nenhuma ferramenta pode executar ação irreversível — ver `ARCHITECTURE_PROPOSAL.md` secção 7) + auditoria completa |
+| Configuração insegura chegar a staging/produção | Segurança | Bloqueada estruturalmente por dupla verificação (D-020) — a aplicação não arranca, e o mecanismo de utilizador de desenvolvimento não funciona fora de local/test |
+| IA usada como atalho para decisões humanas | Segurança/Operacional | Controlo arquitetural (nenhuma ferramenta pode executar ação irreversível — ver `ARCHITECTURE_PROPOSAL.md` secção 8) + auditoria completa |
 | Custo de APIs externas (Claude, rotas, geocoding) a escalar | Operacional | Limite/orçamento configurável antes de ativar cada integração real |
 
 ## Primeiro MVP recomendado

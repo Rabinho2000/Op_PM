@@ -75,18 +75,22 @@ renomear um projeto não quebra a ligação ao ClickUp.
 
 ## D-005 — Toda a sincronização externa passa por staging com fila de conflitos
 
-**Decisão:** `app/migration/staging_import.py` nunca escreve num projeto
-existente por adivinhação. Um registo de origem sem `ProjectExternalId`
-prévio e com nome ambíguo (mais do que um candidato, seja já na base de
-dados, seja dentro do mesmo lote importado) vai para `sync_conflicts` com
-`status='pending'`, para revisão humana — nunca é ligado automaticamente.
+**Decisão:** `app/migration/staging.py` nunca escreve num projeto existente
+por adivinhação. Um registo de origem sem `ProjectExternalId` prévio e com
+nome ambíguo (mais do que um candidato, seja já na base de dados, seja
+dentro do mesmo lote importado) fica em `staging_project_records` com
+`status='conflict'`, para revisão humana — nunca é ligado automaticamente.
 
 **Porquê:** é exatamente o requisito "detetar duplicados e correspondências
 ambíguas" + "criar uma fila de conflitos para revisão manual". Testado em
-`tests/test_staging_migration.py`, incluindo o caso de dois registos do
-mesmo lote partilharem nome (detetado mesmo em `dry_run`, que nunca toca na
-base de dados — ver a nota técnica dentro do próprio módulo sobre porque
-isso exige uma verificação em memória além da consulta à base de dados).
+`tests/test_staging_persistence.py`, incluindo o caso de dois registos do
+mesmo lote partilharem nome.
+
+**Revisto na revisão de hardening da Fase 0 — ver D-017**: esta decisão
+mantém-se, mas o desenho original (`dry_run`/`apply` numa única função, que
+nunca persistia nada em `dry_run`) foi substituído por um staging
+persistente com promoção explícita, porque a ingestão em si já não tem
+nada de arriscado a simular — nunca toca em `projects`.
 
 ## D-006 — Histórico append-only aplicado por convenção nesta fase
 
@@ -199,19 +203,23 @@ uma fila de tarefas mais robusta.
 **Porquê não está implementado já:** nesta fase não existe nenhuma tarefa
 real para agendar — todas as integrações estão em modo mock/local (D-009).
 Construir um processo de worker antes de haver algo real para ele fazer
-seria trabalho especulativo. `app/migration/staging_import.py` já está
-desenhado para ser chamado tanto por um endpoint da API como por um futuro
-comando de worker, sem alteração.
+seria trabalho especulativo. `app/migration/staging.py` já está desenhado
+para ser chamado tanto por um endpoint da API como por um futuro comando de
+worker, sem alteração.
 
-## D-014 — CI sem serviços externos
+## D-014 — CI com SQLite e PostgreSQL
 
-**Decisão:** o workflow em `.github/workflows/ci.yml` corre os testes do
-backend contra SQLite (não PostgreSQL) e faz build do frontend — sem
-Docker, sem serviços externos.
+**Decisão original:** o workflow em `.github/workflows/ci.yml` corria só
+contra SQLite. **Revisto na revisão de hardening (ver D-021):** passou a
+ter dois jobs de backend — um contra SQLite (rápido, sem serviços) e outro
+contra um serviço PostgreSQL do próprio GitHub Actions — mais o build do
+frontend.
 
-**Porquê:** coerente com D-002; mantém o CI rápido e sem segredos/serviços a
-gerir nesta fase. Adicionar um job de integração contra PostgreSQL real é
-recomendado antes da Fase 1 (migração real), não antes.
+**Porquê:** SQLite continua a ser o suficiente para desenvolvimento local
+rápido, mas só correr testes contra SQLite escondia divergências de
+comportamento entre motores (ex. `Numeric`, tipos de data, `batch_alter_table`
+nas migrações) até só serem descobertas em staging/produção — já tarde
+demais. Ver D-021 para o detalhe do job novo.
 
 ## D-015 — Repositório mantém-se público
 
@@ -230,6 +238,122 @@ maior estabilidade/reprodutibilidade num runner padrão. Ambas as versões
 foram confirmadas capazes de instalar todas as dependências, incluindo o
 driver PostgreSQL opcional (`psycopg[binary]`).
 
+## Revisão de hardening da Fase 0 (antes de iniciar a Fase 1)
+
+As decisões D-017 a D-021 documentam a revisão de hardening pedida
+explicitamente antes de avançar para a Fase 1 — nenhuma delas liga
+qualquer integração real (Entra ID, Graph, ClickUp, Financial, Claude
+continuam todos em modo mock/fallback).
+
+## D-017 — Staging persistente + promoção explícita substitui `dry_run`/`apply`
+
+**Decisão:** o mecanismo de migração deixou de ser uma única função
+`run_staging_import(mode='dry_run'|'apply')` (que nunca persistia nada em
+`dry_run`) e passou a três etapas distintas e persistentes, em
+`app/migration/staging.py`:
+
+1. `ingest_export` — lê o export, cria `ImportBatch` +
+   `StagingProjectRecord`. Sempre persiste (commit imediato). Nunca toca em
+   `projects`.
+2. `resolve_conflict` — só para registos com `status='conflict'`; decide
+   `create_new`/`link_existing`/`skip`.
+3. `promote_staging_record` — só isto escreve em `projects`
+   (criação ou atualização), sempre com entradas de `project_history` por
+   campo alterado.
+
+Mais `rollback_promotion`, que desfaz uma promoção: inativa
+(`is_active=False`, nunca `DELETE`) se a promoção tinha criado o projeto;
+reaplica os valores anteriores campo a campo (via `project_history`,
+correlacionado por `related_staging_record_id` — nunca por adivinhação de
+texto) se a promoção tinha atualizado um projeto já existente.
+
+**Porquê:** o desenho anterior confundia duas coisas distintas —
+"experimentar sem consequência" (que já não fazia sentido, porque a
+ingestão nunca tocava em `projects`) e "aplicar de vez" — numa única
+função com um parâmetro `mode`. Separar em três funções/tabelas torna cada
+etapa auditável, testável e revertível isoladamente, e cumpre à letra o
+pedido: "separa: ingestão do export; revisão de conflitos; promoção
+explícita para os dados canónicos. Todas as promoções devem gerar
+auditoria e permitir rollback."
+
+**Âmbito conhecido:** a deteção de duplicados por nome só olha para
+`projects` já promovidos e para o lote atual — não deteta dois lotes
+diferentes, ainda não promovidos, com o mesmo nome. Aceitável para Fase 0
+(só dados sintéticos); antes de uma migração real, promover um lote de
+cada vez (ou reforçar a deteção) evita este cenário.
+
+## D-018 — `Numeric`/`Decimal` para todos os valores monetários
+
+**Decisão:** `cost_lines.amount` e `material_request_items.unit_price`
+passaram de `Float` para `Numeric(12, 2)` (`decimal.Decimal` em Python).
+`FinancialCostRecord.amount` (adapter) e `CsvFinancialAdapter` seguiram a
+mesma mudança — o CSV é lido com `Decimal(str)` diretamente, nunca
+`float(...)` a meio do caminho.
+
+**Porquê:** `float` não representa exatamente a maioria dos valores
+decimais em binário (`0.1 + 0.1 + 0.1 != 0.3`) — inaceitável para dinheiro.
+`Numeric` é portável entre SQLite e PostgreSQL sem tipo customizado (ao
+contrário de UUID, não precisou de um `GUID`-like `TypeDecorator`). Testado
+em `tests/test_monetary_precision.py` com um caso que demonstra o erro que
+`float` cometeria.
+
+**Nota:** quantidades (`inventory_movements.quantity`,
+`material_request_items.quantity`, `inventory_items.min_stock`)
+mantiveram-se `Float` — não são valores monetários, e o pedido delimitou
+explicitamente "valores monetários".
+
+## D-019 — Campos legados adicionais como texto, não `Date`/`Integer`
+
+**Decisão:** os novos campos do `Project` vindos do IDF legado
+(`upac_connection_date_raw`, `award_year_raw`, e também `power_raw`) são
+`String`, não `Date`/`Integer` — apesar de os nomes sugerirem esses tipos.
+
+**Porquê:** o formato real destes campos no export legado não foi
+confirmado nesta fase (o repositório do código legado não foi tocado para
+esta revisão). Tipar como `Date`/`Integer` e falhar ao importar um valor
+real com formato inesperado seria pior do que preservar o texto — cada um
+tem também um campo companheiro com o melhor esforço de interpretação
+(`start_date` como `Date`, `power_kwp` como `float`) quando a extração é
+possível, sem nunca perder o original. Revisitar quando os formatos reais
+forem confirmados.
+
+## D-020 — Duas barreiras independentes contra configuração insegura em staging/produção
+
+**Decisão:**
+
+1. `Settings` (pydantic) valida, à construção — logo, ao arrancar a
+   aplicação — que `APP_ENV in ('staging', 'production')` implica
+   `AUTH_ENABLED=true`, `SECRET_KEY` diferente do valor de desenvolvimento,
+   e `DATABASE_URL` não-SQLite. Viola qualquer uma → `ValidationError`,
+   processo não arranca.
+2. `get_current_user` (o mecanismo de utilizador de desenvolvimento)
+   verifica `settings.app_env` a cada pedido, independentemente da
+   validação acima — defesa em profundidade para o caso (não esperado em
+   condições normais) de a aplicação correr com `APP_ENV=local`/`test` mas
+   ligada por engano a infraestrutura de staging/produção.
+
+**Porquê:** o pedido foi explícito — "impede que a aplicação arranque" E
+"o cabeçalho X-Dev-User-Email deve funcionar apenas em local/test" são duas
+garantias distintas; a primeira sozinha não cobre o cenário de
+configuração parcialmente incorreta (`APP_ENV` errado, mas o resto certo).
+Testado em `tests/test_config_hardening.py`.
+
+## D-021 — CI: job PostgreSQL adicional, sem remover o job SQLite
+
+**Decisão:** `.github/workflows/ci.yml` ganhou um segundo job de backend
+(`backend-postgres`), que sobe um serviço `postgres:16` no próprio runner
+do GitHub Actions, corre `alembic upgrade head` e `pytest -q` contra
+`DATABASE_URL=postgresql+psycopg://...`, com `requirements.txt` +
+`requirements-postgres.txt` instalados. O job SQLite original mantém-se.
+
+**Porquê:** cumpre o pedido diretamente; garante que a migração
+(`batch_alter_table`, `Numeric`, `GUID`) e a suite de testes funcionam
+também no motor de produção-alvo, não só em SQLite. **Não foi possível
+correr este job localmente** (sem Docker/Postgres neste ambiente — ver
+D-002) — validado por leitura cuidadosa e pelos mesmos padrões já usados
+com sucesso no job SQLite; a primeira execução real fica para o GitHub
+Actions.
+
 ## Âmbito deliberadamente deixado de fora desta fase
 
 - Métodos de ficheiros (SharePoint/OneDrive) na interface do `GraphAdapter`
@@ -239,6 +363,10 @@ driver PostgreSQL opcional (`psycopg[binary]`).
 - Qualquer endpoint de escrita na API além de `/health` e `/me` — os
   modelos e a lógica de permissões existem, mas os endpoints CRUD de
   projetos/visitas/inventário/etc. são trabalho da Fase 1 em diante.
-- Migração dos 295 projetos reais — só a mecânica (staging, IDs externos,
-  conflitos, dry-run/apply, checksum) está implementada e testada com dados
-  sintéticos.
+- Migração dos 295 projetos reais — só a mecânica (ingestão, staging, IDs
+  externos, conflitos, promoção explícita, rollback, checksum) está
+  implementada e testada com dados sintéticos.
+- Deteção de duplicados entre lotes de importação diferentes ainda não
+  promovidos (ver D-017, âmbito conhecido).
+- Regra de base de dados (trigger/permissão) que impeça UPDATE/DELETE em
+  `project_history` — continua aplicada só por convenção de código (D-006).

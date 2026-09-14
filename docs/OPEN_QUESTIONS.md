@@ -160,6 +160,24 @@ controlo.
 **Recomendação por defeito:** nenhuma sem confirmação — é uma decisão de
 compliance/privacidade que não deve ser assumida tecnicamente.
 
+### 16. `upacRegisto`/`m2mCard`: há um sistema externo que devia ser a fonte de verdade?
+
+**Impacto:** a revisão de hardening da Fase 0 deu a estes dois campos
+legados (registo UPAC, cartão M2M) um lugar explícito no `Project`
+(`upac_registration`, `m2m_card` — ver `ARCHITECTURE_PROPOSAL.md` secção
+5), mas como cópia simples do export legado, com Op_PM como fonte de
+verdade por omissão. Se existir um sistema de licenciamento/DGEG ou do
+operador de rede que devesse ser a fonte de verdade real destes valores, a
+Fase 4+ (integrações) precisa de o saber.
+
+**Decisão necessária:** confirmar se estes valores vêm só do processo
+manual da equipa (e por isso Op_PM é mesmo a fonte de verdade) ou de um
+sistema externo ainda não mapeado.
+
+**Recomendação por defeito:** manter Op_PM como fonte de verdade até haver
+evidência de um sistema externo — não inventar uma integração que pode não
+existir.
+
 ## Podem ser decididas mais tarde
 
 - Fornecedor do serviço de mapas/rotas.
