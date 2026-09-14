@@ -13,3 +13,14 @@ node_modules/
 dist/
 build/
 .DS_Store
+
+# Fase 0 — backend/frontend
+.venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+*.eml
+*.ics
+*.tsbuildinfo
+
