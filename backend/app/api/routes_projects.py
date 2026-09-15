@@ -15,19 +15,27 @@ from app.models.project import Project, ProjectHistory
 from app.schemas.projects import ProjectHistoryRead, ProjectRead, ProjectUpdate
 from app.security.current_user import get_auth_context
 from app.security.permissions import AuthContext, PermissionDenied
-from app.services.projects import get_visible_project, list_projects
+from app.services.projects import compute_project_task_summary, get_visible_project, list_projects
 from app.services.projects import update_project as update_project_service
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 
-def _to_read(project: Project) -> ProjectRead:
+def _to_read(db: Session, project: Project) -> ProjectRead:
     data = ProjectRead.model_validate(project)
     data.pm_display_name = project.pm.display_name if project.pm else None
     data.has_pm = project.has_pm
     data.has_email = project.has_email
     data.has_coordinates = project.has_coordinates
     data.has_contact = project.has_contact
+
+    summary = compute_project_task_summary(db, project.id)
+    data.status = summary.status
+    data.next_task_title = summary.next_task_title
+    data.next_task_due_date = summary.next_task_due_date
+    data.overdue_tasks_count = summary.overdue_tasks_count
+    data.workflow_progress_percent = summary.workflow_progress_percent
+    data.photos_pending_warning = summary.photos_pending_warning
     return data
 
 
@@ -40,7 +48,7 @@ def list_projects_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[ProjectRead]:
     projects = list_projects(db, ctx, pm_person_id=pm_person_id, is_active=is_active, search=q)
-    return [_to_read(p) for p in projects]
+    return [_to_read(db, p) for p in projects]
 
 
 @router.get("/{project_id}", response_model=ProjectRead)
@@ -52,7 +60,7 @@ def get_project_endpoint(
     project = get_visible_project(db, ctx, project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
-    return _to_read(project)
+    return _to_read(db, project)
 
 
 @router.patch("/{project_id}", response_model=ProjectRead)
@@ -72,7 +80,7 @@ def update_project_endpoint(
         # administrativos recusados (D-028) — não é uma fuga de
         # informação sensível, o próprio pedido já continha esses campos.
         raise HTTPException(status_code=403, detail=f"Sem permissão para editar este projeto: {exc}")
-    return _to_read(updated)
+    return _to_read(db, updated)
 
 
 @router.get("/{project_id}/history", response_model=list[ProjectHistoryRead])
