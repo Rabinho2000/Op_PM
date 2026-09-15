@@ -345,9 +345,12 @@ completo.
   precisar de nenhuma lógica extra de ocultação (ver D-045).
 - **Testes:** `tests/test_tasks_api.py` (17), `tests/test_absences_api.py`
   (10), `tests/test_dashboard.py` (12), `tests/test_project_task_summary.py`
-  (6) — 178 testes de backend no total (era 133), todos a passar em SQLite.
-  Frontend: `src/utils/dates.test.ts`, `src/api/taskTransitions.test.ts`,
-  `src/pages/Home.test.tsx` — 14 testes Vitest.
+  (6) — adicionados pela Fase 1.5. Depois de integrar com o hardening da
+  Fase 1 (`mvp-ready`), a suite completa de backend soma 224 testes a
+  passar + 2 skipped em SQLite. Frontend: `src/utils/dates.test.ts`,
+  `src/api/taskTransitions.test.ts`, `src/pages/Home.test.tsx` +
+  `client.dev-login.test.ts` (D-033, hardening) — 18 testes Vitest no
+  total.
 - **Riscos:** ver "Riscos técnicos e operacionais" mais abaixo.
 - **Rollback:** módulo aditivo — nenhuma tabela nem endpoint pré-existente
   foi alterado de forma incompatível (só `ProjectRead` ganhou campos novos,
@@ -364,8 +367,9 @@ completo.
   comissionamento geram o aviso das fotos; férias e aniversários aparecem
   no dashboard, respeitando permissões; permissões de PM/Comercial/Chefe/
   Administrador respeitadas (verificado também manualmente trocando de
-  utilizador no browser); 178 testes de backend + 14 de frontend a passar;
-  `npm run build` sem erros; nenhum dado real migrado.
+  utilizador no browser); suite combinada de 224 testes de backend
+  (+2 skipped) + 18 de frontend a passar em `mvp-ready`; `npm run build`
+  sem erros; nenhum dado real migrado.
 
 ## Fase 2 — Dashboard inicial
 

@@ -9,7 +9,10 @@ desenvolvimento) são sintéticos.
 
 ## Estado atual
 
-campo, resolução de migração reforçada, login MSAL real no frontend), **fecho
+**Fase 0 concluída** (fundação técnica + revisão de hardening), **Fase 1
+concluída + revisão de hardening** (autenticação real, CRUD de projetos com
+permissões por campo, resolução de migração reforçada, login MSAL real no
+frontend), **fecho
 técnico da Fase 1 para staging/produção concluído** (configuração obrigatória e
 completa, separação real do login de desenvolvimento, provisionamento
 administrativo de utilizadores, allowlist de PM revista, repetição segura de
@@ -21,10 +24,10 @@ projetos sem PM/dados em falta, férias atuais/próximas, aniversários próximo
 trabalhos urgentes), entidade `Task` genérica (checklist padrão de 5 tarefas por
 projeto + tarefas ad-hoc, máquina de estados, histórico), férias/ausências
 (`Absence`), e o aviso persistente de fotos por colocar na Drive quando visita
-técnica/comissionamento é concluído — ver `docs/DECISIONS.md` D-038 a D-040.
-Suite de testes de backend a passar em SQLite (e em PostgreSQL, ver abaixo) e
-suite de testes de frontend (Vitest 3.x) — contagens exatas em
-`docs/DECISIONS.md`. Sem integrações externas reais ligadas (Claude, Microsoft
+técnica/comissionamento é concluído — ver `docs/DECISIONS.md` D-039 a D-047.
+224 testes automatizados de backend a passar (+2 skipped) em SQLite (e em
+PostgreSQL, ver abaixo) + 18 testes Vitest no frontend. Sem integrações
+externas reais ligadas (Claude, Microsoft
 Graph, ClickUp, Financial); sem migração de dados reais (os 295 projetos reais
 continuam por migrar); sem envio de email ou criação de eventos reais; sem
 mapas, inventário, pedidos de material ou biblioteca documental. Ver
@@ -128,7 +131,7 @@ npm install
 cp .env.example .env.local   # ajustar se necessário
 npm run dev                  # http://localhost:5173, espera o backend em :8000
 npm run lint                 # tsc --noEmit
-npm test                     # Vitest (vitest run) — login de desenvolvimento (D-033) + suite de UI (D-039)
+npm test                     # Vitest (vitest run) — login de desenvolvimento (D-033) + suite de UI (D-046)
 npm run build                # valida TypeScript + gera build de produção
 ```
 
@@ -153,7 +156,7 @@ omissão) — depois:
   integrações ativas, utilizador atual) — antiga página inicial da Fase 1.
 
 Validado manualmente ponta-a-ponta nesta fase — ver `docs/DECISIONS.md` D-027/D-031
-e D-032 a D-040 (Fase 1.5).
+e D-039 a D-047 (Fase 1.5).
 
 Login Microsoft real requer uma app registration SPA (Authorization Code + PKCE, sem
 client secret) e uma app registration de API expondo o âmbito `access_as_user` — ver
