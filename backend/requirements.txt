@@ -13,3 +13,9 @@ pytest-cov>=5.0,<6.0
 # como pelo mock de testes (chave de teste local, nunca uma credencial
 # real — ver app/security/entra_auth.py).
 pyjwt[crypto]>=2.9,<3.0
+# Base de dados de fusos horários IANA para `zoneinfo` — necessária no
+# Windows (e em alguns Linux mínimos), que não trazem os dados de tz do
+# sistema. Usado por app/utils/timezones.py para "esta semana" no
+# dashboard usar sempre Europe/Lisbon, independentemente do fuso do
+# servidor onde a app corre.
+tzdata>=2024.1

@@ -9,21 +9,28 @@ desenvolvimento) são sintéticos.
 
 ## Estado atual
 
-**Fase 0 concluída** (fundação técnica + revisão de hardening), **Fase 1 concluída
-+ revisão de hardening** (autenticação real, CRUD de projetos com permissões por
-campo, resolução de migração reforçada, login MSAL real no frontend), e **fecho
+campo, resolução de migração reforçada, login MSAL real no frontend), **fecho
 técnico da Fase 1 para staging/produção concluído** (configuração obrigatória e
 completa, separação real do login de desenvolvimento, provisionamento
 administrativo de utilizadores, allowlist de PM revista, repetição segura de
 promoção após rollback, ingestão controlada staging-only — ver `docs/DECISIONS.md`
-D-032 a D-037) — 179 testes automatizados de backend a passar em SQLite (e em
-PostgreSQL, ver abaixo) mais 4 testes automatizados de frontend (Vitest, D-033).
-Sem integrações externas reais ligadas (Claude, Microsoft Graph, ClickUp,
-Financial); sem migração de dados reais (os 295 projetos reais continuam por
-migrar); sem envio de email ou criação de eventos reais. Ver `docs/PLAN.md` para
-o roadmap completo, `docs/STAGING_CHECKLIST.md`/`docs/GO_LIVE_CHECKLIST.md` para
-os procedimentos de deployment, e `docs/DATA_MIGRATION_RUNBOOK.md` para a
-migração real dos 295 projetos.
+D-032 a D-037), e **Fase 1.5 — MVP dashboard/workflow concluída**: página inicial
+(`/`) com indicadores reais (projetos ativos, a começar em 30 dias, tarefas
+atrasadas/pendentes esta semana, visitas técnicas e comissionamentos pendentes,
+projetos sem PM/dados em falta, férias atuais/próximas, aniversários próximos,
+trabalhos urgentes), entidade `Task` genérica (checklist padrão de 5 tarefas por
+projeto + tarefas ad-hoc, máquina de estados, histórico), férias/ausências
+(`Absence`), e o aviso persistente de fotos por colocar na Drive quando visita
+técnica/comissionamento é concluído — ver `docs/DECISIONS.md` D-038 a D-040.
+Suite de testes de backend a passar em SQLite (e em PostgreSQL, ver abaixo) e
+suite de testes de frontend (Vitest 3.x) — contagens exatas em
+`docs/DECISIONS.md`. Sem integrações externas reais ligadas (Claude, Microsoft
+Graph, ClickUp, Financial); sem migração de dados reais (os 295 projetos reais
+continuam por migrar); sem envio de email ou criação de eventos reais; sem
+mapas, inventário, pedidos de material ou biblioteca documental. Ver
+`docs/PLAN.md` para o roadmap completo, `docs/STAGING_CHECKLIST.md`/
+`docs/GO_LIVE_CHECKLIST.md` para os procedimentos de deployment, e
+`docs/DATA_MIGRATION_RUNBOOK.md` para a migração real dos 295 projetos.
 
 Pontos-chave: a aplicação recusa-se a arrancar em `staging`/`production` com
 configuração de desenvolvimento (ver secção "Segurança" abaixo); a migração nunca
@@ -83,6 +90,11 @@ uvicorn app.main:app --reload --port 8000
 
 Com o servidor a correr: `http://localhost:8000/docs` (Swagger), `http://localhost:8000/health`.
 
+Endpoints principais da Fase 1.5 (ver `docs/PLAN.md`):
+`GET /api/dashboard/summary` (indicadores do painel inicial, já filtrados pela
+visibilidade do utilizador), `/api/tasks` (CRUD + histórico), `/api/absences`
+(férias/ausências).
+
 Por omissão (`AUTH_ENABLED=false`), `/me` e outros endpoints autenticados exigem o
 cabeçalho de desenvolvimento `X-Dev-User-Email` (ver `app/security/current_user.py`) —
 por exemplo `chefe.sintetico@example.invalid`, criado pelo seed. Isto é um mecanismo de
@@ -115,7 +127,8 @@ cd frontend
 npm install
 cp .env.example .env.local   # ajustar se necessário
 npm run dev                  # http://localhost:5173, espera o backend em :8000
-npm run test                 # Vitest — hoje só a lógica do login de desenvolvimento (D-033)
+npm run lint                 # tsc --noEmit
+npm test                     # Vitest (vitest run) — login de desenvolvimento (D-033) + suite de UI (D-039)
 npm run build                # valida TypeScript + gera build de produção
 ```
 
@@ -125,10 +138,22 @@ Com o backend também a correr (`uvicorn` — ver acima), abrir
 `src/auth/msal.ts` e `docs/DECISIONS.md` D-031; aparece desativado sem
 `VITE_ENTRA_CLIENT_ID`/`VITE_ENTRA_TENANT_ID`/`VITE_ENTRA_API_SCOPE` configurados) e
 o mecanismo de desenvolvimento (`X-Dev-User-Email`, só em `vite dev`/testes por
-omissão) — depois lista de projetos com filtros por PM/estado/pesquisa, detalhe com
-edição autorizada por campo e histórico ao lado, e a fila de reconciliação de PM
-(`/reconciliation`). Validado manualmente ponta-a-ponta nesta fase — ver
-`docs/DECISIONS.md` D-027/D-031.
+omissão) — depois:
+
+- **Painel** (`/`, página inicial): indicadores reais do dashboard, ver acima.
+- **Projetos** (`/projects`, `/projects/:id`): lista com estado/próxima tarefa/prazo/
+  tarefas atrasadas/indicadores de dados em falta; detalhe com dados principais,
+  progresso do workflow, aviso de fotos pendentes, tarefas do projeto, edição
+  autorizada por campo, e histórico.
+- **Tarefas** (`/tasks`): todas as tarefas visíveis ao utilizador, filtráveis por
+  estado/responsável/atrasadas, com criação e transição de estado.
+- **Férias** (`/vacations`): registo e consulta de férias/ausências.
+- **Reconciliação de PM** (`/reconciliation`): fila de reconciliação da migração.
+- **Estado do sistema** (`/status`): diagnóstico técnico (saúde do backend,
+  integrações ativas, utilizador atual) — antiga página inicial da Fase 1.
+
+Validado manualmente ponta-a-ponta nesta fase — ver `docs/DECISIONS.md` D-027/D-031
+e D-032 a D-040 (Fase 1.5).
 
 Login Microsoft real requer uma app registration SPA (Authorization Code + PKCE, sem
 client secret) e uma app registration de API expondo o âmbito `access_as_user` — ver

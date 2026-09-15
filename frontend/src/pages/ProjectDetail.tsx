@@ -2,12 +2,24 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   ApiError,
+  DEFAULT_TASK_TYPE_LABELS,
   getProject,
   getProjectHistory,
+  listPeople,
+  listTasks,
+  Person,
   Project,
+  PROJECT_STATUS_LABELS,
   ProjectHistoryEntry,
+  TASK_ALLOWED_NEXT_STATUSES,
+  TASK_PRIORITY_LABELS,
+  TASK_STATUS_LABELS,
+  Task,
+  TaskStatus,
   updateProject,
+  updateTask,
 } from "../api/client";
+import { formatDatePt } from "../utils/dates";
 
 // Campos editáveis via API (ver app/schemas/projects.py:ProjectUpdate) —
 // clickup_status_mirror fica sempre de fora, fonte de verdade ClickUp.
@@ -26,10 +38,13 @@ export default function ProjectDetail() {
   const { projectId } = useParams<{ projectId: string }>();
   const [project, setProject] = useState<Project | null>(null);
   const [history, setHistory] = useState<ProjectHistoryEntry[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [people, setPeople] = useState<Person[]>([]);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [taskError, setTaskError] = useState<string | null>(null);
 
   function load() {
     if (!projectId) return;
@@ -45,9 +60,35 @@ export default function ProjectDetail() {
     getProjectHistory(projectId)
       .then(setHistory)
       .catch(() => setHistory([]));
+    listTasks({ project_id: projectId })
+      .then(setTasks)
+      .catch(() => setTasks([]));
   }
 
   useEffect(load, [projectId]);
+  useEffect(() => {
+    listPeople().then(setPeople).catch(() => setPeople([]));
+  }, []);
+
+  async function handleTaskStatusChange(task: Task, status: TaskStatus) {
+    setTaskError(null);
+    try {
+      await updateTask(task.id, { status });
+      load();
+    } catch (e) {
+      setTaskError(e instanceof ApiError ? e.detail : String(e));
+    }
+  }
+
+  async function handleTaskAssign(task: Task, personId: string) {
+    setTaskError(null);
+    try {
+      await updateTask(task.id, { assigned_to_person_id: personId || null });
+      load();
+    } catch (e) {
+      setTaskError(e instanceof ApiError ? e.detail : String(e));
+    }
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -95,9 +136,94 @@ export default function ProjectDetail() {
       <Link to="/projects">&larr; Projetos</Link>
       <h1>{project.name}</h1>
       <p style={{ color: "#666" }}>
-        PM: {project.pm_display_name ?? "— (não atribuído)"} · Estado ClickUp:{" "}
-        {project.clickup_status_mirror ?? "—"} · {project.is_active ? "Ativo" : "Inativo"}
+        PM: {project.pm_display_name ?? "— (não atribuído)"} · Estado: {PROJECT_STATUS_LABELS[project.status]} ·{" "}
+        {project.is_active ? "Ativo" : "Inativo"}
+        {project.overdue_tasks_count > 0 && (
+          <span style={{ color: "#a66" }}> · {project.overdue_tasks_count} tarefa(s) atrasada(s)</span>
+        )}
       </p>
+
+      <div style={{ marginBottom: "1rem" }}>
+        <div style={{ background: "#eee", borderRadius: 6, height: 10, maxWidth: 400, overflow: "hidden" }}>
+          <div
+            style={{
+              width: `${project.workflow_progress_percent}%`,
+              background: "#4F8A3B",
+              height: "100%",
+            }}
+          />
+        </div>
+        <span style={{ fontSize: "0.8rem", color: "#666" }}>
+          Progresso do workflow: {project.workflow_progress_percent}%
+        </span>
+      </div>
+
+      {project.photos_pending_warning && (
+        <div
+          style={{
+            background: "#fff4d6",
+            border: "1px solid #e0b73a",
+            borderRadius: 6,
+            padding: "0.75rem 1rem",
+            marginBottom: "1rem",
+          }}
+        >
+          ⚠️ Visita técnica/comissionamento concluídos — confirmar que as fotos foram colocadas na Drive e concluir a
+          tarefa "Colocar fotos na Drive".
+        </div>
+      )}
+
+      <section style={{ marginBottom: "1.5rem" }}>
+        <h2>Tarefas</h2>
+        {taskError && <p style={{ color: "crimson" }}>{taskError}</p>}
+        {tasks.length === 0 && <p style={{ color: "#666" }}>Sem tarefas para este projeto.</p>}
+        {tasks.length > 0 && (
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+              <tr style={{ textAlign: "left", borderBottom: "2px solid #ccc" }}>
+                <th style={{ padding: "0.4rem" }}>Tarefa</th>
+                <th style={{ padding: "0.4rem" }}>Responsável</th>
+                <th style={{ padding: "0.4rem" }}>Prioridade</th>
+                <th style={{ padding: "0.4rem" }}>Prazo</th>
+                <th style={{ padding: "0.4rem" }}>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tasks.map((t) => (
+                <tr key={t.id} style={{ borderBottom: "1px solid #eee", background: t.is_overdue ? "#fff4f4" : undefined }}>
+                  <td style={{ padding: "0.4rem" }}>{DEFAULT_TASK_TYPE_LABELS[t.task_type] ?? t.title}</td>
+                  <td style={{ padding: "0.4rem" }}>
+                    <select
+                      value={t.assigned_to_person_id ?? ""}
+                      onChange={(e) => handleTaskAssign(t, e.target.value)}
+                    >
+                      <option value="">— sem responsável —</option>
+                      {people.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.display_name}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td style={{ padding: "0.4rem" }}>{TASK_PRIORITY_LABELS[t.priority]}</td>
+                  <td style={{ padding: "0.4rem", color: t.is_overdue ? "#a66" : undefined }}>
+                    {formatDatePt(t.due_date)}
+                  </td>
+                  <td style={{ padding: "0.4rem" }}>
+                    <select value={t.status} onChange={(e) => handleTaskStatusChange(t, e.target.value as TaskStatus)}>
+                      {TASK_ALLOWED_NEXT_STATUSES[t.status].map((s) => (
+                        <option key={s} value={s}>
+                          {TASK_STATUS_LABELS[s]}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
 
       <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}>
         <form onSubmit={handleSave} style={{ flex: "1 1 380px", minWidth: 320 }}>

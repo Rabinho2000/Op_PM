@@ -11,8 +11,10 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.models.absence import Absence
 from app.models.identity import Role, RolePermission, User, UserRole
 from app.models.project import Project
+from app.models.task import Task
 
 
 class PermissionDenied(Exception):
@@ -76,4 +78,53 @@ def can_view_project(ctx: AuthContext, project: Project) -> bool:
         return True
     if ctx.has_permission("project.view_own"):
         return project.pm_person_id == ctx.person_id
+    return False
+
+
+def can_view_task(ctx: AuthContext, task: Task) -> bool:
+    """Uma tarefa é visível a quem consegue ver o projeto a que pertence, ou
+    a quem lhe está atribuída diretamente (mesmo que não seja o PM do
+    projeto — ex. um técnico atribuído pontualmente)."""
+    if task.assigned_to_person_id == ctx.person_id:
+        return True
+    return can_view_project(ctx, task.project)
+
+
+def can_edit_task(ctx: AuthContext, task: Task) -> bool:
+    if ctx.has_permission("task.edit_all"):
+        return True
+    if ctx.has_permission("task.edit_own"):
+        return task.project.pm_person_id == ctx.person_id or task.assigned_to_person_id == ctx.person_id
+    return False
+
+
+def can_create_task(ctx: AuthContext, project: Project) -> bool:
+    if ctx.has_permission("task.edit_all"):
+        return True
+    if ctx.has_permission("task.edit_own"):
+        return project.pm_person_id == ctx.person_id
+    return False
+
+
+def can_view_absence(ctx: AuthContext, absence: Absence) -> bool:
+    if ctx.has_permission("absence.view_all"):
+        return True
+    if ctx.has_permission("absence.view_own"):
+        return absence.person_id == ctx.person_id
+    return False
+
+
+def can_manage_absence(ctx: AuthContext, absence: Absence) -> bool:
+    if ctx.has_permission("absence.manage_all"):
+        return True
+    if ctx.has_permission("absence.manage_own"):
+        return absence.person_id == ctx.person_id
+    return False
+
+
+def can_create_absence_for(ctx: AuthContext, person_id: UUID) -> bool:
+    if ctx.has_permission("absence.manage_all"):
+        return True
+    if ctx.has_permission("absence.manage_own"):
+        return person_id == ctx.person_id
     return False

@@ -219,7 +219,21 @@ export interface Project {
   has_contact: boolean;
   created_at: string;
   updated_at: string;
+
+  // Derivados de tarefas — ver backend app/services/projects.py:compute_project_task_summary
+  status: "nao_iniciado" | "em_curso" | "concluido";
+  next_task_title: string | null;
+  next_task_due_date: string | null;
+  overdue_tasks_count: number;
+  workflow_progress_percent: number;
+  photos_pending_warning: boolean;
 }
+
+export const PROJECT_STATUS_LABELS: Record<Project["status"], string> = {
+  nao_iniciado: "Não iniciado",
+  em_curso: "Em curso",
+  concluido: "Concluído",
+};
 
 export interface ProjectHistoryEntry {
   id: string;
@@ -341,3 +355,227 @@ export const retryPromotionAfterRollback = (id: string) =>
   apiPost<StagingProjectRecord>(`/api/migration/staging-records/${id}/retry-promotion`);
 export const retryPmResolution = (id: string) =>
   apiPost<StagingProjectRecord>(`/api/migration/staging-records/${id}/retry-pm-resolution`);
+
+// --- /api/tasks ---
+
+export type TaskStatus = "todo" | "in_progress" | "blocked" | "done" | "cancelled";
+export type TaskPriority = "low" | "medium" | "high" | "urgent";
+
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+  todo: "Por fazer",
+  in_progress: "Em curso",
+  blocked: "Bloqueada",
+  done: "Concluída",
+  cancelled: "Cancelada",
+};
+
+export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = {
+  low: "Baixa",
+  medium: "Média",
+  high: "Alta",
+  urgent: "Urgente",
+};
+
+// Mesma máquina de estados de app/services/tasks.py:TASK_TRANSITIONS — só
+// para desenhar a UI (o servidor é sempre a fonte de verdade; um pedido
+// inválido continua a ser recusado mesmo que a UI deixasse passar).
+export const TASK_ALLOWED_NEXT_STATUSES: Record<TaskStatus, TaskStatus[]> = {
+  todo: ["todo", "in_progress", "blocked", "done", "cancelled"],
+  in_progress: ["in_progress", "todo", "blocked", "done", "cancelled"],
+  blocked: ["blocked", "todo", "in_progress", "cancelled"],
+  done: ["done", "todo", "in_progress"],
+  cancelled: ["cancelled", "todo"],
+};
+
+export const DEFAULT_TASK_TYPE_LABELS: Record<string, string> = {
+  visita_tecnica: "Visita técnica",
+  preparacao_instalacao: "Preparação da instalação",
+  instalacao: "Instalação",
+  comissionamento: "Comissionamento",
+  fotos_drive: "Colocar fotos na Drive",
+  custom: "Tarefa personalizada",
+};
+
+export interface Task {
+  id: string;
+  project_id: string;
+  title: string;
+  task_type: string;
+  description: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  assigned_to_person_id: string | null;
+  due_date: string | null;
+  completed_at: string | null;
+  notes: string;
+  created_by_person_id: string | null;
+  created_at: string;
+  updated_at: string;
+  project_name: string | null;
+  assigned_to_display_name: string | null;
+  is_overdue: boolean;
+}
+
+export interface TaskHistoryEntry {
+  id: string;
+  task_id: string;
+  field_name: string;
+  old_value: string | null;
+  new_value: string | null;
+  changed_by_person_id: string | null;
+  changed_by_person_name: string | null;
+  source: string;
+  note: string;
+  changed_at: string;
+}
+
+export interface TaskFilters {
+  project_id?: string;
+  status?: TaskStatus;
+  assigned_to_person_id?: string;
+  overdue_only?: boolean;
+  due_before?: string;
+  due_after?: string;
+}
+
+export function listTasks(filters: TaskFilters = {}): Promise<Task[]> {
+  const params = new URLSearchParams();
+  if (filters.project_id) params.set("project_id", filters.project_id);
+  if (filters.status) params.set("status", filters.status);
+  if (filters.assigned_to_person_id) params.set("assigned_to_person_id", filters.assigned_to_person_id);
+  if (filters.overdue_only) params.set("overdue_only", "true");
+  if (filters.due_before) params.set("due_before", filters.due_before);
+  if (filters.due_after) params.set("due_after", filters.due_after);
+  const qs = params.toString();
+  return apiGet<Task[]>(`/api/tasks${qs ? `?${qs}` : ""}`);
+}
+
+export const getTask = (id: string) => apiGet<Task>(`/api/tasks/${id}`);
+export const getTaskHistory = (id: string) => apiGet<TaskHistoryEntry[]>(`/api/tasks/${id}/history`);
+
+export interface TaskCreatePayload {
+  project_id: string;
+  title: string;
+  task_type?: string;
+  description?: string;
+  priority?: TaskPriority;
+  assigned_to_person_id?: string | null;
+  due_date?: string | null;
+  notes?: string;
+}
+
+export const createTask = (payload: TaskCreatePayload) => apiPost<Task>("/api/tasks", payload);
+
+export interface TaskUpdatePayload {
+  title?: string;
+  description?: string;
+  status?: TaskStatus;
+  priority?: TaskPriority;
+  assigned_to_person_id?: string | null;
+  due_date?: string | null;
+  notes?: string;
+}
+
+export const updateTask = (id: string, payload: TaskUpdatePayload) => apiPatch<Task>(`/api/tasks/${id}`, payload);
+
+// --- /api/absences ---
+
+export type AbsenceType = "ferias" | "baixa_medica" | "outro";
+export type AbsenceStatus = "aprovada" | "cancelada";
+
+export const ABSENCE_TYPE_LABELS: Record<AbsenceType, string> = {
+  ferias: "Férias",
+  baixa_medica: "Baixa médica",
+  outro: "Outro",
+};
+
+export interface Absence {
+  id: string;
+  person_id: string;
+  start_date: string;
+  end_date: string;
+  type: AbsenceType;
+  note: string;
+  status: AbsenceStatus;
+  created_by_person_id: string | null;
+  created_at: string;
+  updated_at: string;
+  person_display_name: string | null;
+}
+
+export function listAbsences(filters: { person_id?: string; status?: string } = {}): Promise<Absence[]> {
+  const params = new URLSearchParams();
+  if (filters.person_id) params.set("person_id", filters.person_id);
+  if (filters.status) params.set("status", filters.status);
+  const qs = params.toString();
+  return apiGet<Absence[]>(`/api/absences${qs ? `?${qs}` : ""}`);
+}
+
+export interface AbsenceCreatePayload {
+  person_id: string;
+  start_date: string;
+  end_date: string;
+  type?: AbsenceType;
+  note?: string;
+}
+
+export const createAbsence = (payload: AbsenceCreatePayload) => apiPost<Absence>("/api/absences", payload);
+export const cancelAbsence = (id: string) => apiPatch<Absence>(`/api/absences/${id}`, { status: "cancelada" });
+
+// --- /api/dashboard ---
+
+export interface ProjectMini {
+  id: string;
+  name: string;
+  pm_display_name: string | null;
+  start_date: string | null;
+  missing_fields: string[];
+}
+
+export interface TaskMini {
+  id: string;
+  title: string;
+  task_type: string;
+  priority: TaskPriority;
+  project_id: string;
+  project_name: string;
+  assigned_to_display_name: string | null;
+  due_date: string | null;
+}
+
+export interface AbsenceMini {
+  id: string;
+  person_id: string;
+  person_display_name: string;
+  start_date: string;
+  end_date: string;
+  type: AbsenceType;
+}
+
+export interface BirthdayMini {
+  person_id: string;
+  person_display_name: string;
+  birth_date: string;
+  days_until: number;
+}
+
+export interface DashboardSummary {
+  generated_at: string;
+  scope: "all" | "own" | "none";
+  week_start: string;
+  week_end: string;
+  active_projects_count: number;
+  projects_starting_next_30_days: ProjectMini[];
+  overdue_tasks: TaskMini[];
+  tasks_due_this_week: TaskMini[];
+  pending_technical_visits: TaskMini[];
+  pending_commissioning: TaskMini[];
+  projects_without_pm: ProjectMini[];
+  projects_missing_data: ProjectMini[];
+  current_absences: AbsenceMini[];
+  upcoming_absences: AbsenceMini[];
+  upcoming_birthdays: BirthdayMini[];
+  urgent_tasks: TaskMini[];
+}
+
+export const getDashboardSummary = () => apiGet<DashboardSummary>("/api/dashboard/summary");
