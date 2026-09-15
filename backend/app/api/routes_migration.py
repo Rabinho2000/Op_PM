@@ -17,6 +17,7 @@ from app.migration.staging import (
     promote_staging_record,
     resolve_candidate_project_ids,
     resolve_conflict,
+    retry_promotion_after_rollback,
     rollback_promotion,
 )
 from app.models.migration import ImportBatch, PersonReconciliationItem, StagingProjectRecord
@@ -163,6 +164,22 @@ def rollback_staging_record(
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    return StagingProjectRecordRead.model_validate(record)
+
+
+@router.post("/staging-records/{record_id}/retry-promotion", response_model=StagingProjectRecordRead)
+def retry_promotion_endpoint(
+    record_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+) -> StagingProjectRecordRead:
+    """Prepara para promover outra vez um registo já revertido por
+    `rollback_promotion` (D-036) — nunca automático, sempre exige esta
+    chamada explícita. Ver `app.migration.staging.retry_promotion_after_rollback`."""
+    _require_resolve(ctx)
+    try:
+        retry_promotion_after_rollback(db, staging_record_id=record_id, actor_person_id=ctx.person_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    record = db.get(StagingProjectRecord, record_id)
     return StagingProjectRecordRead.model_validate(record)
 
 

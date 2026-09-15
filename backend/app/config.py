@@ -150,18 +150,36 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _enforce_hardening_in_non_local_envs(self) -> "Settings":
         """Impede o arranque em staging/produção com configuração de
-        desenvolvimento. Isto corre sempre que `Settings()` é construído —
-        incluindo em `get_settings()`, chamado no import de `app.main` — por
-        isso uma configuração insegura impede mesmo o processo de arrancar,
-        não é só um aviso em runtime.
+        desenvolvimento ou incompleta. Isto corre sempre que `Settings()` é
+        construído — incluindo em `get_settings()`, chamado no import de
+        `app.main` — por isso uma configuração insegura impede mesmo o
+        processo de arrancar, não é só um aviso em runtime.
 
-        Regra explícita (ver docs/DECISIONS.md): em 'staging'/'production',
-        AUTH_ENABLED tem de ser verdadeiro, SECRET_KEY não pode ser o valor
-        de desenvolvimento, DATABASE_URL não pode ser SQLite, e
-        ENTRA_VALIDATION_MODE tem de ser 'real' — o validador de token
-        'mock' (D-024) nunca pode ser alcançável fora de local/test, mesmo
-        que alguém ligue AUTH_ENABLED sem querer dizer isso a sério. O
-        mecanismo de utilizador de desenvolvimento (`X-Dev-User-Email` —
+        Regra explícita (ver docs/DECISIONS.md D-020/D-032): em
+        'staging'/'production':
+        - AUTH_ENABLED tem de ser verdadeiro;
+        - SECRET_KEY não pode ser o valor de desenvolvimento nem vazio;
+        - DATABASE_URL não pode ser SQLite (tem de ser PostgreSQL);
+        - ENTRA_VALIDATION_MODE tem de ser 'real' — o validador de token
+          'mock' (D-024) nunca pode ser alcançável fora de local/test, mesmo
+          que alguém ligue AUTH_ENABLED sem querer dizer isso a sério;
+        - ENTRA_TENANT_ID, ENTRA_CLIENT_ID e ENTRA_REQUIRED_SCOPE têm de
+          estar preenchidos — sem eles não há tenant/scope a validar, e
+          `resolved_entra_issuer()`/`resolved_entra_jwks_url()` apontariam
+          para um URL inválido (D-032);
+        - CORS_ALLOWED_ORIGINS não pode ficar vazio — vazio nestes ambientes
+          significaria "nenhuma origem aceite" em runtime (ver
+          `resolved_cors_origins`), o que quase de certeza não é a intenção
+          de quem está a configurar isto, por isso falha já no arranque em
+          vez de deixar a API silenciosamente inacessível a qualquer
+          frontend (D-032);
+        - se algum de ENTRA_ISSUER/ENTRA_JWKS_URL/ENTRA_AUDIENCE for
+          definido explicitamente, os três têm de estar (um override
+          parcial deixaria os campos não definidos a cair para o valor
+          derivado de ENTRA_TENANT_ID/ENTRA_CLIENT_ID, uma mistura que quase
+          nunca é a intenção de quem define um override manual — D-032).
+
+        O mecanismo de utilizador de desenvolvimento (`X-Dev-User-Email` —
         ver `app/security/current_user.py`) tem uma segunda verificação
         independente, feita a cada pedido, para o mesmo efeito."""
         if self.app_env not in HARDENED_ENVIRONMENTS:
@@ -170,12 +188,32 @@ class Settings(BaseSettings):
         problems: list[str] = []
         if not self.auth_enabled:
             problems.append("AUTH_ENABLED tem de ser 'true'")
-        if self.secret_key == DEFAULT_DEV_SECRET_KEY:
-            problems.append("SECRET_KEY não pode usar o valor de desenvolvimento por omissão")
+        if self.secret_key == DEFAULT_DEV_SECRET_KEY or not self.secret_key.strip():
+            problems.append("SECRET_KEY não pode usar o valor de desenvolvimento por omissão nem ficar vazio")
         if self.database_url.startswith("sqlite"):
-            problems.append("DATABASE_URL não pode ser SQLite")
+            problems.append("DATABASE_URL não pode ser SQLite (tem de ser PostgreSQL)")
         if self.entra_validation_mode != "real":
             problems.append("ENTRA_VALIDATION_MODE tem de ser 'real' (nunca 'mock')")
+        if not self.entra_tenant_id.strip():
+            problems.append("ENTRA_TENANT_ID tem de estar preenchido")
+        if not self.entra_client_id.strip():
+            problems.append("ENTRA_CLIENT_ID tem de estar preenchido")
+        if not self.entra_required_scope.strip():
+            problems.append("ENTRA_REQUIRED_SCOPE tem de estar preenchido")
+        if not self.cors_allowed_origins.strip():
+            problems.append("CORS_ALLOWED_ORIGINS tem de ter pelo menos uma origem")
+
+        explicit_entra_overrides = {
+            "ENTRA_ISSUER": self.entra_issuer.strip(),
+            "ENTRA_JWKS_URL": self.entra_jwks_url.strip(),
+            "ENTRA_AUDIENCE": self.entra_audience.strip(),
+        }
+        if any(explicit_entra_overrides.values()) and not all(explicit_entra_overrides.values()):
+            missing = [name for name, value in explicit_entra_overrides.items() if not value]
+            problems.append(
+                "ENTRA_ISSUER/ENTRA_JWKS_URL/ENTRA_AUDIENCE: se um for definido explicitamente "
+                f"os três têm de ser — em falta: {', '.join(missing)}"
+            )
 
         if problems:
             raise ValueError(

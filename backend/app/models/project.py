@@ -175,7 +175,8 @@ class ProjectHistory(UUIDPk, Base):
     changed_by_person_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("people.id"), nullable=True
     )
-    # ui | import_legacy | clickup | financial | ai | migration_rollback | system
+    # ui | import_legacy | clickup | financial | ai | migration_rollback |
+    # migration_retry | system
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     note: Mapped[str] = mapped_column(Text, default="")
     # Preenchido só quando a alteração vem de uma promoção/rollback de
