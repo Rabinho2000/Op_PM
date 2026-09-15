@@ -1568,6 +1568,31 @@ de desenvolvimento local (Postgres), sem imagens do backend/frontend.
    auditada em `auth_audit_log` (evento `admin_bootstrap_user`; ligação
    de `entra_object_id`, evento `admin_provision_link`, mesmo nome já
    usado por `provision_entra_user.py`).
+
+   **Revisão de hardening (antes do merge do PR #5) — duas barreiras
+   adicionais, ambas na CLI real (`main()`), nunca no núcleo testável:**
+   - **Staging-only:** `assert_staging_environment` recusa `main()` fora
+     de `APP_ENV=staging` — nunca `production` (fora do âmbito deste
+     comando), nunca `local` (usar `app.migration.seed_dev`), nunca
+     `test` (os testes chamam `bootstrap_staging_users` diretamente,
+     nunca via CLI, para continuarem a correr em SQLite).
+   - **`--actor-email` deixa de ser texto livre:** `main()` resolve o
+     email a um `User` ativo e confirma a permissão `admin.manage_users`
+     (`_resolve_and_authorize_actor`) antes de qualquer escrita — email
+     desconhecido, utilizador inativo, ou utilizador sem essa permissão
+     são todos recusados, e nada é escrito (nem o catálogo) se a
+     autorização falhar. Um utilizador comum nunca consegue criar nem
+     promover ninguém (incl. administradores) através deste comando.
+     Exceção deliberada e estreita: se a base de dados ainda não tiver
+     nenhum `User` (arranque a frio — o mesmo problema do "primeiro
+     administrador" de qualquer sistema novo), a verificação é
+     dispensada só nesse caso, porque não existe nenhum "utilizador
+     comum" que pudesse abusar da ausência de verificação; assim que o
+     primeiro `User` existir, todas as corridas seguintes voltam a
+     exigir um ator autorizado. `AuthAuditLog.detail` passa a incluir o
+     `user_id`/`person_id` reais do ator verificado (nunca só o email em
+     texto livre, exceto no próprio caso de arranque a frio, onde ainda
+     não existe nenhum `User` a referenciar).
 2. `backend/Dockerfile` (multi-stage, utilizador não-root, `HEALTHCHECK`
    em `/health`, **nunca corre `alembic upgrade head` no arranque do
    container**) e `frontend/Dockerfile` (multi-stage, build Node com as
@@ -1591,18 +1616,36 @@ de desenvolvimento local (Postgres), sem imagens do backend/frontend.
    operador); secção 7 ganha a opção de arranque por containers.
    `docs/STAGING_CHECKLIST.md` secções 4/5/7 atualizadas para
    referenciar o novo comando e os dois eventos de auditoria esperados.
+4. `.github/workflows/ci.yml` ganha o job `docker-build` (novo) —
+   `docker build` do backend e do frontend (este último com placeholders
+   óbvios via `--build-arg`, nunca segredos reais) e
+   `docker compose -f docker-compose.staging.example.yml config` para
+   validar a composição, com um `backend/.env` temporário (placeholders,
+   apagado no fim do job) — nenhum destes passos sobe containers nem
+   precisa de PostgreSQL real. Resolve a ressalva "não foi possível
+   validar localmente sem Docker" desta mesma revisão.
 
 **Por decidir, não assumido nesta revisão (ver `docs/OPEN_QUESTIONS.md`):**
 alojamento concreto dos containers (cloud vs. on-premises, fornecedor);
 tenant Entra ID real; domínio de staging; "who can consent" no scope
 `access_as_user`; ativar `ENTRA_JIT_LINK_BY_EMAIL` em staging.
 
-**Testes:** `tests/test_provision_staging_cli.py` (16, novo) —
-idempotência, criação/atualização, rejeição de email/papel/Object ID
-duplicados ou inválidos, nunca reatribui um `entra_object_id` já ligado,
-nunca cria `Project`, `dry_run` sem rasto, barreira do ficheiro Git
-reutilizada. Suite completa: 252 passed, 2 skipped (SQLite).
-Dockerfiles/`docker-compose.staging.example.yml` não puderam ser
-validados com `docker build`/`docker compose` neste ambiente (sem Docker
-disponível) — revistos manualmente, a confirmar antes da primeira
-utilização real (mesma ressalva já existente em `docker-compose.yml`).
+**Testes:** `tests/test_provision_staging_cli.py` (30, +14 na revisão de
+hardening) — idempotência, criação/atualização, rejeição de email/papel/
+Object ID duplicados ou inválidos, nunca reatribui um `entra_object_id`
+já ligado, nunca cria `Project`, `dry_run` sem rasto, barreira do
+ficheiro Git reutilizada; e, novos: `assert_staging_environment` recusa
+`production`/`local`/`test` e aceita `staging`; ator desconhecido,
+inativo, e sem `admin.manage_users` são todos recusados; ator autorizado
+tem sucesso; `AuthAuditLog` grava o `user_id`/`person_id` reais do ator;
+nenhum registo (incl. catálogo) é escrito quando a validação do payload
+ou a autorização do ator falha; exceção de arranque a frio funciona uma
+única vez (sem nenhum `User` na base de dados) e deixa de se aplicar
+assim que existe pelo menos um. Suite completa: 266 passed, 2 skipped
+(SQLite). Dockerfiles/`docker-compose.staging.example.yml` continuam por
+validar com `docker build`/`docker compose` reais neste ambiente (sem
+Docker disponível na sandbox onde este PR foi preparado) — YAML validado
+sintaticamente (`ci.yml` e `docker-compose.staging.example.yml`
+carregados com PyYAML sem erro); o novo job `docker-build` do CI corre
+isto a sério no GitHub Actions (que tem Docker disponível), a confirmar
+quando o CI remoto correr.

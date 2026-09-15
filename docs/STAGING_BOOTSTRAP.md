@@ -25,17 +25,51 @@ Faz:
 - É seguro correr mais do que uma vez com o mesmo ficheiro — a segunda
   vez não duplica nada nem falha.
 - Regista tudo em auditoria (`auth_audit_log`, consultável diretamente
-  na base de dados).
+  na base de dados), sempre com o `user_id`/`person_id` reais de quem
+  executou o comando.
 
 Nunca faz:
 
+- **Nunca corre fora de `APP_ENV=staging`** — recusa-se explicitamente em
+  `production`, `local` e `test` com uma mensagem clara. Não há forma de
+  contornar isto por flag nenhuma.
+- **Nunca aceita `--actor-email` sem verificar quem é** — tem de
+  corresponder a um `User` ativo com a permissão `admin.manage_users`
+  (ou seja, já um administrador). Um utilizador comum nunca consegue
+  criar nem promover ninguém — nem a si próprio, nem a outra pessoa a
+  administrador — através deste comando. Ver "Primeira execução" abaixo
+  para a única exceção (a base de dados ainda não ter nenhum
+  utilizador).
 - Nunca cria projetos, tarefas, ou qualquer outro dado além de
   utilizadores/papéis.
 - Nunca guarda uma password (a autenticação é sempre feita pelo
   Microsoft Entra ID — ver `docs/STAGING_RUNBOOK.md` secção 2).
 - Nunca remove um utilizador ou um papel que já exista e não esteja no
   ficheiro — só acrescenta/atualiza.
+- Nunca escreve nada na base de dados (nem o catálogo) se o ficheiro for
+  inválido ou o `--actor-email` não for autorizado.
 - Nunca escreve nada na base de dados sem a flag `--confirm`.
+
+## Primeira execução (arranque a frio, sem nenhum administrador ainda)
+
+Numa base de dados de staging completamente vazia (schema criado pelo
+`alembic upgrade head`, mas sem nenhum `Person`/`User` ainda), não existe
+nenhum administrador para autorizar a primeira execução. Este é o mesmo
+problema do "primeiro administrador" de qualquer sistema novo — o
+comando trata-o de forma explícita: **só quando a base de dados não tem
+nenhum `User`**, a verificação de `--actor-email` é dispensada (o email
+que fornecer fica só registado em auditoria como quem executou, sem ser
+verificado — porque não há ainda nenhum utilizador contra o qual
+verificar). Assim que essa primeira execução criar o primeiro
+utilizador, **todas as execuções seguintes voltam a exigir um
+`--actor-email` que já seja administrador** — não há uma segunda
+oportunidade de contornar a verificação.
+
+Por isso, a primeira vez que correr este comando contra uma base de
+dados de staging nova, garanta que o ficheiro inclui pelo menos um
+utilizador com `"role": "administrador"` — caso contrário, ninguém
+consegue correr o comando outra vez sem editar a base de dados
+diretamente.
 
 ## Passo 1 — Preparar o ficheiro de utilizadores (fora do repositório)
 
@@ -73,8 +107,9 @@ dentro de `Op_PM/`) com esta forma exata:
 
 ## Passo 2 — Pré-visualizar (nunca escreve nada)
 
-A partir de `backend/`, com `DATABASE_URL` já a apontar para a base de
-dados de staging (mesma variável usada no resto do runbook):
+A partir de `backend/`, com `APP_ENV=staging` e `DATABASE_URL` já a
+apontar para a base de dados de staging (mesmas variáveis usadas no
+resto do runbook) — o comando recusa-se em qualquer outro `APP_ENV`:
 
 ```bash
 python -m app.cli.provision_staging \
@@ -82,6 +117,13 @@ python -m app.cli.provision_staging \
   --actor-email <o-seu-email> \
   --dry-run
 ```
+
+`<o-seu-email>` tem de ser o email de um `User` ativo que já seja
+administrador nesta base de dados — a menos que esta seja mesmo a
+primeira execução de sempre (ver "Primeira execução" acima), o comando
+recusa-se com uma mensagem clara se o email for desconhecido, o
+utilizador estiver inativo, ou não tiver a permissão
+`admin.manage_users`.
 
 Confirme o resumo impresso (`people_created`, `users_created`,
 `roles_assigned`, `entra_object_ids_linked`) antes de continuar — nada

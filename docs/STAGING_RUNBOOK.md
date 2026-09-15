@@ -344,16 +344,26 @@ mais do que uma vez com o mesmo ficheiro não duplica nada. Ver
 `docs/STAGING_BOOTSTRAP.md` para o procedimento passo-a-passo completo
 (formato do ficheiro, onde o guardar, confirmação em auditoria).
 
+**Duas barreiras de segurança (revisão de hardening):** o comando
+recusa-se fora de `APP_ENV=staging` (nunca `production`/`local`/`test`);
+e `--actor-email` tem de ser um `User` ativo já administrador
+(`admin.manage_users`) — nunca um texto não verificado, e nunca um
+utilizador comum consegue criar/promover ninguém através deste comando.
+Única exceção: a primeiríssima execução contra uma base de dados sem
+nenhum `User` ainda (ver `docs/STAGING_BOOTSTRAP.md`, "Primeira
+execução") — garanta que essa primeira execução já inclui um
+`"role": "administrador"` no ficheiro.
+
 ```bash
-# a partir de backend/, com DATABASE_URL já apontado a staging
+# a partir de backend/, com APP_ENV=staging e DATABASE_URL já apontado a staging
 python -m app.cli.provision_staging \
   --file /caminho/fora/do/repo/utilizadores_staging.json \
-  --actor-email <o-seu-email> \
+  --actor-email <email-de-um-administrador-ja-existente> \
   --dry-run   # confirmar o resumo antes de continuar
 
 python -m app.cli.provision_staging \
   --file /caminho/fora/do/repo/utilizadores_staging.json \
-  --actor-email <o-seu-email> \
+  --actor-email <email-de-um-administrador-ja-existente> \
   --confirm
 ```
 
