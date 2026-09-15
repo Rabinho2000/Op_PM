@@ -215,6 +215,74 @@ trabalho concreto de revisão (pode ser uma pessoa diferente de quem tem a
 permissão técnica, ex. um PM a confirmar a identidade de um antigo colega,
 com o Chefe de Operações só a "carimbar" a decisão final na fila).
 
+### 18. Férias/ausências: registo direto ou fluxo de pedido → aprovação?
+
+**Impacto:** `Absence` (Fase 1.5 — MVP dashboard/workflow) marca qualquer
+ausência criada como `aprovada` de imediato, sem nenhum passo de
+aprovação por outra pessoa — ver `docs/DECISIONS.md` D-035.
+
+**Decisão necessária:** o negócio quer mesmo registo direto (cada pessoa
+regista as suas próprias férias, o Chefe de Operações regista as de
+qualquer pessoa, sem aprovação intermédia), ou precisa de um fluxo real
+de pedido → aprovação (ex. PM pede, Chefe aprova antes de contar como
+confirmada)?
+
+**Recomendação por defeito (já implementada):** registo direto — mais
+simples, e nada impede adicionar um estado `pendente` + uma ação de
+aprovação mais tarde de forma aditiva, sem alterar o que já existe.
+
+### 19. Dashboard: férias/aniversários visíveis a toda a equipa, ou só aos próprios?
+
+**Impacto:** um PM ou Comercial (sem `absence.view_all`) só vê as suas
+próprias férias/ausências e o seu próprio aniversário no dashboard — nunca
+os de colegas. Ver `docs/DECISIONS.md` D-037.
+
+**Decisão necessária:** confirmar se esta é mesmo a política pretendida,
+ou se (prática comum em equipas pequenas) todos devem ver as férias/
+aniversários de toda a gente, para coordenação de equipa.
+
+**Recomendação por defeito (já implementada):** o lado mais restritivo —
+mudar para "toda a equipa vê tudo" é uma alteração pequena (dar
+`absence.view_all` a mais perfis em `app/security/catalog.py`), mas o
+inverso (restringir depois de já ter sido visto por todos) não desfaz a
+exposição já acontecida.
+
+### 20. Unificar `Task` com o sistema `Phase`/`WorkflowStage`/`WorkflowSubtask`?
+
+**Impacto:** o MVP dashboard/workflow criou uma entidade `Task` genérica
+(ver `docs/DECISIONS.md` D-032) que coexiste, sem qualquer ligação, com o
+sistema de processo já modelado antes desta fase (`Phase`→
+`WorkflowStage`→`WorkflowSubtask` + `ProjectStageProgress`/
+`ProjectSubtaskProgress`) — este último semeado (`seed_workflow`) mas sem
+endpoint nem UI ligados em nenhuma fase até agora.
+
+**Decisão necessária:** vale a pena investir em unificar os dois (ex. cada
+`WorkflowSubtask` do catálogo gerar automaticamente uma `Task` por
+projeto, com o catálogo a continuar a definir a ordem/responsável por
+omissão), ou os dois propósitos são suficientemente diferentes para
+coexistirem indefinidamente (checklist de processo fixo vs. tarefas
+livres com responsável/prazo/prioridade)?
+
+**Recomendação por defeito:** nenhuma — depende de o negócio querer mesmo
+usar o processo fixo por fases (`Phase`/`WorkflowStage`) nalguma fase
+futura; se nunca vier a ser ligado a um endpoint/UI, mais vale remover
+essa estrutura do que mantê-la morta.
+
+### 21. A checklist padrão de 5 tarefas deve ser fixa ou configurável?
+
+**Impacto:** `app/services/tasks.py:ensure_default_tasks_for_project` cria
+sempre as mesmas 5 tarefas (visita técnica, preparação da instalação,
+instalação, comissionamento, colocar fotos na Drive) para qualquer
+projeto — não há noção de "tipo de projeto" com checklists diferentes.
+
+**Decisão necessária:** todos os projetos (residencial, comercial,
+industrial, manutenção...) seguem mesmo esta mesma checklist de 5 passos,
+ou existem tipos de projeto que precisam de passos diferentes?
+
+**Recomendação por defeito:** manter fixo enquanto só há um tipo de
+projeto observado nos dados reais — tornar configurável por tipo de
+projeto é um alargamento aditivo simples quando/se for preciso.
+
 ## Podem ser decididas mais tarde
 
 - **Atualização major de `vite` (5→8) e `react-router-dom` (6→7).**
@@ -231,7 +299,8 @@ com o Chefe de Operações só a "carimbar" a decisão final na fila).
 - Fornecedor do serviço de mapas/rotas.
 - Modelo específico do Claude a usar em produção (a interface já é
   agnóstica ao modelo — `Settings.claude_model`).
-- Aparência final do dashboard.
+- Aparência final do dashboard (Fase 1.5 entregou uma primeira versão
+  funcional, estilo utilitário/tabelas — sem investimento de design ainda).
 - Notificações por email, Teams, ou só dentro da aplicação (`notifications`
   já modelado, sem canal de entrega definido).
 - Relatórios adicionais além do semanal.
@@ -251,3 +320,10 @@ com o Chefe de Operações só a "carimbar" a decisão final na fila).
   Resolvida arquiteturalmente: separação `Person`/`User` (D-003) — todos os
   PMs (ativos ou não) existem como `Person` para preservar o histórico;
   só até 5 têm `User` (conta de login) associada.
+- **"Qual é o primeiro MVP: migração real dos 295 projetos, ou uma
+  ferramenta operacional interna (dashboard/tarefas) com dados
+  sintéticos?"** — Resolvida por instrução explícita do negócio: o MVP
+  passou a ser Fase 0 + Fase 1 + Fase 1.5 (dashboard/workflow), **sem** a
+  Fase 2 — ver "Primeiro MVP recomendado" em `docs/PLAN.md`. A migração
+  real dos 295 projetos continua planeada como Fase 2, só que depois deste
+  MVP, não antes.

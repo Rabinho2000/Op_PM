@@ -225,6 +225,88 @@ Ver `docs/DECISIONS.md` D-024 a D-027 para o detalhe técnico completo.
   aberto até à pergunta bloqueante nº 1 ser respondida** — não é um
   critério que este repositório possa cumprir sozinho.
 
+## Fase 1.5 — MVP operacional: dashboard, tarefas e workflow (IMPLEMENTADA)
+
+Pedida explicitamente pelo negócio como o MVP a entregar antes da Fase 2
+(migração real dos 295 projetos) — ver "MVP recomendado" mais abaixo para a
+justificação de porque este MVP passou à frente daquele. Não depende da
+Fase 2: usa só os projetos sintéticos já semeados, exatamente como as fases
+anteriores. Ver `docs/DECISIONS.md` D-032 a D-040 para o detalhe técnico
+completo.
+
+- **Objetivo:** uma aplicação utilizável internamente desde já — página
+  inicial com indicadores reais, tarefas com responsável/prazo/estado por
+  projeto, férias/ausências, aniversários — antes de qualquer integração
+  externa ou migração de dados reais.
+- **O que ficou feito:**
+  1. `app/models/task.py`: entidade `Task` genérica (projeto, título, tipo,
+     descrição, estado, prioridade, responsável, prazo, data de conclusão,
+     notas, criado por, timestamps) + `TaskHistory` append-only. Entidade
+     nova, não reaproveita `Phase`/`WorkflowStage`/`ProjectSubtaskProgress`
+     já existentes — ver D-032 para a justificação.
+  2. Máquina de estados (`todo`/`in_progress`/`blocked`/`done`/
+     `cancelled`) aplicada no servidor, nunca confiada ao cliente — D-033.
+  3. `app/services/tasks.py:ensure_default_tasks_for_project`: checklist
+     padrão de 5 tarefas por projeto (visita técnica, preparação da
+     instalação, instalação, comissionamento, colocar fotos na Drive),
+     idempotente.
+  4. `app/models/absence.py`: entidade `Absence` (pessoa, data
+     inicial/final, tipo, nota, estado) — modelo mínimo, sem fluxo de
+     aprovação nesta fase (D-035). `Person` ganha `birth_date`.
+  5. `GET /api/dashboard/summary`: todos os indicadores da página inicial
+     calculados no servidor (projetos ativos, a começar em 30 dias,
+     tarefas atrasadas/pendentes esta semana — sempre em `Europe/Lisbon`,
+     visitas técnicas/comissionamentos pendentes, projetos sem PM/dados em
+     falta, férias atuais/próximas, aniversários próximos, trabalhos
+     urgentes) — nunca calculados no frontend a partir de listas completas
+     (D-034).
+  6. `ProjectRead` ganha indicadores derivados de tarefas: estado
+     (`nao_iniciado`/`em_curso`/`concluido`), próxima tarefa e prazo,
+     contagem de tarefas atrasadas, progresso do workflow (%), e o aviso
+     persistente de fotos pendentes (reaproveita a tarefa padrão
+     `fotos_drive`, sem campo novo — D-036).
+  7. Matriz de permissões alargada: `task.view_all`/`_own`,
+     `task.edit_all`/`_own`, `absence.view_all`/`_own`,
+     `absence.manage_all`/`_own` — ver D-038 para a tabela completa por
+     perfil. Visibilidade de férias/aniversários no dashboard ligada a
+     `absence.view_all`/`_own` (privacidade por omissão — D-037).
+  8. Frontend: `/` passa a ser o painel operacional (`Home.tsx`); conteúdo
+     técnico anterior preservado em `/status` (`SystemStatus.tsx` — D-040);
+     páginas novas `/tasks` e `/vacations`; `ProjectsList`/`ProjectDetail`
+     atualizadas com os novos indicadores, tarefas do projeto, e o aviso de
+     fotos.
+  9. Primeira infraestrutura de testes de frontend (Vitest + Testing
+     Library) — D-039.
+- **Entidades:** `tasks`, `task_history`, `absences` (novas); `people`
+  ganha `birth_date`.
+- **Integrações:** nenhuma — continuam todas mock/fallback. Nenhum dado
+  financeiro em nenhum indicador (o módulo Financial está fora deste MVP),
+  por isso a vista Comercial nunca mostra dado financeiro nenhum, sem
+  precisar de nenhuma lógica extra de ocultação (ver D-038).
+- **Testes:** `tests/test_tasks_api.py` (17), `tests/test_absences_api.py`
+  (10), `tests/test_dashboard.py` (12), `tests/test_project_task_summary.py`
+  (6) — 178 testes de backend no total (era 133), todos a passar em SQLite.
+  Frontend: `src/utils/dates.test.ts`, `src/api/taskTransitions.test.ts`,
+  `src/pages/Home.test.tsx` — 14 testes Vitest.
+- **Riscos:** ver "Riscos técnicos e operacionais" mais abaixo.
+- **Rollback:** módulo aditivo — nenhuma tabela nem endpoint pré-existente
+  foi alterado de forma incompatível (só `ProjectRead` ganhou campos novos,
+  sempre com omissão razoável). Reverter para o commit anterior a esta fase
+  remove `/`, `/tasks`, `/vacations` e os indicadores novos sem afetar
+  autenticação, CRUD de projetos, ou migração.
+- **Critérios de conclusão (cumpridos):** login com utilizador de
+  desenvolvimento funcional; página inicial mostra métricas reais vindas da
+  base de dados; abrir um projeto mostra tarefas/histórico/avisos/progresso;
+  criar/atribuir/concluir/reabrir tarefas funciona ponta-a-ponta (validado
+  manualmente no browser — mudar o estado de "Colocar fotos na Drive" para
+  concluída faz o aviso desaparecer e o progresso subir para 100% em tempo
+  real); tarefas atrasadas aparecem no dashboard; visita técnica e
+  comissionamento geram o aviso das fotos; férias e aniversários aparecem
+  no dashboard, respeitando permissões; permissões de PM/Comercial/Chefe/
+  Administrador respeitadas (verificado também manualmente trocando de
+  utilizador no browser); 178 testes de backend + 14 de frontend a passar;
+  `npm run build` sem erros; nenhum dado real migrado.
+
 ## Fase 2 — Migração real dos 295 projetos (staging → produção)
 
 - **Objetivo:** migrar os dados reais do repositório do código legado
@@ -364,7 +446,8 @@ Fase 2, quando na realidade só depende da Fase 1).
 | Fase | Depende de | Porquê |
 |---|---|---|
 | Fase 1 — Auth real + CRUD | Fase 0 | Fundação técnica. |
-| Fase 2 — Migração real dos 295 projetos | Fase 1 | Precisa de permissões/auditoria reais antes de tocar em dados reais. |
+| Fase 1.5 — MVP dashboard/workflow | Fase 1 | Precisa de permissões/CRUD de projetos reais para ter algo a mostrar num dashboard; não depende da Fase 2 — usa só os projetos sintéticos. |
+| Fase 2 — Migração real dos 295 projetos | Fase 1 | Precisa de permissões/auditoria reais antes de tocar em dados reais; pode correr em paralelo com a Fase 1.5. |
 | Fase 3 — Graph real (visitas/calendário) | Fase 1 | Não depende da migração — só de autenticação/permissões reais. |
 | Fase 4 — ClickUp real | Fase 2 | Precisa dos projetos já migrados para mapear `task_id`. |
 | Fase 5 — Inventário/custos | Fase 2 | Precisa dos projetos já migrados para atribuir stock/custos. |
@@ -393,14 +476,20 @@ estarem ambas concluídas.
 | Validação de token Entra ID (real e mock) | Implementado e testado (`tests/test_auth_entra.py`) |
 | Endpoints CRUD de projetos + permissões + histórico | Implementado e testado (`tests/test_project_api.py`) |
 | Endpoints de migração (resolução, nunca ingestão) | Implementado e testado (`tests/test_migration_api.py`) |
+| Tarefas: CRUD, máquina de estados, atribuição, permissões, histórico | Implementado e testado (`tests/test_tasks_api.py`) |
+| Indicadores derivados de projeto (estado, próxima tarefa, progresso, aviso de fotos) | Implementado e testado (`tests/test_project_task_summary.py`) |
+| Férias/ausências: CRUD, validação de datas, permissões | Implementado e testado (`tests/test_absences_api.py`) |
+| Dashboard: cada indicador, escopo por perfil, fuso Europe/Lisbon | Implementado e testado (`tests/test_dashboard.py`) |
+| Frontend: funções puras, máquina de estados espelhada, fumo do painel inicial | Implementado e testado (Vitest — `src/utils/dates.test.ts`, `src/api/taskTransitions.test.ts`, `src/pages/Home.test.tsx`) |
 | Autenticação Entra ID real ponta-a-ponta (tenant de verdade) | Bloqueado pela pergunta nº 1 — código pronto, validado só com mock |
 | Integração Graph/ClickUp/Financial/Claude reais | Por implementar (Fases 3, 4, 5, 7) |
-| Frontend (além do build e validação manual) | Sem testes automatizados de UI ainda (Playwright/Cypress — ver D-027) |
+| Frontend end-to-end (fluxos completos, não só funções/fumo) | Sem Playwright/Cypress ainda — ver D-027/D-039 |
 
 CI (`.github/workflows/ci.yml`) corre a cada push/PR: backend contra SQLite
 (rápido, sem serviços), backend contra um serviço PostgreSQL do próprio
 GitHub Actions (D-021 — valida `batch_alter_table`, `Numeric`, `GUID` no
-motor de produção-alvo), e build do frontend.
+motor de produção-alvo), e o job de frontend (lint/`tsc --noEmit`, Vitest,
+build — D-039).
 
 ## Plano de segurança e privacidade
 
@@ -475,10 +564,23 @@ staging.
 
 ## Primeiro MVP recomendado
 
-**MVP = Fase 0 (feita) + Fase 1 + Fase 2**: autenticação real, endpoints
-CRUD de projetos/workflow atrás de permissões reais, e os 295 projetos reais
-migrados para staging com a fila de conflitos revista e resolvida. Isto
-entrega o valor mais crítico (login real, permissões reais, histórico
-completo, dados reais preservados e mapeados por ID estável) antes de
-qualquer funcionalidade nova — visitas, inventário, custos, documentos e IA
-constroem-se todos sobre esta base.
+**Recomendação original desta análise:** Fase 0 + Fase 1 + Fase 2
+(autenticação real, CRUD de projetos/workflow atrás de permissões reais, e
+os 295 projetos reais migrados para staging com a fila de conflitos revista
+e resolvida) — priorizava dados reais preservados e mapeados por ID
+estável antes de qualquer funcionalidade nova.
+
+**MVP efetivamente pedido e construído: Fase 0 + Fase 1 + Fase 1.5**
+(dashboard/workflow — ver acima), deliberadamente **sem** a Fase 2. O
+negócio decidiu ter uma ferramenta internamente utilizável (acompanhar
+projetos, tarefas, trabalhos pendentes) o mais cedo possível, com dados
+sintéticos, antes de investir no esforço de revisão manual que a migração
+real dos 295 projetos exige (reconciliação de PM, resolução de conflitos —
+ver Fase 2 abaixo). Isto inverte a recomendação original por decisão de
+negócio, não por descoberta técnica nova — os riscos documentados da Fase 2
+continuam válidos e por resolver quando essa fase avançar.
+
+**Consequência prática:** este MVP é demonstrável e usável com dados
+sintéticos (seed), mas **nenhum projeto real está na plataforma ainda** —
+até a Fase 2 avançar, esta app funciona em paralelo com o processo/
+repositório legado, não o substitui.

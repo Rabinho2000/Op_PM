@@ -825,3 +825,271 @@ visivelmente desativado com a explicação, secção de desenvolvimento
 separada por um divisor visual; login de desenvolvimento continua
 funcional ponta-a-ponta (entrar, `NavBar` a mostrar a sessão, listagem de
 projetos a carregar, logout a limpar a sessão e devolver a `/login`).
+
+# Fase 1.5 — MVP dashboard/workflow
+
+Pedido explicitamente pelo negócio como o MVP a entregar antes da Fase 2
+(migração real dos 295 projetos) — ver a secção "MVP recomendado" em
+`docs/PLAN.md` para a justificação de porque este MVP avança antes daquele.
+Nenhuma integração real (Graph/ClickUp/Financial/Claude), sem envio de
+email, sem eventos reais, sem mapas/inventário/pedidos de
+material/biblioteca documental, sem migração de dados reais — tudo isso
+continua fora de âmbito e documentado no roadmap (`docs/PLAN.md`).
+
+## D-032 — `Task` como entidade nova, não reaproveitamento de `Phase`/`WorkflowStage`/`ProjectSubtaskProgress`
+
+**Contexto:** já existia em `app/models/workflow.py` +
+`app/models/project.py` um sistema de processo fixo — `Phase` →
+`WorkflowStage` → `WorkflowSubtask` (catálogo) e
+`ProjectStageProgress`/`ProjectSubtaskProgress` (progresso booleano por
+projeto). O pedido deste MVP é uma tarefa genérica com responsável,
+prioridade, prazo, notas, estado (`todo`/`in_progress`/`blocked`/`done`/
+`cancelled`) e histórico de alterações — criável/editável livremente pelo
+utilizador, não só um checklist de catálogo fixo.
+
+**Decisão:** criar `app/models/task.py` (`Task`, `TaskHistory`) como
+entidade nova, em vez de alargar `ProjectSubtaskProgress` com todos estes
+campos. As duas estruturas **coexistem nesta fase, sem nenhuma migração de
+dados entre elas** — `Phase`/`WorkflowStage`/`WorkflowSubtask` continuam
+semeados (`seed_workflow`) mas sem endpoint nem UI ligados nesta fase (já
+assim antes desta sessão — ver "Âmbito deixado de fora da Fase 1").
+
+**Porquê não reaproveitar:** `ProjectSubtaskProgress` é uma tabela de
+junção `(projeto, subtarefa) → done`, com a subtarefa definida uma vez no
+catálogo (`WorkflowSubtask`) e partilhada por todos os projetos —
+alargá-la para ter responsável/prioridade/prazo/notas próprios por
+projeto exigiria duplicar `WorkflowSubtask` por projeto (perdendo a
+vantagem de catálogo único) ou mover esses campos para uma tabela nova de
+qualquer forma. Criar `Task` direta e simples é menos código e mais claro
+do que forçar um encaixe.
+
+**Consequência assumida:** o sistema tem agora dois modelos de "trabalho a
+fazer" com propósitos ligeiramente diferentes — decisão consciente,
+registada aqui e em `docs/OPEN_QUESTIONS.md` como pergunta em aberto para
+uma fase futura decidir se compensa unificar (ex.: `WorkflowSubtask`
+passar a gerar automaticamente uma `Task` por projeto).
+
+## D-033 — Máquina de estados de `Task`: `blocked` nunca salta direto para `done`; `done`/`cancelled` só reabrem para `todo`/`in_progress`
+
+**Decisão** (`app/services/tasks.py:TASK_TRANSITIONS`):
+
+```text
+todo         -> todo, in_progress, blocked, done, cancelled
+in_progress  -> in_progress, todo, blocked, done, cancelled
+blocked      -> blocked, todo, in_progress, cancelled       (nunca done)
+done         -> done, todo, in_progress                     (reabertura)
+cancelled    -> cancelled, todo                              (reabertura)
+```
+
+Uma transição para o mesmo estado é sempre um no-op permitido (sem gerar
+histórico); qualquer transição fora desta tabela é rejeitada com `400` e
+sem qualquer escrita (`InvalidTaskTransition`,
+`app/api/routes_tasks.py`).
+
+**Porquê:** o pedido explícito era "criadas, editadas, atribuídas,
+concluídas, reabertas" — não uma máquina de estados detalhada, por isso a
+regra concreta é uma decisão de implementação, não um requisito do
+negócio (registado aqui para revisão, não assumido como definitivo). A
+única regra de negócio considerada não-arbitrária: uma tarefa bloqueada
+não devia poder "saltar" para concluída sem primeiro ser desbloqueada —
+sinaliza um erro operacional real (ex. marcar como feito por engano sem
+resolver o bloqueio). `done`/`cancelled` só reabrirem para `todo`/
+`in_progress` (nunca um do outro diretamente) mantém o histórico legível:
+reabrir sempre volta ao início do fluxo ativo, nunca troca diretamente
+entre dois estados terminais.
+
+`completed_at` é sempre derivado do lado do servidor a partir da
+transição de/para `done` — nunca um campo editável em `TaskUpdate`
+(`app/schemas/tasks.py`), para não haver uma segunda fonte de verdade
+sobre "quando foi concluída".
+
+**Testes:** `tests/test_tasks_api.py` (transição válida com histórico e
+`completed_at`; `blocked → done` rejeitado; `cancelled` só reabre para
+`todo`; reabrir `done` limpa `completed_at`).
+
+## D-034 — Dashboard: endpoint de resumo único, calculado inteiramente no servidor; semana sempre em Europe/Lisbon; indicadores operacionais só contam projetos ativos
+
+**Decisão:** `GET /api/dashboard/summary` (`app/services/dashboard.py`)
+devolve todos os indicadores da página inicial já calculados e já
+filtrados pela visibilidade do utilizador — o frontend nunca soma/filtra
+listas completas para produzir uma métrica (requisito explícito: "os
+dados devem vir de endpoints próprios de resumo/dashboard").
+
+**Fuso horário centralizado:** `app/utils/timezones.py` (`today_lisbon()`,
+`week_range_lisbon()`) é o único ponto que sabe que "hoje"/"esta semana"
+usam `Europe/Lisbon` — usado por `Task.is_overdue`,
+`app/services/tasks.py` (filtro `overdue_only`), e
+`app/services/dashboard.py`. Sem isto, um servidor alojado noutro fuso
+(UTC, por exemplo) calcularia "esta semana" de forma diferente do que uma
+pessoa em Portugal veria no calendário. Dependência nova: `tzdata` — o
+Windows (e alguns Linux mínimos) não trazem a base de dados IANA que
+`zoneinfo` precisa; confirmado neste ambiente de desenvolvimento
+(`ZoneInfoNotFoundError` sem o pacote).
+
+**Só projetos ativos entram nos indicadores operacionais** —
+`active_projects_count`, "a começar em 30 dias", "sem PM", "dados em
+falta" já filtravam por `is_active` desde a primeira versão; durante a
+verificação manual em navegador desta sessão encontrou-se um bug real: as
+tarefas de um projeto inativo (`Instalação Sintética H — Inativa`, com
+checklist padrão semeada de propósito para testar isto) apareciam em
+"visitas técnicas pendentes"/"comissionamentos pendentes"/"tarefas
+atrasadas", porque esses indicadores vinham de `visible_tasks_query` sem
+o mesmo filtro. Corrigido filtrando pelas tarefas do **próprio projeto**
+(`t.project.is_active`), não pela lista de projetos ativos já calculada —
+para não excluir por engano uma tarefa atribuída diretamente ao
+utilizador num projeto ativo que não é o seu como PM. Teste de regressão:
+`tests/test_dashboard.py::test_tasks_of_inactive_projects_never_appear_in_operational_lists`.
+
+**Testes:** `tests/test_dashboard.py` (escopo por perfil, semana em
+Europe/Lisbon, cada indicador com pelo menos um caso semeado real).
+
+## D-035 — `Absence`: modelo mínimo, sem fluxo de aprovação nesta fase
+
+**Decisão:** `Absence` (`app/models/absence.py`) tem só os campos
+pedidos — pessoa, data inicial, data final, tipo (`ferias`/
+`baixa_medica`/`outro`), nota, estado (`aprovada`/`cancelada`). Criar uma
+ausência já a marca `aprovada` — não existe um estado `pendente` nem um
+passo de aprovação por outra pessoa. Depois de criada, só `status` e
+`note` são editáveis (`AbsenceUpdate`) — alterar datas/pessoa/tipo exige
+cancelar e criar de novo, para o registo nunca ficar ambíguo sobre "o que
+mudou realmente" sem precisar de histórico próprio (ao contrário de
+`Task`/`Project`, `Absence` não tem uma tabela de histórico — âmbito
+deliberadamente mínimo).
+
+**Porquê:** o pedido foi "criar entidade... e uma interface simples para
+consultar e registar férias" — não descreveu um fluxo de
+pedido→aprovação. Assumir `aprovada` por omissão evita inventar um
+fluxo que o negócio pode não querer. **Registado como pergunta em
+aberto** em `docs/OPEN_QUESTIONS.md`: se for necessário um fluxo real de
+aprovação (ex. PM pede, Chefe aprova), isto exige um novo estado
+`pendente` e uma ação de aprovação — mudança pequena e aditiva quando
+decidido.
+
+**Testes:** `tests/test_absences_api.py` (criação fica `aprovada`, datas
+inválidas rejeitadas, permissões por perfil, cancelamento).
+
+## D-036 — Aviso de fotos pendentes: reaproveita a tarefa padrão `fotos_drive`, sem novo campo booleano
+
+**Decisão:** o pedido "quando uma tarefa de visita técnica ou
+comissionamento for concluída, mostrar um aviso persistente para
+confirmar que as fotos foram colocadas na Drive" é resolvido inteiramente
+a partir das tarefas já existentes — `ProjectRead.photos_pending_warning`
+(`app/services/projects.py:compute_project_task_summary`) é `True` quando
+pelo menos uma tarefa `visita_tecnica`/`comissionamento` está `done` **e**
+a tarefa `fotos_drive` desse projeto ainda não está `done`. Sem nenhum
+campo novo em `Project` nem em `Task` — o aviso desaparece sozinho assim
+que alguém marcar "Colocar fotos na Drive" como concluída.
+
+**Porquê:** a checklist padrão de 5 tarefas por projeto já inclui
+"Colocar fotos na Drive" como a última etapa (pedido explícito da secção
+2) — usá-la como o próprio sinal do aviso evita um segundo lugar para a
+mesma informação poder divergir (ex. um booleano `photos_confirmed` que
+alguém esquece de sincronizar com o estado real da tarefa).
+
+**Nesta fase o aviso é só informativo** (banner na página do projeto,
+ícone ⚠️ na lista de projetos) — nunca bloqueia nenhuma ação, tal como
+pedido explicitamente ("nesta fase o aviso é apenas interno; não fazer
+integração com a Drive").
+
+**Testes:** `tests/test_project_task_summary.py` (aviso só quando visita/
+comissionamento concluída e fotos não; desaparece ao concluir fotos);
+validado também manualmente no browser (ver verificação end-to-end desta
+sessão).
+
+## D-037 — Visibilidade de férias/aniversários no dashboard ligada a `absence.view_all`/`absence.view_own`
+
+**Decisão:** quem tem `absence.view_all` (Chefe de Operações,
+Administrador) vê as férias/ausências e os aniversários de toda a gente
+no dashboard; quem só tem `absence.view_own` (PM, Comercial, Financeiro)
+só vê os seus próprios — nunca os de terceiros. O mesmo par de permissões
+controla os dois indicadores (não há uma permissão separada só para
+aniversários) porque são a mesma categoria de informação pessoal de baixa
+sensibilidade, tratada com o mesmo nível de acesso.
+
+**`PersonRead` (`GET /api/people`, disponível a qualquer utilizador
+autenticado para preencher filtros/dropdowns) nunca inclui `birth_date`**
+— só o endpoint do dashboard expõe data de nascimento, e só ao subconjunto
+de pessoas que a permissão do utilizador autoriza (`BirthdayMini`, via
+`_birthday_scoped_people_query` em `app/services/dashboard.py`). Evita que
+adicionar `birth_date` a `Person` vaze essa informação por um caminho não
+pensado para isso.
+
+**Porquê esta escolha e não "todos veem tudo":** o pedido dizia
+explicitamente "não expor informação sensível desnecessária" na secção de
+férias/aniversários — restringir por omissão é mais seguro do que expor
+por omissão e ter de restringir depois. **Registado como pergunta em
+aberto** em `docs/OPEN_QUESTIONS.md`: pode ser que o negócio prefira que
+todos vejam as férias/aniversários da equipa toda (prática comum em
+empresas pequenas) — mudar é trivial (dar `absence.view_all` a mais
+perfis), mas decidido aqui pelo lado mais restritivo até confirmação.
+
+**Testes:** `tests/test_dashboard.py::test_pm_without_absence_view_all_only_sees_own_birthday`.
+
+## D-038 — Matriz de permissões alargada: `task.*`/`absence.*`, e o que cada perfil ganhou
+
+**Decisão** (`app/security/catalog.py`):
+
+| Permissão | Chefe Operações | PM | Comercial | Financeiro |
+|---|---|---|---|---|
+| `task.view_all` / `task.view_own` | `view_all` | `view_own` | `view_all` | `view_all` |
+| `task.edit_all` / `task.edit_own` | `edit_all` | `edit_own` | — | — |
+| `absence.view_all` / `absence.view_own` | `view_all` | `view_own` | `view_own` | `view_own` |
+| `absence.manage_all` / `absence.manage_own` | `manage_all` | `manage_own` | `manage_own` | `manage_own` |
+
+`can_edit_task`/`can_create_task`/`can_view_task` e
+`can_manage_absence`/`can_view_absence`/`can_create_absence_for`
+(`app/security/permissions.py`) seguem exatamente o mesmo padrão já
+estabelecido por `can_edit_project`/`can_view_project` — nunca um "papel"
+lido do cliente, sempre a permissão + a relação (PM do projeto, ou
+responsável direto pela tarefa/ausência).
+
+**Comercial e Financeiro passam a ter `task.view_all`** (consistente com
+o `project.view_all` que já tinham) mas **não** `task.edit_all`/`_own` —
+continuam só de leitura sobre tarefas, tal como já eram só de leitura
+sobre projetos (`test_comercial_is_read_only_on_tasks`). Nenhuma alteração
+a permissões pré-existentes (`project.*`, `cost.*`, etc.) — só aditivo.
+
+**Sobre dados financeiros na vista Comercial** (requisito explícito: "a
+vista Comercial não deve mostrar dados financeiros que não tenha
+permissão para consultar"): nenhum indicador do dashboard, da lista de
+projetos, ou de tarefas desta fase depende de `cost.view` ou mostra
+qualquer valor monetário — o módulo Financial está inteiramente fora
+deste MVP. O requisito fica automaticamente satisfeito por
+não haver dado financeiro nenhum para mostrar; quando a Fase 5
+(custos/margens) for construída, quem desenhar essas vistas tem de
+repetir este cuidado explicitamente (não há nada nesta fase que o faça
+automaticamente para telas futuras).
+
+## D-039 — Frontend: Vitest + Testing Library como primeira infraestrutura de testes automatizados
+
+**Decisão:** `vitest`, `@testing-library/react`, `@testing-library/jest-dom`
+e `jsdom` adicionados a `devDependencies`; configuração em
+`frontend/vitest.config.ts` (ambiente `jsdom`, `globals: true`, setup em
+`src/setupTests.ts`); `npm test` corre `vitest run`. Não existia nenhuma
+suite de testes de frontend antes desta fase (`docs/PLAN.md` já
+documentava isto como lacuna conhecida — "Frontend (além do build e
+validação manual): sem testes automatizados de UI ainda").
+
+**Cobertura desta fase:** funções puras (`src/utils/dates.ts`,
+`src/utils/dates.test.ts`), invariantes da máquina de estados espelhada no
+cliente (`src/api/taskTransitions.test.ts` — mesma tabela de D-033, só
+para desenhar a UI, nunca a fonte de verdade), e um teste de fumo do
+painel inicial com a API mockada (`src/pages/Home.test.tsx`) confirmando
+que os indicadores devolvidos pelo endpoint aparecem no ecrã. Não é
+cobertura exaustiva de componentes — âmbito deliberadamente pequeno para
+esta fase, ver `docs/OPEN_QUESTIONS.md` sobre Playwright/Cypress
+end-to-end como possível passo seguinte.
+
+## D-040 — `/` passa a ser o painel operacional; conteúdo anterior movido para `/status`
+
+**Decisão:** `frontend/src/pages/Home.tsx` (novo) é a página inicial —
+antes, `/` redirecionava para `/projects` e a página `Dashboard.tsx`
+(saúde do backend + utilizador de desenvolvimento) vivia em `/status`.
+Esse conteúdo técnico foi preservado tal como estava, só renomeado para
+`SystemStatus.tsx`, continua acessível em `/status` como diagnóstico —
+nada foi perdido, só deixou de ser a primeira coisa que se vê ao entrar
+(requisito explícito: "criar a página `/` como página principal depois do
+login").
+
+**Testes:** `tests/test_dashboard.py` (backend); `Home.test.tsx`
+(frontend, ver D-039).
