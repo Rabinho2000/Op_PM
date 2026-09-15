@@ -820,6 +820,13 @@ potencialmente disruptiva para uma revisão de hardening focada noutra
 coisa. Registado como risco pendente (ver `docs/OPEN_QUESTIONS.md`) em
 vez de forçado com `npm audit fix --force`.
 
+**Atualizado por D-048:** a vulnerabilidade **alta** do `vite` tem, afinal,
+correção sem salto de major — `vite@6.4.3` (não precisa de ir a 8) resolve
+GHSA-fx2h-pf6j-xcff mantendo compatibilidade total com o resto do
+frontend. Aplicado na integração dos dois PRs (`mvp-ready`) — ver D-048.
+A de `react-router-dom` (moderada) continua sem correção fora de um
+major e foi mantida como risco aceite.
+
 **Validado manualmente ponta-a-ponta** (backend + frontend a correr
 localmente, sem tenant Entra real): ecrã de login sem erros de consola
 com a configuração MSAL vazia (placeholder), botão "Entrar com Microsoft"
@@ -1406,3 +1413,65 @@ login").
 
 **Testes:** `tests/test_dashboard.py` (backend); `Home.test.tsx`
 (frontend, ver D-046).
+
+## D-048 — Integração de PR #1 (hardening) + PR #2 (MVP) em `mvp-ready`
+
+**Contexto:** os dois PRs foram desenvolvidos em paralelo a partir do
+mesmo commit em `main` (`b39be01`), cada um continuando a numeração de
+decisões a partir de D-031 — resultando em duas séries de decisões D-032
+a D-040/D-038 incompatíveis, e conflitos reais em `docs/PLAN.md`,
+`docs/DECISIONS.md`, `docs/OPEN_QUESTIONS.md`, `README.md`,
+`.github/workflows/ci.yml` e `frontend/package.json`/`vitest.config.ts`.
+
+**Decisão:**
+1. `mvp-ready` parte de `origin/main`, integra primeiro
+   `staging-prod-hardening` (fast-forward, sem conflitos — as duas séries
+   de commits não se sobrepõem em código) e só depois
+   `mvp-dashboard-workflow` (onde os conflitos reais acontecem).
+2. As decisões do MVP (D-032 a D-040 na numeração original do PR #2) foram
+   renumeradas para D-039 a D-047, preservando a numeração D-032 a D-038
+   do hardening (PR #1) inalterada — evita reescrever qualquer referência
+   já feita a D-032..D-038 fora deste merge.
+3. `docs/PLAN.md`: a numeração de fases do hardening (Fase 4 = Migração,
+   Fase 5 a 9 = Inventário/Graph/Claude/ClickUp/Biblioteca) foi mantida
+   sem alteração — evita quebrar as várias referências cruzadas a "Fase N"
+   espalhadas pelo documento. As antigas Fase 2 (Dashboard inicial) e
+   Fase 3 (Workflow de projetos), que eram só roadmap por implementar,
+   foram anotadas como cobertas pela nova Fase 1.5 (MVP, implementada) —
+   ver essas secções para o detalhe de o que ficou coberto e o que não
+   (o processo fixo `Phase`/`WorkflowStage` continua sem endpoints).
+4. `frontend/package.json`: Vitest mantido em `3.2.7` (nunca voltar a
+   2.x — vulnerabilidade crítica que motivou o hardening). `vite`
+   atualizado de `5.4.11` para `6.4.3` — necessário para eliminar
+   GHSA-fx2h-pf6j-xcff (`server.fs.deny` bypass no Windows, severidade
+   alta, CVSS 7.5), que não tem correção na série 5.x; compatível com
+   `@vitejs/plugin-react@4.3.4` (aceita `vite ^6.0.0`) e com a suite
+   Vitest existente — `npm run lint`/`npm test`/`npm run build`
+   confirmados depois da atualização. Vulnerabilidades moderadas
+   remanescentes (`@vitest/mocker`/`vitest` — precisa de Vitest 4.x;
+   `react-router`/`react-router-dom` — precisa de major 7.x) não foram
+   corrigidas nesta revisão para não forçar upgrades major
+   desnecessários fora do que foi pedido — mesma política já registada
+   acima para o `npm audit` da Fase 1.
+5. `.github/workflows/ci.yml`/`vitest.config.ts`: combinados sem perda —
+   o job de frontend corre `lint` + `test` (Vitest) antes do `build`
+   (D-039 do PR #2, preservado), e a configuração de testes junta
+   `globals`/`setupFiles` (suite de UI, D-046) com o `include` explícito
+   do hardening.
+6. `Task` mantém-se como a única unidade operacional usada pelo MVP; os
+   modelos antigos `Phase`/`WorkflowStage`/`WorkflowSubtask` não foram
+   tocados nem migrados — decisão explícita de não arriscar uma migração
+   de dados agora (ver `docs/OPEN_QUESTIONS.md` perguntas 22 e 24). Um
+   futuro formulário de visita técnica/comissionamento tem de escolher
+   uma única fonte de verdade entre as duas antes de ser construído.
+
+**Validação pós-merge:** 224 testes de backend a passar + 2 skipped
+(SQLite; PostgreSQL não pôde ser validado neste ambiente Windows por
+falta de Docker — mesmo bloqueio já documentado em D-021 — fica para o
+job `backend-postgres` do CI em `GitHub Actions`); 18 testes Vitest no
+frontend; `npm run build`/`npm run lint` sem erros; testado manualmente
+no browser com os 5 utilizadores sintéticos do seed (permissões de
+PM/Chefe/Comercial/Financeiro/Admin, aviso de fotos pendentes,
+transições de estado inválidas bloqueadas, validação de datas de férias,
+projeto inativo excluído do dashboard, fluxo de ingestão para staging
+com contagens/conflitos/promoção/rollback).
