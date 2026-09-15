@@ -137,7 +137,9 @@ processo de build de staging — ver `frontend/.env.staging.example`):
       do backend (`DATABASE_URL`).
 - [ ] Aplicar as migrações: `python -m alembic upgrade head` a partir de
       `backend/`, com `DATABASE_URL` já apontado à base de dados de
-      staging.
+      staging (ou `docker compose --profile migrate run --rm
+      backend-migrate`, se estiver a usar `docker-compose.staging.example.yml`
+      — nunca corre automaticamente ao subir o serviço `backend`).
 - [ ] **Nunca correr `app/migration/seed_dev.py` em staging** — recusa-se
       sozinho a partir de `run_seed()`/`assert_seed_allowed_environment`
       (testado em `tests/test_seed_dev_staging_guard.py`), não é só
@@ -146,24 +148,29 @@ processo de build de staging — ver `frontend/.env.staging.example`):
       usa dados reais (pessoas/utilizadores reais desde o início — secção
       5; projetos, só via `docs/STAGING_RUNBOOK.md` secção 13 — piloto —
       e depois `docs/DATA_MIGRATION_RUNBOOK.md`).
-  - Isto implica criar manualmente (ou por um script de seed específico de
-    staging, ainda por escrever) os `Role`/`Permission`/`RolePermission`
-    de `app/security/catalog.py` e as `Person`/`User` reais (secção 5) —
-    `seed_dev.py` pode servir de referência de estrutura, nunca ser
-    corrido tal como está.
+  - Os `Role`/`Permission`/`RolePermission` de `app/security/catalog.py`
+    e as `Person`/`User` reais (secção 5) são criados por
+    `python -m app.cli.provision_staging` (D-050) — ver
+    `docs/STAGING_BOOTSTRAP.md`, nunca por SQL/Python manual nem por
+    `seed_dev.py`.
 - [ ] Configurar backups automáticos (ver secção 6) antes de qualquer
       dado real entrar nesta base de dados.
 
 ## 5. Provisionamento dos 5 utilizadores
 
-Ver `docs/DECISIONS.md` D-034 e `app/cli/provision_entra_user.py`. Nunca
-cria um `User`/`Person` a partir daqui — pressupõe que os registos
-`Person`/`User` já existem na base de dados de staging (criados
-manualmente ou por um script de seed de staging, ver secção 4).
+- [ ] **Criar os `Person`/`User`/`UserRole` reais** com
+      `python -m app.cli.provision_staging --file <fora-do-repo>.json
+      --actor-email <...> --confirm` (D-050) — ver
+      `docs/STAGING_BOOTSTRAP.md` para o procedimento passo-a-passo.
+      Idempotente; pode incluir já `entra_object_id` no ficheiro (resolve
+      o resto desta secção no mesmo passo) ou deixá-lo de fora.
+- [ ] Confirmar o resumo impresso e as entradas `admin_bootstrap_user` em
+      `auth_audit_log`.
 
-Para cada um dos 5 utilizadores ativos (papéis: Administrador, Chefe de
-Operações, Project Manager, Comercial, Financeiro — ver
-`app/security/catalog.py`):
+Se `entra_object_id` não foi incluído no ficheiro do passo anterior, usar
+`app/cli/provision_entra_user.py` (D-034) para cada utilizador ainda por
+ligar — nunca cria um `User`/`Person` a partir daqui, só liga um `User`
+já existente (criado no passo anterior) ao seu `entra_object_id`:
 
 - [ ] Confirmar que a pessoa já iniciou sessão pelo menos uma vez no
       Microsoft 365 da organização (para existir um `oid` real a ligar) —
@@ -225,7 +232,8 @@ Operações, Project Manager, Comercial, Financeiro — ver
     `403` em `GET /api/migration/import-batches`.
 - [ ] **Teste de auditoria:** depois do teste de login, confirmar que
       nenhuma entrada indevida foi criada em `auth_audit_log` (só deve
-      haver as entradas de `admin_provision_link` da secção 5 — o JIT
+      haver as entradas de `admin_bootstrap_user`/`admin_provision_link`
+      da secção 5 — o JIT
       linking por email está desligado por omissão em staging, D-029, por
       isso não deve haver `jit_link_by_email` a menos que alguém tenha
       definido `ENTRA_JIT_LINK_BY_EMAIL=true` explicitamente). Editar um

@@ -53,9 +53,20 @@ reais para ter credenciais (ver `docs/OPEN_QUESTIONS.md`, pergunta 1, e D-031).
 cobrem o procedimento completo. `app.cli.ingest_staging` ganhou
 `--dry-run`/`--only-ids`/`--limit` para testar um piloto de 5 a 10
 projetos reais antes dos 295; `app.migration.seed_dev` recusa-se agora a
-correr fora de `local`/`test`. Continua pendente: tenant Entra ID real,
-domínio e alojamento de staging (ver `docs/STAGING_RUNBOOK.md` secção 16
-para a lista objetiva).
+correr fora de `local`/`test`.
+
+**Bootstrap de utilizadores e containers de staging (D-050):**
+`python -m app.cli.provision_staging` cria/atualiza, de forma idempotente
+e auditada, o catálogo de papéis/permissões e os `Person`/`User`/
+`UserRole` reais a partir de um ficheiro JSON externo ao repositório —
+ver [`docs/STAGING_BOOTSTRAP.md`](docs/STAGING_BOOTSTRAP.md) para o
+procedimento passo-a-passo (não exige conhecimento de código).
+`backend/Dockerfile`, `frontend/Dockerfile` e
+`docker-compose.staging.example.yml` (novos) tornam o arranque de
+staging repetível por containers, com migrações sempre separadas do
+arranque da app — não decidem nem criam nenhum alojamento/recurso cloud.
+Continua pendente: tenant Entra ID real, domínio e alojamento de staging
+(ver `docs/STAGING_RUNBOOK.md` secção 16 para a lista objetiva).
 
 Documentação:
 
@@ -65,6 +76,7 @@ Documentação:
 - [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) — perguntas bloqueantes/importantes.
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — decisões de arquitetura já tomadas e a sua justificação.
 - [`docs/STAGING_RUNBOOK.md`](docs/STAGING_RUNBOOK.md) — runbook operacional completo de staging (App registrations Entra ID, PostgreSQL, migrações, os 5 utilizadores, health checks, backups/rollback, piloto de 5 a 10 projetos reais).
+- [`docs/STAGING_BOOTSTRAP.md`](docs/STAGING_BOOTSTRAP.md) — procedimento passo-a-passo do bootstrap de utilizadores reais (`app.cli.provision_staging`, D-050), executável sem conhecimento de código.
 - [`docs/STAGING_CHECKLIST.md`](docs/STAGING_CHECKLIST.md) — checklist de sign-off do primeiro deployment de staging (usa o runbook acima para os comandos exatos).
 - [`docs/GO_LIVE_CHECKLIST.md`](docs/GO_LIVE_CHECKLIST.md) — checklist de passagem a produção.
 - [`docs/DATA_MIGRATION_RUNBOOK.md`](docs/DATA_MIGRATION_RUNBOOK.md) — procedimento da migração real dos 295 projetos.
@@ -223,6 +235,11 @@ Ativar qualquer uma destas para chamadas reais é trabalho de uma fase futura �
   (nunca um endpoint HTTP), só liga a um `User` já existente e ativo, nunca cria
   nem reatribui, sempre auditado em `auth_audit_log` (D-034). JIT linking por
   email continua desligado por omissão fora de `local`/`test` (D-029).
+  `app/cli/provision_staging.py` (D-050, mesmo desenho — comando
+  administrativo controlado, nunca um endpoint HTTP) cria/atualiza os
+  `Person`/`User`/`UserRole` reais a partir de um ficheiro JSON externo
+  ao repositório, de forma idempotente e auditada, nunca guarda password
+  nem cria projetos — ver `docs/STAGING_BOOTSTRAP.md`.
 - Edição de um projeto por um PM (`project.edit_own_progress`) está limitada a uma
   lista explícita de campos, validada sempre no servidor independentemente do
   frontend — nunca `name`, `client_email`, `pm_person_id`, `is_active` e outros campos

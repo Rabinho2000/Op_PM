@@ -128,7 +128,37 @@ client secret; a API nunca é pública):
 Feito na secção 9, depois do backend estar a correr — nunca automático a
 partir de um token (`app/cli/provision_entra_user.py`, D-034).
 
-### 2.4 JIT linking (ligação automática por email)
+### 2.4 Logout e renovação de sessão (comportamento esperado)
+
+Nada a configurar aqui — só o comportamento a confirmar/esperar durante
+os testes de aceitação (secção 12), implementado em
+`frontend/src/auth/msal.ts`:
+
+- **Logout:** o botão de logout da app chama `logoutFromMicrosoft()` →
+  `msalInstance.logoutRedirect()`, que termina a sessão MSAL local e
+  redireciona ao endpoint de logout do Microsoft Entra ID; o utilizador
+  volta a `postLogoutRedirectUri` (`<VITE_ENTRA_REDIRECT_URI ou
+  origem>/login` — confirmar que este caminho existe e mostra o ecrã de
+  login, nunca um erro 404).
+- **Cache de sessão:** `sessionStorage`, nunca `localStorage` — a sessão
+  não sobrevive ao fecho do separador/browser de propósito (um
+  utilizador que feche o browser sem fazer logout explícito já não tem
+  sessão ao reabrir).
+- **Renovação de token:** cada pedido à API tenta primeiro
+  `acquireTokenSilent` (renovação silenciosa, sem interromper o
+  utilizador); só quando o MSAL confirma que precisa mesmo de interação
+  (`InteractionRequiredAuthError` — refresh token expirado/revogado, MFA
+  adicional exigido) é que a app trata a sessão como expirada e pede
+  novo login interativo. Não há nenhuma configuração de duração de
+  sessão do lado desta app — isso é sempre política do tenant Microsoft
+  Entra ID (Conditional Access, tempo de vida de token/refresh token),
+  fora do âmbito deste runbook.
+- **Testar:** depois de um login real (secção 12), fechar e reabrir o
+  browser sem logout explícito → deve pedir login novamente (cache não
+  sobreviveu); fazer logout explícito → deve voltar a `/login` sem
+  sessão residual.
+
+### 2.5 JIT linking (ligação automática por email)
 
 **Fica desligado por omissão em staging** (`ENTRA_JIT_LINK_BY_EMAIL`
 não definido → `resolved_entra_jit_link_by_email()` devolve `False` fora
@@ -228,6 +258,31 @@ explicitamente evita qualquer dúvida ao rever a configuração.
 
 ## 7. Arrancar o ambiente
 
+**Opção A — containers (D-050, recomendado enquanto o alojamento não
+estiver decidido — ver secção 16):** `backend/Dockerfile` e
+`frontend/Dockerfile` (multi-stage, sem migrações automáticas no
+arranque) + `docker-compose.staging.example.yml` na raiz do repositório
+(copiar para fora do controlo de versões e ajustar antes de usar a
+sério — nunca commitar com segredos reais):
+
+```bash
+# a partir da raiz do repositório
+docker compose -f docker-compose.staging.example.yml --profile migrate \
+  run --rm backend-migrate            # migrações primeiro, sempre separado do arranque
+
+VITE_API_BASE_URL=https://<backend> \
+VITE_ENTRA_CLIENT_ID=<client-id-spa> \
+VITE_ENTRA_TENANT_ID=<tenant-id> \
+VITE_ENTRA_API_SCOPE=api://<client-id-api>/access_as_user \
+  docker compose -f docker-compose.staging.example.yml up -d backend frontend
+```
+
+Isto não decide o alojamento (onde este `docker compose`/estes
+containers correm) — só torna o arranque repetível seja qual for o
+alojamento escolhido depois (`DECISÃO NECESSÁRIA`, ver secção 16).
+
+**Opção B — processo direto (sem containers):**
+
 ```bash
 cd backend
 source .venv/bin/activate
@@ -235,16 +290,18 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 Mecanismo exato de arranque (systemd, container, processo gerido por um
-PaaS) depende do alojamento escolhido — `DECISÃO NECESSÁRIA`, ver secção
-16. Sugestão mínima (`gunicorn` com workers Uvicorn, quando o alojamento
-não gerir isto sozinho):
+PaaS) continua a depender do alojamento escolhido. Sugestão mínima
+(`gunicorn` com workers Uvicorn, quando o alojamento não gerir isto
+sozinho):
 
 ```bash
 gunicorn app.main:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --workers 2
 ```
 
 O frontend (`frontend/dist/`) é estático — servir com o mecanismo do
-alojamento escolhido (nginx, storage estático + CDN, etc.).
+alojamento escolhido (nginx, storage estático + CDN, etc.) ou com a
+imagem `frontend/Dockerfile` (opção A), que já inclui nginx configurado
+com fallback de SPA (`frontend/docker/nginx.conf`).
 
 ## 8. Health checks
 
@@ -274,50 +331,46 @@ Ver `docs/DECISIONS.md` D-034 e `app/cli/provision_entra_user.py`. Este
 comando **nunca cria** um `User`/`Person` — pressupõe que os registos já
 existem na base de dados de staging.
 
-### 9.1 Criar `Person`/`User`/`UserRole` (staging não tem seed automático)
+### 9.1 Criar `Person`/`User`/`UserRole` (D-050)
 
-Como `seed_dev.py` está bloqueado em staging (secção 5), os registos de
-`Person`/`User`/`UserRole` e o catálogo de `Role`/`Permission`/
-`RolePermission` (`app/security/catalog.py`) têm de existir antes de
-provisionar alguém. Não existe ainda um script de seed dedicado a
-staging neste repositório — `DECISÃO NECESSÁRIA` (ver secção 16): criar
-manualmente via SQL/Python, usando `app/migration/seed_dev.py` só como
-referência da **estrutura** dos registos (papéis, permissões), nunca
-correndo esse ficheiro tal como está. Para cada uma das 5 pessoas reais
-(Administrador, Chefe de Operações, Project Manager, Comercial,
-Financeiro):
+`python -m app.cli.provision_staging` (D-050, resolve a pergunta "Quem
+cria `Person`/`User`/`UserRole` reais em staging?" em
+`docs/OPEN_QUESTIONS.md`, secção "Resolvidas") cria o catálogo de `Role`/
+`Permission`/`RolePermission` (`app/security/catalog.py`, reutilizando
+`seed_catalog()` de `seed_dev.py` — seguro em qualquer ambiente, nunca
+cria pessoas/projetos fictícios) e os `Person`/`User`/`UserRole` reais a
+partir de um ficheiro JSON externo ao repositório. Idempotente — correr
+mais do que uma vez com o mesmo ficheiro não duplica nada. Ver
+`docs/STAGING_BOOTSTRAP.md` para o procedimento passo-a-passo completo
+(formato do ficheiro, onde o guardar, confirmação em auditoria).
 
-```python
+```bash
 # a partir de backend/, com DATABASE_URL já apontado a staging
-from app.db import SessionLocal
-from app.models.people import Person
-from app.models.identity import User, UserRole, Role
-from app.db import new_uuid
+python -m app.cli.provision_staging \
+  --file /caminho/fora/do/repo/utilizadores_staging.json \
+  --actor-email <o-seu-email> \
+  --dry-run   # confirmar o resumo antes de continuar
 
-db = SessionLocal()
-# códigos válidos (app/security/catalog.py): administrador,
-# chefe_operacoes, project_manager, comercial, financeiro
-role = db.query(Role).filter(Role.code == "project_manager").one()  # ou o papel correto
-person = Person(id=new_uuid(), display_name="<Nome Real>", is_active=True)
-db.add(person)
-db.flush()
-user = User(id=new_uuid(), person_id=person.id, email="<email-real>", is_active=True)
-db.add(user)
-db.flush()
-db.add(UserRole(id=new_uuid(), user_id=user.id, role_id=role.id))
-db.commit()
+python -m app.cli.provision_staging \
+  --file /caminho/fora/do/repo/utilizadores_staging.json \
+  --actor-email <o-seu-email> \
+  --confirm
 ```
 
-- [ ] Confirmar que `Role`/`Permission`/`RolePermission`
-      (`app/security/catalog.py`) já existem na base de dados antes
-      disto — se `alembic upgrade head` não os semeou, correr o
-      equivalente de `seed_catalog()` de `seed_dev.py` isoladamente
-      (é seguro correr independentemente do resto do seed — não cria
-      pessoas/projetos fictícios, só o catálogo de papéis/permissões).
+- [ ] Confirmar o resumo impresso (`people_created`/`users_created`/
+      `roles_assigned`) e as entradas `admin_bootstrap_user` em
+      `auth_audit_log` (`docs/STAGING_BOOTSTRAP.md` passo 4).
+- [ ] `entra_object_id` pode já vir incluído no ficheiro (resolve a
+      secção 9.2 no mesmo passo) ou ficar de fora e ser associado depois
+      com `provision_entra_user.py` (secção 9.2).
 
 ### 9.2 Ligar `entra_object_id`
 
-Para cada um dos 5 utilizadores:
+**Ignorar esta secção para quem já ficou ligado na secção 9.1** (se o
+ficheiro de `provision_staging` já incluía `entra_object_id`). Só
+necessário para quem foi criado sem esse campo.
+
+Para cada utilizador ainda sem `entra_object_id`:
 
 - [ ] Obter o **Object ID** da pessoa: **Azure Portal → Entra ID → Users
       → (utilizador) → Object ID** (não exige que a pessoa já tenha
@@ -346,7 +399,9 @@ Para cada um dos 5 utilizadores:
 - Auditoria de aplicação (distinta de logs de processo, já implementada
   e persistente na base de dados, não em ficheiro):
   - `auth_audit_log` — eventos de autenticação/provisionamento
-    (`admin_provision_link`, `jit_link_by_email` quando ativo).
+    (`admin_bootstrap_user` — criação/atualização de `Person`/`User`/
+    `UserRole` por `provision_staging`, secção 9.1 —, `admin_provision_link`,
+    `jit_link_by_email` quando ativo).
   - `project_history` — toda a escrita relevante em `projects`, com
     autor, campo, valor antigo/novo, e fonte (`ui`, `import_legacy`,
     `migration_rollback`, `migration_retry`).

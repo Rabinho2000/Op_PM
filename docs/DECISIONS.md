@@ -1535,3 +1535,74 @@ omissão, desligado).
 **Testes:** `tests/test_ingest_staging_cli.py` (+8 — dry-run, subconjunto
 por IDs/limite, barreira do Git), `tests/test_seed_dev_staging_guard.py`
 (4, novo).
+
+## D-050 — Bootstrap idempotente de utilizadores de staging, Dockerfiles, docker-compose.staging.example.yml
+
+**Contexto:** D-049 deixou explicitamente por resolver quem cria os
+`Person`/`User`/`UserRole` reais em staging — só um procedimento manual
+Python/SQL documentado na secção 9.1 do runbook
+(`docs/OPEN_QUESTIONS.md` pergunta 26). Também não existia nenhum
+Dockerfile nem `docker-compose` de staging — só o `docker-compose.yml`
+de desenvolvimento local (Postgres), sem imagens do backend/frontend.
+
+**Decisão:**
+
+1. `app.cli.provision_staging` (novo, mesmo desenho de
+   `provision_entra_user.py`/`ingest_staging.py` — núcleo testável
+   separado do `main()`/argparse, erro de negócio numa exceção dedicada):
+   lê um ficheiro JSON **externo ao repositório** (reutiliza
+   `assert_file_is_not_trackable_by_git` de `app.cli.ingest_staging`, sem
+   duplicar essa lógica) e, de forma **idempotente**, semeia o catálogo
+   de papéis/permissões (reutiliza `seed_catalog()` de
+   `app.migration.seed_dev` tal como está — já seguro em qualquer
+   ambiente) e cria/atualiza exatamente os `Person`/`User`/`UserRole`
+   indicados, associando `entra_object_id` quando fornecido (mesma regra
+   de não-reatribuição de `link_user_to_entra_object_id`, mas idempotente
+   quando o valor já corresponde). Nunca cria projetos/tarefas/dados
+   sintéticos; nunca remove um papel existente que não esteja no
+   ficheiro; nunca guarda password (não existe esse campo no modelo,
+   autenticação é sempre delegada ao Entra ID). Rejeita email/papel/
+   Object ID duplicados ou inválidos antes de escrever seja o que for
+   (validação atómica). Exige `--confirm` para escrever — sem essa flag,
+   comporta-se sempre como `--dry-run`. Cada criação/atualização é
+   auditada em `auth_audit_log` (evento `admin_bootstrap_user`; ligação
+   de `entra_object_id`, evento `admin_provision_link`, mesmo nome já
+   usado por `provision_entra_user.py`).
+2. `backend/Dockerfile` (multi-stage, utilizador não-root, `HEALTHCHECK`
+   em `/health`, **nunca corre `alembic upgrade head` no arranque do
+   container**) e `frontend/Dockerfile` (multi-stage, build Node com as
+   `VITE_*` passadas por `--build-arg`, `VITE_ENABLE_DEV_LOGIN=false`
+   fixado no Dockerfile — nunca um `ARG` —, servido por nginx com
+   fallback de SPA). `docker-compose.staging.example.yml` (novo, raiz do
+   repositório) compõe os dois + um serviço `backend-migrate` separado
+   (sob `--profile migrate`, nunca corre com um simples `docker compose
+   up`) — documenta explicitamente que o PostgreSQL de staging deve ser
+   um serviço gerido/externo (o serviço `db` comentado no ficheiro é só
+   para testar a composição localmente). Nenhum recurso cloud é criado
+   por estes ficheiros; não decide o alojamento (`docs/OPEN_QUESTIONS.md`
+   pergunta 25 continua aberta) — só torna o arranque repetível
+   independentemente do alojamento escolhido depois.
+3. `docs/STAGING_BOOTSTRAP.md` (novo) — procedimento executável do
+   bootstrap, sem exigir conhecimento de código. `docs/STAGING_RUNBOOK.md`
+   secção 9.1 passa a apontar para `provision_staging` em vez do
+   procedimento manual; secção 2 ganha uma subsecção sobre logout/
+   renovação de sessão (comportamento já implementado em
+   `frontend/src/auth/msal.ts`, agora documentado do ponto de vista do
+   operador); secção 7 ganha a opção de arranque por containers.
+   `docs/STAGING_CHECKLIST.md` secções 4/5/7 atualizadas para
+   referenciar o novo comando e os dois eventos de auditoria esperados.
+
+**Por decidir, não assumido nesta revisão (ver `docs/OPEN_QUESTIONS.md`):**
+alojamento concreto dos containers (cloud vs. on-premises, fornecedor);
+tenant Entra ID real; domínio de staging; "who can consent" no scope
+`access_as_user`; ativar `ENTRA_JIT_LINK_BY_EMAIL` em staging.
+
+**Testes:** `tests/test_provision_staging_cli.py` (16, novo) —
+idempotência, criação/atualização, rejeição de email/papel/Object ID
+duplicados ou inválidos, nunca reatribui um `entra_object_id` já ligado,
+nunca cria `Project`, `dry_run` sem rasto, barreira do ficheiro Git
+reutilizada. Suite completa: 252 passed, 2 skipped (SQLite).
+Dockerfiles/`docker-compose.staging.example.yml` não puderam ser
+validados com `docker build`/`docker compose` neste ambiente (sem Docker
+disponível) — revistos manualmente, a confirmar antes da primeira
+utilização real (mesma ressalva já existente em `docker-compose.yml`).
