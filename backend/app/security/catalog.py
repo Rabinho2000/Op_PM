@@ -47,6 +47,14 @@ PERMISSIONS: dict[str, str] = {
         "Ligar um registo de staging a um projeto fora dos candidatos detetados "
         "automaticamente (exige sempre uma nota — ver D-030)"
     ),
+    "task.view_all": "Ver tarefas de qualquer projeto",
+    "task.view_own": "Ver tarefas dos projetos próprios (como PM) e tarefas atribuídas a si",
+    "task.edit_all": "Criar/editar/atribuir/concluir tarefas de qualquer projeto",
+    "task.edit_own": "Criar/editar/atribuir/concluir tarefas dos projetos próprios (como PM)",
+    "absence.view_all": "Ver férias/ausências de todas as pessoas",
+    "absence.view_own": "Ver as próprias férias/ausências",
+    "absence.manage_all": "Registar/cancelar férias de qualquer pessoa",
+    "absence.manage_own": "Registar/cancelar as próprias férias",
 }
 
 # Matriz papel -> permissões concedidas por omissão.
@@ -70,6 +78,10 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "ai.approve_actions",
         "migration.view",
         "migration.resolve",
+        "task.view_all",
+        "task.edit_all",
+        "absence.view_all",
+        "absence.manage_all",
     ],
     ROLE_PM: [
         "project.view_own",
@@ -82,16 +94,26 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "calendar.propose",
         "calendar.approve_send",
         "ai.use_tools",
+        "task.view_own",
+        "task.edit_own",
+        "absence.view_own",
+        "absence.manage_own",
     ],
     ROLE_COMERCIAL: [
         "project.view_all",
         "cost.view",
         "document.view",
+        "task.view_all",
+        "absence.view_own",
+        "absence.manage_own",
     ],
     ROLE_FINANCEIRO: [
         "project.view_all",
         "cost.view",
         "cost.edit_real",
         "document.view",
+        "task.view_all",
+        "absence.view_own",
+        "absence.manage_own",
     ],
 }

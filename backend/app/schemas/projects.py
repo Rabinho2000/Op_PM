@@ -48,6 +48,16 @@ class ProjectRead(BaseModel):
     has_coordinates: bool = False
     has_contact: bool = False
 
+    # Derivados de tarefas (ver app/services/projects.py:compute_project_task_summary)
+    # — nao_iniciado | em_curso | concluido, calculado a partir das tarefas
+    # reais, nunca hardcoded.
+    status: str = "nao_iniciado"
+    next_task_title: str | None = None
+    next_task_due_date: dt.date | None = None
+    overdue_tasks_count: int = 0
+    workflow_progress_percent: int = 0
+    photos_pending_warning: bool = False
+
 
 class ProjectUpdate(BaseModel):
     """Todos os campos opcionais — só os presentes no pedido são

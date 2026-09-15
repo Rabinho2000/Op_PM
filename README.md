@@ -9,13 +9,31 @@ desenvolvimento) são sintéticos.
 
 ## Estado atual
 
-**Fase 0 concluída** (fundação técnica + revisão de hardening) e **Fase 1 concluída
-+ revisão de hardening** (autenticação real, CRUD de projetos com permissões por
-campo, resolução de migração reforçada, login MSAL real no frontend) — 133 testes
-automatizados a passar em SQLite (e em PostgreSQL, ver abaixo). Sem integrações
-externas reais ligadas (Claude, Microsoft Graph, ClickUp, Financial); sem migração de
-dados reais (os 295 projetos reais continuam por migrar); sem envio de email ou
-criação de eventos reais. Ver `docs/PLAN.md` para o roadmap completo.
+**Fase 0 concluída** (fundação técnica + revisão de hardening), **Fase 1
+concluída + revisão de hardening** (autenticação real, CRUD de projetos com
+permissões por campo, resolução de migração reforçada, login MSAL real no
+frontend), **fecho
+técnico da Fase 1 para staging/produção concluído** (configuração obrigatória e
+completa, separação real do login de desenvolvimento, provisionamento
+administrativo de utilizadores, allowlist de PM revista, repetição segura de
+promoção após rollback, ingestão controlada staging-only — ver `docs/DECISIONS.md`
+D-032 a D-037), e **Fase 1.5 — MVP dashboard/workflow concluída**: página inicial
+(`/`) com indicadores reais (projetos ativos, a começar em 30 dias, tarefas
+atrasadas/pendentes esta semana, visitas técnicas e comissionamentos pendentes,
+projetos sem PM/dados em falta, férias atuais/próximas, aniversários próximos,
+trabalhos urgentes), entidade `Task` genérica (checklist padrão de 5 tarefas por
+projeto + tarefas ad-hoc, máquina de estados, histórico), férias/ausências
+(`Absence`), e o aviso persistente de fotos por colocar na Drive quando visita
+técnica/comissionamento é concluído — ver `docs/DECISIONS.md` D-039 a D-047.
+224 testes automatizados de backend a passar (+2 skipped) em SQLite (e em
+PostgreSQL, ver abaixo) + 18 testes Vitest no frontend. Sem integrações
+externas reais ligadas (Claude, Microsoft
+Graph, ClickUp, Financial); sem migração de dados reais (os 295 projetos reais
+continuam por migrar); sem envio de email ou criação de eventos reais; sem
+mapas, inventário, pedidos de material ou biblioteca documental. Ver
+`docs/PLAN.md` para o roadmap completo, `docs/STAGING_CHECKLIST.md`/
+`docs/GO_LIVE_CHECKLIST.md` para os procedimentos de deployment, e
+`docs/DATA_MIGRATION_RUNBOOK.md` para a migração real dos 295 projetos.
 
 Pontos-chave: a aplicação recusa-se a arrancar em `staging`/`production` com
 configuração de desenvolvimento (ver secção "Segurança" abaixo); a migração nunca
@@ -37,6 +55,9 @@ Documentação:
 - [`docs/PLAN.md`](docs/PLAN.md) — roadmap por fases, plano de migração, testes, segurança.
 - [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) — perguntas bloqueantes/importantes.
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — decisões de arquitetura já tomadas e a sua justificação.
+- [`docs/STAGING_CHECKLIST.md`](docs/STAGING_CHECKLIST.md) — checklist do primeiro deployment de staging.
+- [`docs/GO_LIVE_CHECKLIST.md`](docs/GO_LIVE_CHECKLIST.md) — checklist de passagem a produção.
+- [`docs/DATA_MIGRATION_RUNBOOK.md`](docs/DATA_MIGRATION_RUNBOOK.md) — procedimento da migração real dos 295 projetos.
 
 ## Estrutura
 
@@ -72,6 +93,11 @@ uvicorn app.main:app --reload --port 8000
 
 Com o servidor a correr: `http://localhost:8000/docs` (Swagger), `http://localhost:8000/health`.
 
+Endpoints principais da Fase 1.5 (ver `docs/PLAN.md`):
+`GET /api/dashboard/summary` (indicadores do painel inicial, já filtrados pela
+visibilidade do utilizador), `/api/tasks` (CRUD + histórico), `/api/absences`
+(férias/ausências).
+
 Por omissão (`AUTH_ENABLED=false`), `/me` e outros endpoints autenticados exigem o
 cabeçalho de desenvolvimento `X-Dev-User-Email` (ver `app/security/current_user.py`) —
 por exemplo `chefe.sintetico@example.invalid`, criado pelo seed. Isto é um mecanismo de
@@ -104,6 +130,8 @@ cd frontend
 npm install
 cp .env.example .env.local   # ajustar se necessário
 npm run dev                  # http://localhost:5173, espera o backend em :8000
+npm run lint                 # tsc --noEmit
+npm test                     # Vitest (vitest run) — login de desenvolvimento (D-033) + suite de UI (D-046)
 npm run build                # valida TypeScript + gera build de produção
 ```
 
@@ -113,10 +141,22 @@ Com o backend também a correr (`uvicorn` — ver acima), abrir
 `src/auth/msal.ts` e `docs/DECISIONS.md` D-031; aparece desativado sem
 `VITE_ENTRA_CLIENT_ID`/`VITE_ENTRA_TENANT_ID`/`VITE_ENTRA_API_SCOPE` configurados) e
 o mecanismo de desenvolvimento (`X-Dev-User-Email`, só em `vite dev`/testes por
-omissão) — depois lista de projetos com filtros por PM/estado/pesquisa, detalhe com
-edição autorizada por campo e histórico ao lado, e a fila de reconciliação de PM
-(`/reconciliation`). Validado manualmente ponta-a-ponta nesta fase — ver
-`docs/DECISIONS.md` D-027/D-031.
+omissão) — depois:
+
+- **Painel** (`/`, página inicial): indicadores reais do dashboard, ver acima.
+- **Projetos** (`/projects`, `/projects/:id`): lista com estado/próxima tarefa/prazo/
+  tarefas atrasadas/indicadores de dados em falta; detalhe com dados principais,
+  progresso do workflow, aviso de fotos pendentes, tarefas do projeto, edição
+  autorizada por campo, e histórico.
+- **Tarefas** (`/tasks`): todas as tarefas visíveis ao utilizador, filtráveis por
+  estado/responsável/atrasadas, com criação e transição de estado.
+- **Férias** (`/vacations`): registo e consulta de férias/ausências.
+- **Reconciliação de PM** (`/reconciliation`): fila de reconciliação da migração.
+- **Estado do sistema** (`/status`): diagnóstico técnico (saúde do backend,
+  integrações ativas, utilizador atual) — antiga página inicial da Fase 1.
+
+Validado manualmente ponta-a-ponta nesta fase — ver `docs/DECISIONS.md` D-027/D-031
+e D-039 a D-047 (Fase 1.5).
 
 Login Microsoft real requer uma app registration SPA (Authorization Code + PKCE, sem
 client secret) e uma app registration de API expondo o âmbito `access_as_user` — ver
@@ -145,13 +185,17 @@ Ativar qualquer uma destas para chamadas reais é trabalho de uma fase futura �
 - `.gitignore` bloqueia `.env`, `.secrets/`, `data/`, `files/`, backups e bases de
   dados locais.
 - **A aplicação recusa-se a arrancar em `APP_ENV=staging`/`production`** se
-  `AUTH_ENABLED=false`, `SECRET_KEY` for o valor de desenvolvimento, `DATABASE_URL`
-  for SQLite, ou `ENTRA_VALIDATION_MODE` não for `real` — ver `app/config.py` e
-  `docs/DECISIONS.md` D-020/D-024. O mecanismo de utilizador de desenvolvimento
+  `AUTH_ENABLED=false`, `SECRET_KEY` for o valor de desenvolvimento (ou vazio),
+  `DATABASE_URL` for SQLite, `ENTRA_VALIDATION_MODE` não for `real`,
+  `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID`/`ENTRA_REQUIRED_SCOPE` não estiverem
+  preenchidos, `CORS_ALLOWED_ORIGINS` ficar vazio, ou um override de
+  issuer/JWKS/audience ficar parcial — ver `app/config.py` e `docs/DECISIONS.md`
+  D-020/D-024/D-032. O mecanismo de utilizador de desenvolvimento
   (`X-Dev-User-Email`) tem uma segunda verificação independente e só funciona em
   `local`/`test` — nem é consultado quando `AUTH_ENABLED=true`. No frontend, o
   equivalente (`devLoginEnabled`, `src/auth/msal.ts`) fica desligado por omissão num
-  build de produção, ligado só em `vite dev`/testes.
+  build de produção, ligado só em `vite dev`/testes — e nunca lê/escreve
+  `localStorage` fora disso, mesmo com um valor antigo já guardado (D-033).
 - Tokens Microsoft Entra ID são validados a sério: `oid` obrigatório (nunca `sub`
   como identidade persistente), assinatura RS256 (JWKS do tenant, cliente cacheado no
   processo), issuer, audience, tenant (`tid`, quando configurado), `scp` (só tokens
@@ -163,16 +207,29 @@ Ativar qualquer uma destas para chamadas reais é trabalho de uma fase futura �
 - No frontend, o login real usa MSAL com Authorization Code + PKCE; o token enviado à
   API é sempre um access token dedicado ao âmbito da API, nunca o ID token
   (`src/auth/msal.ts`, D-031).
+- **Provisionamento de utilizadores Entra ID nunca é automático a partir de um
+  token** — `app/cli/provision_entra_user.py` é o único caminho para ligar
+  `User.entra_object_id` em staging/produção: comando administrativo controlado
+  (nunca um endpoint HTTP), só liga a um `User` já existente e ativo, nunca cria
+  nem reatribui, sempre auditado em `auth_audit_log` (D-034). JIT linking por
+  email continua desligado por omissão fora de `local`/`test` (D-029).
 - Edição de um projeto por um PM (`project.edit_own_progress`) está limitada a uma
   lista explícita de campos, validada sempre no servidor independentemente do
   frontend — nunca `name`, `client_email`, `pm_person_id`, `is_active` e outros campos
   administrativos sem `project.edit_all` (`app/security/project_fields.py`, D-028).
+  Potência, coordenadas, datas legadas e `commercial_assumptions` ficam também
+  administrativos até confirmação de negócio (D-035, `docs/OPEN_QUESTIONS.md`
+  pergunta 5-B).
 - Nenhuma migração escreve diretamente em `projects` — passa sempre por ingestão em
-  staging (`import_batches`/`staging_project_records`), revisão de conflitos, e
-  promoção explícita, sempre com auditoria e rollback (`app/migration/staging.py`,
-  docs/DECISIONS.md D-017). Ligar manualmente um registo em conflito a um projeto
-  fora dos candidatos detetados automaticamente exige a permissão
-  `migration.link_arbitrary_project` e uma nota obrigatória (D-030).
+  staging (`import_batches`/`staging_project_records`, só via
+  `app/cli/ingest_staging.py`, comando controlado com modo staging-only — D-037),
+  revisão de conflitos, e promoção explícita, sempre com auditoria e rollback
+  (`app/migration/staging.py`, docs/DECISIONS.md D-017). Ligar manualmente um
+  registo em conflito a um projeto fora dos candidatos detetados automaticamente
+  exige a permissão `migration.link_arbitrary_project` e uma nota obrigatória
+  (D-030). Repetir a promoção depois de um rollback nunca duplica o projeto
+  (`retry_promotion_after_rollback`, D-036).
 - Valores monetários usam `Numeric`/`Decimal`, nunca `Float` (D-018).
 - Antes de expor este backend fora de uma rede de confiança, correr uma revisão de
-  segurança dedicada (ver `docs/PLAN.md`, secção de segurança).
+  segurança dedicada (ver `docs/PLAN.md`, secção de segurança, e
+  `docs/GO_LIVE_CHECKLIST.md`).

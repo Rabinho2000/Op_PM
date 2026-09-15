@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.ai import AiAuditLog
 from app.models.project import ProjectHistory
+from app.models.task import TaskHistory
 
 
 def record_project_change(
@@ -40,6 +41,33 @@ def record_project_change(
         source=source,
         note=note,
         related_staging_record_id=related_staging_record_id,
+        changed_at=dt.datetime.now(dt.timezone.utc),
+    )
+    db.add(entry)
+    return entry
+
+
+def record_task_change(
+    db: Session,
+    *,
+    task_id: UUID,
+    field_name: str,
+    old_value: str | None,
+    new_value: str | None,
+    source: str,
+    changed_by_person_id: UUID | None = None,
+    note: str = "",
+) -> TaskHistory:
+    if old_value == new_value:
+        raise ValueError("old_value e new_value são iguais — nada a registar")
+    entry = TaskHistory(
+        task_id=task_id,
+        field_name=field_name,
+        old_value=old_value,
+        new_value=new_value,
+        changed_by_person_id=changed_by_person_id,
+        source=source,
+        note=note,
         changed_at=dt.datetime.now(dt.timezone.utc),
     )
     db.add(entry)

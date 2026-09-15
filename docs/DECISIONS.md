@@ -571,9 +571,11 @@ Chefe de Operações (a recomendação por omissão da pergunta aberta nº 17).
 operação controlada e pouco frequente (por lote, não por pedido HTTP
 casual), e expor um endpoint para ela convidaria a experimentar com dados
 reais antes de tempo — contrariando a regra explícita desta fase ("não
-migrar ainda os 295 projetos reais"). Quando a Fase 2 chegar, a ingestão
-real continua a ser um comando/script operado deliberadamente, não um
-botão da UI.
+migrar ainda os 295 projetos reais"). Quando a fase de migração real
+chegar (Fase 2 no roadmap desta altura, renumerada para Fase 4 em
+docs/PLAN.md — ver D-037), a ingestão real continua a ser um
+comando/script operado deliberadamente (`app/cli/ingest_staging.py`),
+não um botão da UI.
 
 Testado em `tests/test_migration_api.py`: bloqueio de promoção com
 registo em conflito (incluindo `pm_unresolved`), resolução de PM
@@ -818,6 +820,13 @@ potencialmente disruptiva para uma revisão de hardening focada noutra
 coisa. Registado como risco pendente (ver `docs/OPEN_QUESTIONS.md`) em
 vez de forçado com `npm audit fix --force`.
 
+**Atualizado por D-048:** a vulnerabilidade **alta** do `vite` tem, afinal,
+correção sem salto de major — `vite@6.4.3` (não precisa de ir a 8) resolve
+GHSA-fx2h-pf6j-xcff mantendo compatibilidade total com o resto do
+frontend. Aplicado na integração dos dois PRs (`mvp-ready`) — ver D-048.
+A de `react-router-dom` (moderada) continua sem correção fora de um
+major e foi mantida como risco aceite.
+
 **Validado manualmente ponta-a-ponta** (backend + frontend a correr
 localmente, sem tenant Entra real): ecrã de login sem erros de consola
 com a configuração MSAL vazia (placeholder), botão "Entrar com Microsoft"
@@ -825,3 +834,644 @@ visivelmente desativado com a explicação, secção de desenvolvimento
 separada por um divisor visual; login de desenvolvimento continua
 funcional ponta-a-ponta (entrar, `NavBar` a mostrar a sessão, listagem de
 projetos a carregar, logout a limpar a sessão e devolver a `/login`).
+
+## D-032 — Validação de configuração obrigatória, completa, em staging/produção
+
+**Decisão:** `Settings._enforce_hardening_in_non_local_envs` (D-020,
+`app/config.py`) passa a exigir, além das quatro condições já existentes
+(`AUTH_ENABLED=true`, `SECRET_KEY` real e não vazio, `DATABASE_URL`
+PostgreSQL, `ENTRA_VALIDATION_MODE=real`):
+
+- `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID` e `ENTRA_REQUIRED_SCOPE`
+  preenchidos — sem eles não há tenant/scope real a validar, e
+  `resolved_entra_issuer()`/`resolved_entra_jwks_url()` apontariam para um
+  URL Entra ID sintaticamente válido mas apontado a um tenant vazio
+  (`.../v2.0`), um erro silencioso só visível ao primeiro pedido real.
+- `CORS_ALLOWED_ORIGINS` não vazio — em staging/produção, vazio significa
+  "nenhuma origem aceite" (`resolved_cors_origins`), que quase certamente
+  não é a intenção de quem está a configurar; falha já no arranque em vez
+  de deixar a API inacessível a qualquer frontend sem explicação.
+- Se algum de `ENTRA_ISSUER`/`ENTRA_JWKS_URL`/`ENTRA_AUDIENCE` for
+  definido explicitamente, os três têm de estar — um override parcial
+  deixaria os campos não definidos a cair para o valor derivado de
+  `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID`, uma mistura inesperada entre um
+  valor manual e um valor derivado que nunca foi pedida como
+  funcionalidade e é fácil de configurar por engano.
+
+Todos os problemas continuam a ser reportados de uma vez na mesma mensagem
+(comportamento já existente desde D-020), nunca só o primeiro — poupa
+ciclos de tentativa-erro em staging.
+
+**Porquê agora:** parte do fecho técnico da Fase 1 antes da preparação de
+staging/produção — a validação anterior já impedia as combinações mais
+óbvias, mas deixava passar uma configuração "tecnicamente válida" (auth
+ligado, Postgres, modo real) que na prática nunca conseguiria autenticar
+ninguém (tenant/scope em falta) ou nunca seria alcançável por um frontend
+real (CORS vazio).
+
+**Testado em** `tests/test_config_hardening.py` — um teste por condição
+nova (staging e produção), mais o override parcial de
+issuer/jwks/audience (com e sem os três presentes) e a mensagem agregada
+com todos os problemas em simultâneo. `local`/`test` continuam nunca
+bloqueados (mesmos testes de sempre, sem alteração).
+
+**Sem impacto em `local`/`test`:** estas variáveis continuam opcionais
+nesses ambientes — a Fase 1 já funciona sem tenant real via o mecanismo de
+desenvolvimento (D-012); só passam a ser exigidas quando `APP_ENV` é
+`staging`/`production`.
+
+## D-033 — Login de desenvolvimento nunca sobrevive num build de produção, mesmo com `localStorage` antigo
+
+**Decisão:** `src/pages/Login.tsx` já só renderizava a secção de login de
+desenvolvimento quando `devLoginEnabled` (D-031); mas `src/api/client.ts`
+continuava a ler/escrever `localStorage` incondicionalmente
+(`getDevUser`/`setDevUser`/`hasActiveSession`/`request()`), pelo que um
+valor gravado numa sessão de desenvolvimento anterior (ou escrito
+manualmente por alguém a inspecionar o browser) continuava a ser enviado
+como `X-Dev-User-Email` mesmo num build com `devLoginEnabled=false`.
+Corrigido:
+
+- `getDevUser()`/`setDevUser()` devolvem/ignoram sempre que
+  `devLoginEnabled` é `false` — nunca tocam em `localStorage` nesse caso;
+  `clearDevUser()` continua incondicional (limpar é sempre seguro).
+- Ao carregar o módulo com `devLoginEnabled=false`, qualquer valor antigo
+  já em `localStorage` é limpo imediatamente — nunca fica só "invisível
+  para a leitura seguinte", é removido.
+- `hasActiveSession()`/`getSessionDisplayName()`/`request()` já usavam
+  `getDevUser()`, por isso herdam o bloqueio sem alteração adicional.
+
+**Testado em** `frontend/src/api/client.dev-login.test.ts` (Vitest, novo —
+o frontend não tinha nenhum framework de testes automatizados até agora,
+só validação manual ponta-a-ponta e `tsc --noEmit`/`vite build`): grava e
+lê corretamente com `devLoginEnabled=true`; nunca grava nem lê com
+`devLoginEnabled=false`; um valor antigo em `localStorage` é limpo ao
+carregar o módulo; um pedido HTTP nunca leva `X-Dev-User-Email` mesmo com
+`localStorage` manipulado depois de o módulo já estar carregado. CI
+(`frontend` job) passa a correr `npm run test` antes de `npm run build`.
+
+**Dependências novas (dev):** `vitest@^3.2.7`, `jsdom` — só para testes,
+sem impacto no bundle de produção (`vite build` não os inclui). Fixado em
+`3.2.7` (não `^2`, a versão inicialmente instalada) especificamente porque
+`npm audit` reportou uma vulnerabilidade **crítica** no servidor de UI do
+Vitest (`GHSA-5xrq-8626-4rwp`, corrigida em `vitest@3.2.6`) — nunca
+aceitável deixar por corrigir só porque é uma dependência de
+desenvolvimento. Uma vulnerabilidade moderada remanescente em
+`@vitest/mocker` (`GHSA-82fw-gwwq-j7x9`) só se resolve com `vitest@5`
+(exige `vite@6+`, fora do âmbito desta revisão) — registada em
+`docs/OPEN_QUESTIONS.md` junto das outras atualizações major já adiadas
+(`vite`, `react-router-dom`).
+
+## D-034 — Provisionamento administrativo de `User.entra_object_id`: comando controlado, nunca um endpoint HTTP
+
+**Decisão:** `app/cli/provision_entra_user.py` — comando de linha de
+comandos (`python -m app.cli.provision_entra_user`), corrido manualmente
+por alguém com acesso direto ao servidor/base de dados de
+staging/produção, nunca um endpoint da API. Liga `User.entra_object_id` a
+um `User` já existente e ativo — este é o mecanismo real de
+provisionamento dos 5 utilizadores em staging/produção, onde o JIT linking
+por email fica desligado por omissão (`resolved_entra_jit_link_by_email`,
+D-029).
+
+**Regras, sempre no núcleo `link_user_to_entra_object_id`** (nunca só no
+`main()` da CLI, para que os testes exerçam exatamente a mesma lógica):
+
+- **Nunca cria um `User` novo** — só liga a um já existente e ativo; email
+  desconhecido ou inativo é sempre erro.
+- **Nunca reatribui** — um `User` já ligado a qualquer `entra_object_id`
+  (mesmo repetir o mesmo valor) é sempre erro; desligar fica fora do
+  âmbito deste comando, de propósito (mantém-no pequeno e sem
+  ambiguidade).
+- **Nunca reutiliza um `entra_object_id` em dois utilizadores** —
+  verificação explícita (mensagem compreensível) mais a restrição UNIQUE
+  já existente em `User.entra_object_id` na base de dados como barreira
+  final, independente da aplicação.
+- **Sempre auditado** — uma entrada `AuthAuditLog` (evento
+  `admin_provision_link`) com o email do utilizador, o `entra_object_id`, e
+  `actor_label` (quem executou, obrigatório — sem isto o comando recusa-se
+  a correr).
+- **`--confirm` obrigatório para escrever** — sem essa flag, a CLI só
+  mostra o que faria (dry-run), proteção simples contra execução
+  acidental.
+
+**Porquê um comando, não um endpoint:** até 5 utilizadores (D-003) é uma
+operação rara — um endpoint novo seria uma superfície de API permanente
+para uma ação administrativa esporádica, e manteria `get_current_user`
+livre de qualquer lógica de "criar/ligar identidade" (separação já
+deliberada — ver docstring de `app/security/current_user.py`). Satisfaz o
+requisito "permissão administrativa OU comando administrativo controlado"
+pela segunda via: quem consegue correr este comando já precisa de acesso
+direto ao servidor/base de dados, um controlo de acesso independente do
+`admin.manage_users` da aplicação.
+
+**JIT linking continua desligado em produção por omissão** (D-029, sem
+alteração aqui) — este comando é o caminho normal; o JIT por email
+continua disponível só como conveniência de local/test, ou se alguém
+definir `ENTRA_JIT_LINK_BY_EMAIL=true` explicitamente em staging/produção
+(decisão de negócio explícita, não a omissão).
+
+**Testado em** `tests/test_provision_entra_user.py` (12 testes): ligação
+bem-sucedida, entrada de auditoria correta, case-insensitive no email,
+email desconhecido/inativo rejeitados, nunca cria `User`, reatribuição
+rejeitada, `entra_object_id` duplicado rejeitado (com e sem a verificação
+explícita — o teste da restrição UNIQUE da base de dados confirma a
+barreira final independente da aplicação), argumentos vazios rejeitados.
+
+## D-035 — Allowlist de campos PM revista: campos com impacto comercial ficam administrativos até decisão de negócio
+
+**Decisão:** `app/security/project_fields.py` (D-028) tinha classificado
+`lat`, `lon`, `power_kwp`, `power_raw`, `start_date`,
+`commercial_assumptions`, `upac_connection_date_raw` e `award_year_raw`
+como PM-editáveis (`project.edit_own_progress`) — uma omissão técnica
+razoável na Fase 1, mas nunca confirmada como decisão de negócio. Revisto
+nesta preparação para staging/produção: estes oito campos passam a
+`ADMIN_ONLY_PROJECT_FIELDS` (só `project.edit_all` os edita). Ficam
+PM-editáveis só `role`, `equipment_notes`, `injection_notes`, `om_notes` e
+`notes` — texto de acompanhamento operacional, sem valor comercial nem
+usado por outra integração.
+
+**Porquê:** potência e coordenadas afetam o dimensionamento e a
+localização real reportada da instalação; `commercial_assumptions` é, pelo
+nome, um pressuposto comercial; as datas legadas (`start_date`,
+`upac_connection_date_raw`, `award_year_raw`) podem ter valor contratual.
+Nenhum destes teve uma resposta explícita de "um PM pode corrigir isto no
+seu próprio projeto sem aprovação?" — seguindo a regra geral desta revisão
+("sem confirmação de negócio, usar a opção mais restritiva"), ficam
+administrativos até essa confirmação existir. Registado como pergunta em
+aberto — `docs/OPEN_QUESTIONS.md`, pergunta 5-B.
+
+**Impacto operacional conhecido, aceite deliberadamente:** uma correção
+legítima destes campos por um PM (ex.: coordenadas erradas vindas da
+migração) passa a exigir sempre um Chefe de Operações/Administrador —
+possível atrito se a resposta de negócio acabar por ser "sim, o PM pode
+editar X". Prefere-se este atrito a um PM poder alterar, sem aprovação,
+um valor com peso comercial/contratual antes de existir uma decisão.
+
+**Testado em** `tests/test_project_field_permissions.py` — teste novo
+confirma explicitamente que os oito campos ficam em
+`ADMIN_ONLY_PROJECT_FIELDS` e que um PM recebe 403 ao tentar alterar
+`power_kwp` no seu próprio projeto; os testes existentes (disjunção,
+cobertura total de `ProjectUpdate`, `notes` continua PM-editável)
+continuam a passar sem alteração.
+
+## D-036 — Repetir a promoção depois de um rollback: nunca um segundo projeto
+
+**Problema encontrado:** `rollback_promotion` (D-017) desativa o projeto
+(caso `create_new`) ou restaura os valores anteriores (caso
+`update_existing`/`link_existing`), e deixa o registo de staging em
+`pending_review`. Nenhuma função existente devolvia esse registo a
+`ready_to_promote` — `promote_staging_record` exige exatamente esse
+estado, `resolve_conflict` exige `conflict`. Pior: mesmo que alguém forçasse
+manualmente `status='ready_to_promote'` num registo `resolved_action=
+'create_new'` já revertido, promover outra vez criaria um **segundo**
+`Project` com o mesmo `external_id` — violando a restrição UNIQUE
+`(source_system, external_id)` de `ProjectExternalId` já a meio da
+transação, ou pior, duplicando o projeto se a violação não fosse
+apanhada a tempo. Isto é exatamente o cenário "promover → algo está
+errado → reverter → corrigir → promover outra vez" que uma migração real
+dos 295 projetos vai precisar.
+
+**Decisão:** `app/migration/staging.py:retry_promotion_after_rollback` —
+passo explícito e obrigatório entre um rollback e uma nova promoção (nunca
+automático, tal como `resolve_conflict`/`promote_staging_record` já eram
+dois passos distintos):
+
+- Só aceita um registo `pending_review` com `reverted_at` preenchido
+  (ou seja, que passou mesmo por `rollback_promotion`) — rejeita qualquer
+  outro estado, incluindo um registo nunca promovido.
+- Se `resolved_action` era `'create_new'`, reescreve para
+  `'update_existing'` apontado ao `promoted_project_id` já existente —
+  **nunca volta a passar por `create_new`**, eliminando a via de
+  duplicação. Para `'update_existing'`/`'link_existing'`, o alvo já
+  estava certo, sem alteração.
+- Reativa o projeto (`is_active=True`) se necessário, com uma entrada de
+  `project_history` própria (fonte nova `migration_retry`, distinta de
+  `migration_rollback` — nunca esconde que uma reativação aconteceu numa
+  entrada que parece um rollback).
+- Reaplica a mesma verificação de PM (`_finalize_status_given_pm`) das
+  outras etapas — nunca duas lógicas divergentes sobre quando promover.
+
+Endpoint novo, mesma permissão (`migration.resolve`):
+`POST /api/migration/staging-records/{id}/retry-promotion`.
+
+**Testado em** `tests/test_staging_persistence.py` (3 testes: caso
+`create_new` confirma mesmo `project.id`, nenhuma duplicação de
+`ProjectExternalId`, contagem de projetos inalterada; caso
+`update_existing` confirma reaplicação do campo; rejeição de um registo
+nunca revertido) e `tests/test_migration_api.py` (2 testes: ciclo completo
+via API — promover → reverter → repetir → promover, mesmo `project_id`; e
+a permissão `migration.resolve` exigida, PM sem essa permissão recebe
+403).
+
+## D-037 — Ingestão controlada para staging: comando administrativo, modo staging-only, contagens de revisão
+
+**Decisão:** `app/cli/ingest_staging.py` — comando de linha de comandos
+(`python -m app.cli.ingest_staging --file <export.json> [--actor-email
+...]`), a única forma de invocar `ingest_export` fora dos testes. Nunca um
+endpoint HTTP (D-026 já excluía isso deliberadamente da API).
+
+- **Modo staging-only:** `assert_staging_only_environment` recusa-se a
+  correr com `APP_ENV=production` — a migração real passa sempre primeiro
+  por `staging` para revisão manual da fila de conflitos
+  (docs/DATA_MIGRATION_RUNBOOK.md), nunca diretamente para produção por
+  este comando. `local`/`test` continuam permitidos, para ensaiar o fluxo
+  com fixtures sintéticas. Segunda barreira independente: em `production`
+  real (configuração completa — D-032), `get_settings()` já teria
+  bloqueado o processo inteiro no arranque (`AUTH_ENABLED`, PostgreSQL,
+  etc.) antes mesmo deste comando correr — mas esta verificação cobre
+  também o caso (impossível em produção real, mas possível num ambiente
+  mal configurado) de alguém correr o comando com `APP_ENV=production`
+  apontado a uma base de dados que não devia.
+- **Contagens de revisão** (`app/migration/staging.py:summarize_import_batch`):
+  `projects_seen`, `ready_to_promote`, `conflicts`, `distinct_pm_names`,
+  `with_email`, `with_contact`, `with_coordinates` — sempre derivadas de
+  `mapped_fields_json` já persistido, nunca relidas do payload bruto (para
+  nunca divergir de `_map_legacy_fields`). Nunca inclui nada sobre
+  `projects` — só sobre os registos de staging deste lote.
+- **`--actor-email` opcional** — quando fornecido, tem de corresponder a um
+  `User` ativo já existente (nunca inventa nem ignora silenciosamente um
+  email desconhecido); grava `ImportBatch.started_by_person_id`.
+- **Nunca escreve em `projects`** (comportamento herdado de `ingest_export`,
+  sem alteração) — a mensagem final do comando lembra sempre isto e aponta
+  para o endpoint de revisão da fila de conflitos.
+
+**Testado em** `tests/test_ingest_staging_cli.py` (10 testes): barreira
+staging-only (produção rejeitada, os restantes ambientes permitidos);
+nunca escreve em `projects`; payload preservado verbatim; contagens
+corretas contra a fixture sintética (`synthetic_legacy_export.json`, 3
+projetos: 2 PMs distintos, 2 com email, 2 com contacto, 2 com
+coordenadas); resolução de `--actor-email` (existente, desconhecido,
+omitido). Validado manualmente também via linha de comandos: recusa
+correta em `APP_ENV=production` (bloqueado já pela validação de
+configuração — D-032) e execução completa com resumo correto em `local`.
+
+## D-038 — Roadmap funcional reordenado: Dashboard → Workflow → Migração → Inventário → Graph → Claude
+
+**Decisão:** `docs/PLAN.md` renumerado por pedido explícito — a ordem de
+prioridade passa a ser Dashboard inicial (Fase 2, nova) → Workflow de
+projetos (Fase 3, nova) → Migração real dos 295 projetos (Fase 4, era
+Fase 2) → Inventário e pedidos de material (Fase 5, sem alteração de
+número) → Microsoft Graph real (Fase 6, era Fase 3) → Claude — propostas
+de agenda, preparação de emails e relatórios, sempre com aprovação humana
+(Fase 7, era Fase 7, âmbito reduzido — ver abaixo). ClickUp real (Fase 8,
+era Fase 4) e Biblioteca documental (Fase 9, era Fase 6) não faziam parte
+da ordem de seis itens pedida — mantidos no roadmap, colocados depois
+dessas seis, sem prioridade relativa inventada; cada secção documenta a
+sua própria dependência técnica (ClickUp de Fase 4, Documental de Fase 6).
+
+**Duas fases novas, só roadmap nesta revisão (sem implementação):**
+- **Fase 2 — Dashboard inicial:** estatísticas semanais, trabalhos
+  pendentes, visão operacional, visão comercial, férias e aniversários.
+  Nenhuma métrica/campo obrigatório foi assumido — "férias e aniversários"
+  não tem sequer modelo de dados hoje (`Person` sem data de nascimento,
+  sem entidade de ausências). Registado como pergunta 18 em
+  `docs/OPEN_QUESTIONS.md`.
+- **Fase 3 — Workflow de projetos:** o modelo de dados
+  (`phases`/`workflow_stages`/`workflow_subtasks`/
+  `project_stage_progress`/`project_subtask_progress`) já existe desde a
+  Fase 0, semeado só com um processo genérico de exemplo — carregar o
+  processo real de 6 fases da Solcor e definir os requisitos para avançar
+  de fase (hoje nada bloqueia isto) ficam como decisão de negócio,
+  registada como pergunta 19.
+
+**Consequência aceite:** a Fase 4 (Migração) só depende tecnicamente da
+Fase 1, não das Fases 2/3 — a nova sequência é uma escolha de prioridade
+de negócio, não uma dependência técnica; a tabela "Dependências entre
+fases" em `docs/PLAN.md` documenta isto explicitamente para não passar a
+impressão de um bloqueio que não existe. O âmbito da Fase 7 (Claude) fica
+reduzido face à versão anterior do roadmap: a pesquisa documental (RAG)
+sobre a biblioteca dependia da Biblioteca Documental, que passa a vir
+depois (Fase 9) — fica registada como um incremento futuro de Claude,
+não como parte do âmbito imediato desta fase.
+
+**Nada disto implica trabalho de implementação nesta sessão** — pedido
+explícito era só reordenar o roadmap, nunca implementar as integrações
+externas ou o dashboard/workflow em si.
+# Fase 1.5 — MVP dashboard/workflow
+
+Pedido explicitamente pelo negócio como o MVP a entregar antes da Fase 2
+(migração real dos 295 projetos) — ver a secção "MVP recomendado" em
+`docs/PLAN.md` para a justificação de porque este MVP avança antes daquele.
+Nenhuma integração real (Graph/ClickUp/Financial/Claude), sem envio de
+email, sem eventos reais, sem mapas/inventário/pedidos de
+material/biblioteca documental, sem migração de dados reais — tudo isso
+continua fora de âmbito e documentado no roadmap (`docs/PLAN.md`).
+
+## D-039 — `Task` como entidade nova, não reaproveitamento de `Phase`/`WorkflowStage`/`ProjectSubtaskProgress`
+
+**Contexto:** já existia em `app/models/workflow.py` +
+`app/models/project.py` um sistema de processo fixo — `Phase` →
+`WorkflowStage` → `WorkflowSubtask` (catálogo) e
+`ProjectStageProgress`/`ProjectSubtaskProgress` (progresso booleano por
+projeto). O pedido deste MVP é uma tarefa genérica com responsável,
+prioridade, prazo, notas, estado (`todo`/`in_progress`/`blocked`/`done`/
+`cancelled`) e histórico de alterações — criável/editável livremente pelo
+utilizador, não só um checklist de catálogo fixo.
+
+**Decisão:** criar `app/models/task.py` (`Task`, `TaskHistory`) como
+entidade nova, em vez de alargar `ProjectSubtaskProgress` com todos estes
+campos. As duas estruturas **coexistem nesta fase, sem nenhuma migração de
+dados entre elas** — `Phase`/`WorkflowStage`/`WorkflowSubtask` continuam
+semeados (`seed_workflow`) mas sem endpoint nem UI ligados nesta fase (já
+assim antes desta sessão — ver "Âmbito deixado de fora da Fase 1").
+
+**Porquê não reaproveitar:** `ProjectSubtaskProgress` é uma tabela de
+junção `(projeto, subtarefa) → done`, com a subtarefa definida uma vez no
+catálogo (`WorkflowSubtask`) e partilhada por todos os projetos —
+alargá-la para ter responsável/prioridade/prazo/notas próprios por
+projeto exigiria duplicar `WorkflowSubtask` por projeto (perdendo a
+vantagem de catálogo único) ou mover esses campos para uma tabela nova de
+qualquer forma. Criar `Task` direta e simples é menos código e mais claro
+do que forçar um encaixe.
+
+**Consequência assumida:** o sistema tem agora dois modelos de "trabalho a
+fazer" com propósitos ligeiramente diferentes — decisão consciente,
+registada aqui e em `docs/OPEN_QUESTIONS.md` como pergunta em aberto para
+uma fase futura decidir se compensa unificar (ex.: `WorkflowSubtask`
+passar a gerar automaticamente uma `Task` por projeto).
+
+## D-040 — Máquina de estados de `Task`: `blocked` nunca salta direto para `done`; `done`/`cancelled` só reabrem para `todo`/`in_progress`
+
+**Decisão** (`app/services/tasks.py:TASK_TRANSITIONS`):
+
+```text
+todo         -> todo, in_progress, blocked, done, cancelled
+in_progress  -> in_progress, todo, blocked, done, cancelled
+blocked      -> blocked, todo, in_progress, cancelled       (nunca done)
+done         -> done, todo, in_progress                     (reabertura)
+cancelled    -> cancelled, todo                              (reabertura)
+```
+
+Uma transição para o mesmo estado é sempre um no-op permitido (sem gerar
+histórico); qualquer transição fora desta tabela é rejeitada com `400` e
+sem qualquer escrita (`InvalidTaskTransition`,
+`app/api/routes_tasks.py`).
+
+**Porquê:** o pedido explícito era "criadas, editadas, atribuídas,
+concluídas, reabertas" — não uma máquina de estados detalhada, por isso a
+regra concreta é uma decisão de implementação, não um requisito do
+negócio (registado aqui para revisão, não assumido como definitivo). A
+única regra de negócio considerada não-arbitrária: uma tarefa bloqueada
+não devia poder "saltar" para concluída sem primeiro ser desbloqueada —
+sinaliza um erro operacional real (ex. marcar como feito por engano sem
+resolver o bloqueio). `done`/`cancelled` só reabrirem para `todo`/
+`in_progress` (nunca um do outro diretamente) mantém o histórico legível:
+reabrir sempre volta ao início do fluxo ativo, nunca troca diretamente
+entre dois estados terminais.
+
+`completed_at` é sempre derivado do lado do servidor a partir da
+transição de/para `done` — nunca um campo editável em `TaskUpdate`
+(`app/schemas/tasks.py`), para não haver uma segunda fonte de verdade
+sobre "quando foi concluída".
+
+**Testes:** `tests/test_tasks_api.py` (transição válida com histórico e
+`completed_at`; `blocked → done` rejeitado; `cancelled` só reabre para
+`todo`; reabrir `done` limpa `completed_at`).
+
+## D-041 — Dashboard: endpoint de resumo único, calculado inteiramente no servidor; semana sempre em Europe/Lisbon; indicadores operacionais só contam projetos ativos
+
+**Decisão:** `GET /api/dashboard/summary` (`app/services/dashboard.py`)
+devolve todos os indicadores da página inicial já calculados e já
+filtrados pela visibilidade do utilizador — o frontend nunca soma/filtra
+listas completas para produzir uma métrica (requisito explícito: "os
+dados devem vir de endpoints próprios de resumo/dashboard").
+
+**Fuso horário centralizado:** `app/utils/timezones.py` (`today_lisbon()`,
+`week_range_lisbon()`) é o único ponto que sabe que "hoje"/"esta semana"
+usam `Europe/Lisbon` — usado por `Task.is_overdue`,
+`app/services/tasks.py` (filtro `overdue_only`), e
+`app/services/dashboard.py`. Sem isto, um servidor alojado noutro fuso
+(UTC, por exemplo) calcularia "esta semana" de forma diferente do que uma
+pessoa em Portugal veria no calendário. Dependência nova: `tzdata` — o
+Windows (e alguns Linux mínimos) não trazem a base de dados IANA que
+`zoneinfo` precisa; confirmado neste ambiente de desenvolvimento
+(`ZoneInfoNotFoundError` sem o pacote).
+
+**Só projetos ativos entram nos indicadores operacionais** —
+`active_projects_count`, "a começar em 30 dias", "sem PM", "dados em
+falta" já filtravam por `is_active` desde a primeira versão; durante a
+verificação manual em navegador desta sessão encontrou-se um bug real: as
+tarefas de um projeto inativo (`Instalação Sintética H — Inativa`, com
+checklist padrão semeada de propósito para testar isto) apareciam em
+"visitas técnicas pendentes"/"comissionamentos pendentes"/"tarefas
+atrasadas", porque esses indicadores vinham de `visible_tasks_query` sem
+o mesmo filtro. Corrigido filtrando pelas tarefas do **próprio projeto**
+(`t.project.is_active`), não pela lista de projetos ativos já calculada —
+para não excluir por engano uma tarefa atribuída diretamente ao
+utilizador num projeto ativo que não é o seu como PM. Teste de regressão:
+`tests/test_dashboard.py::test_tasks_of_inactive_projects_never_appear_in_operational_lists`.
+
+**Testes:** `tests/test_dashboard.py` (escopo por perfil, semana em
+Europe/Lisbon, cada indicador com pelo menos um caso semeado real).
+
+## D-042 — `Absence`: modelo mínimo, sem fluxo de aprovação nesta fase
+
+**Decisão:** `Absence` (`app/models/absence.py`) tem só os campos
+pedidos — pessoa, data inicial, data final, tipo (`ferias`/
+`baixa_medica`/`outro`), nota, estado (`aprovada`/`cancelada`). Criar uma
+ausência já a marca `aprovada` — não existe um estado `pendente` nem um
+passo de aprovação por outra pessoa. Depois de criada, só `status` e
+`note` são editáveis (`AbsenceUpdate`) — alterar datas/pessoa/tipo exige
+cancelar e criar de novo, para o registo nunca ficar ambíguo sobre "o que
+mudou realmente" sem precisar de histórico próprio (ao contrário de
+`Task`/`Project`, `Absence` não tem uma tabela de histórico — âmbito
+deliberadamente mínimo).
+
+**Porquê:** o pedido foi "criar entidade... e uma interface simples para
+consultar e registar férias" — não descreveu um fluxo de
+pedido→aprovação. Assumir `aprovada` por omissão evita inventar um
+fluxo que o negócio pode não querer. **Registado como pergunta em
+aberto** em `docs/OPEN_QUESTIONS.md`: se for necessário um fluxo real de
+aprovação (ex. PM pede, Chefe aprova), isto exige um novo estado
+`pendente` e uma ação de aprovação — mudança pequena e aditiva quando
+decidido.
+
+**Testes:** `tests/test_absences_api.py` (criação fica `aprovada`, datas
+inválidas rejeitadas, permissões por perfil, cancelamento).
+
+## D-043 — Aviso de fotos pendentes: reaproveita a tarefa padrão `fotos_drive`, sem novo campo booleano
+
+**Decisão:** o pedido "quando uma tarefa de visita técnica ou
+comissionamento for concluída, mostrar um aviso persistente para
+confirmar que as fotos foram colocadas na Drive" é resolvido inteiramente
+a partir das tarefas já existentes — `ProjectRead.photos_pending_warning`
+(`app/services/projects.py:compute_project_task_summary`) é `True` quando
+pelo menos uma tarefa `visita_tecnica`/`comissionamento` está `done` **e**
+a tarefa `fotos_drive` desse projeto ainda não está `done`. Sem nenhum
+campo novo em `Project` nem em `Task` — o aviso desaparece sozinho assim
+que alguém marcar "Colocar fotos na Drive" como concluída.
+
+**Porquê:** a checklist padrão de 5 tarefas por projeto já inclui
+"Colocar fotos na Drive" como a última etapa (pedido explícito da secção
+2) — usá-la como o próprio sinal do aviso evita um segundo lugar para a
+mesma informação poder divergir (ex. um booleano `photos_confirmed` que
+alguém esquece de sincronizar com o estado real da tarefa).
+
+**Nesta fase o aviso é só informativo** (banner na página do projeto,
+ícone ⚠️ na lista de projetos) — nunca bloqueia nenhuma ação, tal como
+pedido explicitamente ("nesta fase o aviso é apenas interno; não fazer
+integração com a Drive").
+
+**Testes:** `tests/test_project_task_summary.py` (aviso só quando visita/
+comissionamento concluída e fotos não; desaparece ao concluir fotos);
+validado também manualmente no browser (ver verificação end-to-end desta
+sessão).
+
+## D-044 — Visibilidade de férias/aniversários no dashboard ligada a `absence.view_all`/`absence.view_own`
+
+**Decisão:** quem tem `absence.view_all` (Chefe de Operações,
+Administrador) vê as férias/ausências e os aniversários de toda a gente
+no dashboard; quem só tem `absence.view_own` (PM, Comercial, Financeiro)
+só vê os seus próprios — nunca os de terceiros. O mesmo par de permissões
+controla os dois indicadores (não há uma permissão separada só para
+aniversários) porque são a mesma categoria de informação pessoal de baixa
+sensibilidade, tratada com o mesmo nível de acesso.
+
+**`PersonRead` (`GET /api/people`, disponível a qualquer utilizador
+autenticado para preencher filtros/dropdowns) nunca inclui `birth_date`**
+— só o endpoint do dashboard expõe data de nascimento, e só ao subconjunto
+de pessoas que a permissão do utilizador autoriza (`BirthdayMini`, via
+`_birthday_scoped_people_query` em `app/services/dashboard.py`). Evita que
+adicionar `birth_date` a `Person` vaze essa informação por um caminho não
+pensado para isso.
+
+**Porquê esta escolha e não "todos veem tudo":** o pedido dizia
+explicitamente "não expor informação sensível desnecessária" na secção de
+férias/aniversários — restringir por omissão é mais seguro do que expor
+por omissão e ter de restringir depois. **Registado como pergunta em
+aberto** em `docs/OPEN_QUESTIONS.md`: pode ser que o negócio prefira que
+todos vejam as férias/aniversários da equipa toda (prática comum em
+empresas pequenas) — mudar é trivial (dar `absence.view_all` a mais
+perfis), mas decidido aqui pelo lado mais restritivo até confirmação.
+
+**Testes:** `tests/test_dashboard.py::test_pm_without_absence_view_all_only_sees_own_birthday`.
+
+## D-045 — Matriz de permissões alargada: `task.*`/`absence.*`, e o que cada perfil ganhou
+
+**Decisão** (`app/security/catalog.py`):
+
+| Permissão | Chefe Operações | PM | Comercial | Financeiro |
+|---|---|---|---|---|
+| `task.view_all` / `task.view_own` | `view_all` | `view_own` | `view_all` | `view_all` |
+| `task.edit_all` / `task.edit_own` | `edit_all` | `edit_own` | — | — |
+| `absence.view_all` / `absence.view_own` | `view_all` | `view_own` | `view_own` | `view_own` |
+| `absence.manage_all` / `absence.manage_own` | `manage_all` | `manage_own` | `manage_own` | `manage_own` |
+
+`can_edit_task`/`can_create_task`/`can_view_task` e
+`can_manage_absence`/`can_view_absence`/`can_create_absence_for`
+(`app/security/permissions.py`) seguem exatamente o mesmo padrão já
+estabelecido por `can_edit_project`/`can_view_project` — nunca um "papel"
+lido do cliente, sempre a permissão + a relação (PM do projeto, ou
+responsável direto pela tarefa/ausência).
+
+**Comercial e Financeiro passam a ter `task.view_all`** (consistente com
+o `project.view_all` que já tinham) mas **não** `task.edit_all`/`_own` —
+continuam só de leitura sobre tarefas, tal como já eram só de leitura
+sobre projetos (`test_comercial_is_read_only_on_tasks`). Nenhuma alteração
+a permissões pré-existentes (`project.*`, `cost.*`, etc.) — só aditivo.
+
+**Sobre dados financeiros na vista Comercial** (requisito explícito: "a
+vista Comercial não deve mostrar dados financeiros que não tenha
+permissão para consultar"): nenhum indicador do dashboard, da lista de
+projetos, ou de tarefas desta fase depende de `cost.view` ou mostra
+qualquer valor monetário — o módulo Financial está inteiramente fora
+deste MVP. O requisito fica automaticamente satisfeito por
+não haver dado financeiro nenhum para mostrar; quando a Fase 5
+(custos/margens) for construída, quem desenhar essas vistas tem de
+repetir este cuidado explicitamente (não há nada nesta fase que o faça
+automaticamente para telas futuras).
+
+## D-046 — Frontend: Vitest + Testing Library como primeira infraestrutura de testes automatizados
+
+**Decisão:** `vitest`, `@testing-library/react`, `@testing-library/jest-dom`
+e `jsdom` adicionados a `devDependencies`; configuração em
+`frontend/vitest.config.ts` (ambiente `jsdom`, `globals: true`, setup em
+`src/setupTests.ts`); `npm test` corre `vitest run`. Não existia nenhuma
+suite de testes de frontend antes desta fase (`docs/PLAN.md` já
+documentava isto como lacuna conhecida — "Frontend (além do build e
+validação manual): sem testes automatizados de UI ainda").
+
+**Cobertura desta fase:** funções puras (`src/utils/dates.ts`,
+`src/utils/dates.test.ts`), invariantes da máquina de estados espelhada no
+cliente (`src/api/taskTransitions.test.ts` — mesma tabela de D-040, só
+para desenhar a UI, nunca a fonte de verdade), e um teste de fumo do
+painel inicial com a API mockada (`src/pages/Home.test.tsx`) confirmando
+que os indicadores devolvidos pelo endpoint aparecem no ecrã. Não é
+cobertura exaustiva de componentes — âmbito deliberadamente pequeno para
+esta fase, ver `docs/OPEN_QUESTIONS.md` sobre Playwright/Cypress
+end-to-end como possível passo seguinte.
+
+## D-047 — `/` passa a ser o painel operacional; conteúdo anterior movido para `/status`
+
+**Decisão:** `frontend/src/pages/Home.tsx` (novo) é a página inicial —
+antes, `/` redirecionava para `/projects` e a página `Dashboard.tsx`
+(saúde do backend + utilizador de desenvolvimento) vivia em `/status`.
+Esse conteúdo técnico foi preservado tal como estava, só renomeado para
+`SystemStatus.tsx`, continua acessível em `/status` como diagnóstico —
+nada foi perdido, só deixou de ser a primeira coisa que se vê ao entrar
+(requisito explícito: "criar a página `/` como página principal depois do
+login").
+
+**Testes:** `tests/test_dashboard.py` (backend); `Home.test.tsx`
+(frontend, ver D-046).
+
+## D-048 — Integração de PR #1 (hardening) + PR #2 (MVP) em `mvp-ready`
+
+**Contexto:** os dois PRs foram desenvolvidos em paralelo a partir do
+mesmo commit em `main` (`b39be01`), cada um continuando a numeração de
+decisões a partir de D-031 — resultando em duas séries de decisões D-032
+a D-040/D-038 incompatíveis, e conflitos reais em `docs/PLAN.md`,
+`docs/DECISIONS.md`, `docs/OPEN_QUESTIONS.md`, `README.md`,
+`.github/workflows/ci.yml` e `frontend/package.json`/`vitest.config.ts`.
+
+**Decisão:**
+1. `mvp-ready` parte de `origin/main`, integra primeiro
+   `staging-prod-hardening` (fast-forward, sem conflitos — as duas séries
+   de commits não se sobrepõem em código) e só depois
+   `mvp-dashboard-workflow` (onde os conflitos reais acontecem).
+2. As decisões do MVP (D-032 a D-040 na numeração original do PR #2) foram
+   renumeradas para D-039 a D-047, preservando a numeração D-032 a D-038
+   do hardening (PR #1) inalterada — evita reescrever qualquer referência
+   já feita a D-032..D-038 fora deste merge.
+3. `docs/PLAN.md`: a numeração de fases do hardening (Fase 4 = Migração,
+   Fase 5 a 9 = Inventário/Graph/Claude/ClickUp/Biblioteca) foi mantida
+   sem alteração — evita quebrar as várias referências cruzadas a "Fase N"
+   espalhadas pelo documento. As antigas Fase 2 (Dashboard inicial) e
+   Fase 3 (Workflow de projetos), que eram só roadmap por implementar,
+   foram anotadas como cobertas pela nova Fase 1.5 (MVP, implementada) —
+   ver essas secções para o detalhe de o que ficou coberto e o que não
+   (o processo fixo `Phase`/`WorkflowStage` continua sem endpoints).
+4. `frontend/package.json`: Vitest mantido em `3.2.7` (nunca voltar a
+   2.x — vulnerabilidade crítica que motivou o hardening). `vite`
+   atualizado de `5.4.11` para `6.4.3` — necessário para eliminar
+   GHSA-fx2h-pf6j-xcff (`server.fs.deny` bypass no Windows, severidade
+   alta, CVSS 7.5), que não tem correção na série 5.x; compatível com
+   `@vitejs/plugin-react@4.3.4` (aceita `vite ^6.0.0`) e com a suite
+   Vitest existente — `npm run lint`/`npm test`/`npm run build`
+   confirmados depois da atualização. Vulnerabilidades moderadas
+   remanescentes (`@vitest/mocker`/`vitest` — precisa de Vitest 4.x;
+   `react-router`/`react-router-dom` — precisa de major 7.x) não foram
+   corrigidas nesta revisão para não forçar upgrades major
+   desnecessários fora do que foi pedido — mesma política já registada
+   acima para o `npm audit` da Fase 1.
+5. `.github/workflows/ci.yml`/`vitest.config.ts`: combinados sem perda —
+   o job de frontend corre `lint` + `test` (Vitest) antes do `build`
+   (D-039 do PR #2, preservado), e a configuração de testes junta
+   `globals`/`setupFiles` (suite de UI, D-046) com o `include` explícito
+   do hardening.
+6. `Task` mantém-se como a única unidade operacional usada pelo MVP; os
+   modelos antigos `Phase`/`WorkflowStage`/`WorkflowSubtask` não foram
+   tocados nem migrados — decisão explícita de não arriscar uma migração
+   de dados agora (ver `docs/OPEN_QUESTIONS.md` perguntas 22 e 24). Um
+   futuro formulário de visita técnica/comissionamento tem de escolher
+   uma única fonte de verdade entre as duas antes de ser construído.
+
+**Validação pós-merge:** 224 testes de backend a passar + 2 skipped
+(SQLite; PostgreSQL não pôde ser validado neste ambiente Windows por
+falta de Docker — mesmo bloqueio já documentado em D-021 — fica para o
+job `backend-postgres` do CI em `GitHub Actions`); 18 testes Vitest no
+frontend; `npm run build`/`npm run lint` sem erros; testado manualmente
+no browser com os 5 utilizadores sintéticos do seed (permissões de
+PM/Chefe/Comercial/Financeiro/Admin, aviso de fotos pendentes,
+transições de estado inválidas bloqueadas, validação de datas de férias,
+projeto inativo excluído do dashboard, fluxo de ingestão para staging
+com contagens/conflitos/promoção/rollback).

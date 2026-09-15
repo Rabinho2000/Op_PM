@@ -12,17 +12,49 @@ Utilização:
 """
 from __future__ import annotations
 
+import datetime as dt
+
 from sqlalchemy.orm import Session
 
 import app.models  # noqa: F401  — garante que todas as tabelas estão registadas em Base.metadata
 from app.db import Base, SessionLocal, engine
+from app.models.absence import TYPE_BAIXA_MEDICA, TYPE_FERIAS, Absence
 from app.models.identity import Permission, Role, RolePermission, User, UserRole
 from app.models.inventory import InventoryItem
 from app.models.people import Person
 from app.models.project import Project
 from app.models.supplier import Supplier
+from app.models.task import (
+    STATUS_BLOCKED,
+    STATUS_CANCELLED,
+    STATUS_DONE,
+    STATUS_IN_PROGRESS,
+    TASK_TYPE_COMISSIONAMENTO,
+    TASK_TYPE_FOTOS_DRIVE,
+    TASK_TYPE_INSTALACAO,
+    TASK_TYPE_PREPARACAO_INSTALACAO,
+    TASK_TYPE_VISITA_TECNICA,
+    Task,
+)
 from app.models.workflow import Phase, WorkflowStage, WorkflowSubtask
 from app.security.catalog import PERMISSIONS, ROLE_PERMISSIONS, ROLES
+from app.services.tasks import ensure_default_tasks_for_project
+
+
+def _relative_birth_date(days_from_today: int) -> dt.date:
+    """Constrói uma data de nascimento cujo dia/mês cai `days_from_today`
+    dias a partir de hoje — para que "aniversários próximos" no dashboard
+    fique sempre demonstrável, seja qual for o dia em que o seed correr
+    (ver requisito explícito: "a página inicial deve ficar demonstrável
+    logo depois de correr o seed"). O ano é só um valor plausível — nunca
+    usado para calcular idade nesta fase (ver app/services/dashboard.py)."""
+    target = dt.date.today() + dt.timedelta(days=days_from_today)
+    birth_year = target.year - 30
+    try:
+        return dt.date(birth_year, target.month, target.day)
+    except ValueError:
+        # 29 de fevereiro num ano de nascimento sintético não bissexto.
+        return dt.date(birth_year, target.month, 28)
 
 # Fases/etapas genéricas — mesma forma do processo legado (6 fases), mas com
 # títulos e subtarefas de exemplo, não o texto proprietário do processo real.
@@ -108,12 +140,16 @@ GENERIC_WORKFLOW = [
 ]
 
 # 5 utilizadores ativos (um por papel) + 3 PMs "legados" sem conta de login.
+# O 4º elemento é o desvio (em dias, a partir de hoje) da data de
+# nascimento sintética — cobre deliberadamente vários cenários do
+# dashboard: aniversário mesmo hoje, daqui a poucos dias, dentro da janela
+# de 30 dias, e fora dela (ver _relative_birth_date acima).
 SYNTHETIC_ACTIVE_PEOPLE = [
-    ("Admin Sintético", "admin.sintetico@example.invalid", "administrador"),
-    ("Chefe Sintético", "chefe.sintetico@example.invalid", "chefe_operacoes"),
-    ("PM Sintético Um", "pm.um.sintetico@example.invalid", "project_manager"),
-    ("Comercial Sintético", "comercial.sintetico@example.invalid", "comercial"),
-    ("Financeiro Sintético", "financeiro.sintetico@example.invalid", "financeiro"),
+    ("Admin Sintético", "admin.sintetico@example.invalid", "administrador", 5),
+    ("Chefe Sintético", "chefe.sintetico@example.invalid", "chefe_operacoes", 20),
+    ("PM Sintético Um", "pm.um.sintetico@example.invalid", "project_manager", -10),
+    ("Comercial Sintético", "comercial.sintetico@example.invalid", "comercial", 0),
+    ("Financeiro Sintético", "financeiro.sintetico@example.invalid", "financeiro", 200),
 ]
 SYNTHETIC_LEGACY_PMS_WITHOUT_LOGIN = [
     "PM Sintético Legado Dois",
@@ -188,8 +224,10 @@ def seed_workflow(db: Session) -> None:
 def seed_people_and_users(db: Session, role_objs: dict[str, Role]) -> None:
     if db.query(Person).count() > 0:
         return
-    for name, email, role_code in SYNTHETIC_ACTIVE_PEOPLE:
-        person = Person(display_name=name, email=email, is_active=True)
+    for name, email, role_code, birth_offset_days in SYNTHETIC_ACTIVE_PEOPLE:
+        person = Person(
+            display_name=name, email=email, is_active=True, birth_date=_relative_birth_date(birth_offset_days)
+        )
         db.add(person)
         db.flush()
         user = User(person_id=person.id, email=email, is_active=True)
@@ -202,39 +240,262 @@ def seed_people_and_users(db: Session, role_objs: dict[str, Role]) -> None:
         # login, mas presente em `people` para qualquer FK antiga continuar
         # a resolver-se corretamente.
         db.add(Person(display_name=name, email=None, is_active=False, legacy_ref=name.lower().replace(" ", "_")))
+    db.flush()  # SessionLocal tem autoflush=False — sem isto, seed_sample_projects não veria estas pessoas
+
+
+def _tasks_by_type(created: list[Task]) -> dict[str, Task]:
+    return {t.task_type: t for t in created}
 
 
 def seed_sample_projects(db: Session) -> None:
+    """Cria os 2 projetos sintéticos originais (nomes usados literalmente
+    em vários testes — nunca renomear/remover) mais um conjunto adicional
+    de projetos, cada um com a checklist padrão de tarefas (ver
+    app/services/tasks.py:ensure_default_tasks_for_project) em estados
+    diferentes, para a página inicial ficar demonstrável logo depois de
+    correr o seed (todos os indicadores do dashboard têm pelo menos um
+    resultado)."""
     if db.query(Project).count() > 0:
         return
-    pm = db.query(Person).filter(Person.display_name == "PM Sintético Um").one()
+    today = dt.date.today()
+    pm_um = db.query(Person).filter(Person.display_name == "PM Sintético Um").one()
+    chefe = db.query(Person).filter(Person.display_name == "Chefe Sintético").one()
+    pm_legado = db.query(Person).filter(Person.display_name == "PM Sintético Legado Dois").one()
+
+    demo = Project(
+        name="Instalação Sintética de Demonstração",
+        client_name="Cliente Sintético",
+        client_contact="Contacto Sintético",
+        client_email="cliente.sintetico@example.invalid",
+        address="Morada sintética, sem correspondência real",
+        lat=38.7,
+        lon=-9.1,
+        power_kwp=9.9,
+        pm_person_id=pm_um.id,
+        is_active=True,
+    )
+    db.add(demo)
+
+    incompleta = Project(
+        name="Instalação Sintética Incompleta",
+        client_name=None,
+        client_contact=None,
+        client_email=None,
+        address=None,
+        lat=None,
+        lon=None,
+        power_kwp=None,
+        pm_person_id=None,
+        is_active=True,
+        notes="Projeto sintético deliberadamente incompleto, para testar a preservação de campos em falta.",
+    )
+    db.add(incompleta)
+
+    starting_soon = Project(
+        name="Instalação Sintética A — Início Próximo",
+        client_name="Cliente Sintético A",
+        client_contact="Contacto Sintético A",
+        client_email="cliente.a.sintetico@example.invalid",
+        address="Morada sintética A",
+        lat=41.15,
+        lon=-8.6,
+        power_kwp=15.4,
+        pm_person_id=pm_um.id,
+        start_date=today + dt.timedelta(days=15),
+        is_active=True,
+    )
+    db.add(starting_soon)
+
+    overdue_project = Project(
+        name="Instalação Sintética B — Atrasada",
+        client_name="Cliente Sintético B",
+        client_contact="Contacto Sintético B",
+        client_email="cliente.b.sintetico@example.invalid",
+        address="Morada sintética B",
+        lat=39.4,
+        lon=-8.2,
+        power_kwp=22.0,
+        pm_person_id=pm_um.id,
+        start_date=today - dt.timedelta(days=60),
+        is_active=True,
+    )
+    db.add(overdue_project)
+
+    photos_pending_project = Project(
+        name="Instalação Sintética C — Fotos Pendentes",
+        client_name="Cliente Sintético C",
+        client_contact="Contacto Sintético C",
+        client_email="cliente.c.sintetico@example.invalid",
+        address="Morada sintética C",
+        lat=38.0,
+        lon=-9.4,
+        power_kwp=11.2,
+        pm_person_id=pm_um.id,
+        start_date=today - dt.timedelta(days=20),
+        is_active=True,
+    )
+    db.add(photos_pending_project)
+
+    missing_pm_project = Project(
+        name="Instalação Sintética E — Sem PM Atribuído",
+        client_name="Cliente Sintético E",
+        client_contact="Contacto Sintético E",
+        client_email="cliente.e.sintetico@example.invalid",
+        address="Morada sintética E",
+        lat=40.2,
+        lon=-8.4,
+        power_kwp=8.0,
+        pm_person_id=None,
+        start_date=today + dt.timedelta(days=3),
+        is_active=True,
+    )
+    db.add(missing_pm_project)
+
+    legacy_pm_project = Project(
+        name="Instalação Sintética F — PM Legado",
+        client_name="Cliente Sintético F",
+        client_contact="Contacto Sintético F",
+        client_email="cliente.f.sintetico@example.invalid",
+        address="Morada sintética F",
+        lat=37.1,
+        lon=-7.9,
+        power_kwp=30.5,
+        pm_person_id=pm_legado.id,
+        start_date=today - dt.timedelta(days=100),
+        is_active=True,
+    )
+    db.add(legacy_pm_project)
+
+    urgent_project = Project(
+        name="Instalação Sintética G — Trabalho Urgente",
+        client_name="Cliente Sintético G",
+        client_contact="Contacto Sintético G",
+        client_email="cliente.g.sintetico@example.invalid",
+        address="Morada sintética G",
+        lat=41.5,
+        lon=-8.4,
+        power_kwp=18.3,
+        pm_person_id=pm_um.id,
+        start_date=today - dt.timedelta(days=5),
+        is_active=True,
+    )
+    db.add(urgent_project)
+
+    inactive_project = Project(
+        name="Instalação Sintética H — Inativa",
+        client_name="Cliente Sintético H",
+        pm_person_id=None,
+        is_active=False,
+        notes="Projeto sintético inativo — nunca deve aparecer nas contagens do dashboard.",
+    )
+    db.add(inactive_project)
+
+    db.flush()  # garante project.id antes de criar tarefas
+
+    # --- Tarefas padrão por projeto, depois ajustadas para cada cenário ---
+    ensure_default_tasks_for_project(db, demo)
+    ensure_default_tasks_for_project(db, incompleta)
+
+    starting_soon_tasks = _tasks_by_type(ensure_default_tasks_for_project(db, starting_soon))
+    starting_soon_tasks[TASK_TYPE_VISITA_TECNICA].due_date = today + dt.timedelta(days=18)
+    starting_soon_tasks[TASK_TYPE_VISITA_TECNICA].assigned_to_person_id = pm_um.id
+
+    overdue_tasks = _tasks_by_type(ensure_default_tasks_for_project(db, overdue_project))
+    overdue_tasks[TASK_TYPE_VISITA_TECNICA].status = STATUS_DONE
+    overdue_tasks[TASK_TYPE_VISITA_TECNICA].completed_at = dt.datetime.now(dt.timezone.utc)
+    overdue_tasks[TASK_TYPE_PREPARACAO_INSTALACAO].status = STATUS_IN_PROGRESS
+    overdue_tasks[TASK_TYPE_PREPARACAO_INSTALACAO].due_date = today - dt.timedelta(days=5)
+    overdue_tasks[TASK_TYPE_PREPARACAO_INSTALACAO].assigned_to_person_id = pm_um.id
+    overdue_tasks[TASK_TYPE_INSTALACAO].status = STATUS_BLOCKED
+    overdue_tasks[TASK_TYPE_INSTALACAO].notes = "Bloqueado à espera de material sintético."
+
+    photos_tasks = _tasks_by_type(ensure_default_tasks_for_project(db, photos_pending_project))
+    for task_type in (TASK_TYPE_VISITA_TECNICA, TASK_TYPE_PREPARACAO_INSTALACAO, TASK_TYPE_INSTALACAO):
+        photos_tasks[task_type].status = STATUS_DONE
+        photos_tasks[task_type].completed_at = dt.datetime.now(dt.timezone.utc)
+    photos_tasks[TASK_TYPE_COMISSIONAMENTO].status = STATUS_DONE
+    photos_tasks[TASK_TYPE_COMISSIONAMENTO].completed_at = dt.datetime.now(dt.timezone.utc)
+    photos_tasks[TASK_TYPE_COMISSIONAMENTO].due_date = today  # também conta como "esta semana"
+    photos_tasks[TASK_TYPE_FOTOS_DRIVE].assigned_to_person_id = chefe.id
+    # fotos_drive fica 'todo' de propósito — aciona o aviso persistente.
+
+    missing_pm_tasks = _tasks_by_type(ensure_default_tasks_for_project(db, missing_pm_project))
+    missing_pm_tasks[TASK_TYPE_VISITA_TECNICA].due_date = today + dt.timedelta(days=2)  # esta semana
+
+    legacy_tasks = _tasks_by_type(ensure_default_tasks_for_project(db, legacy_pm_project))
+    legacy_tasks[TASK_TYPE_VISITA_TECNICA].status = STATUS_DONE
+    legacy_tasks[TASK_TYPE_VISITA_TECNICA].completed_at = dt.datetime.now(dt.timezone.utc)
+    legacy_tasks[TASK_TYPE_PREPARACAO_INSTALACAO].status = STATUS_DONE
+    legacy_tasks[TASK_TYPE_PREPARACAO_INSTALACAO].completed_at = dt.datetime.now(dt.timezone.utc)
+    legacy_tasks[TASK_TYPE_COMISSIONAMENTO].status = STATUS_CANCELLED
+    legacy_tasks[TASK_TYPE_COMISSIONAMENTO].notes = "Cliente sintético cancelou o comissionamento agendado."
+
+    ensure_default_tasks_for_project(db, urgent_project)
     db.add(
-        Project(
-            name="Instalação Sintética de Demonstração",
-            client_name="Cliente Sintético",
-            client_contact="Contacto Sintético",
-            client_email="cliente.sintetico@example.invalid",
-            address="Morada sintética, sem correspondência real",
-            lat=38.7,
-            lon=-9.1,
-            power_kwp=9.9,
-            pm_person_id=pm.id,
-            is_active=True,
+        Task(
+            project_id=urgent_project.id,
+            title="Resolver reclamação urgente do cliente sintético",
+            task_type="custom",
+            description="Tarefa ad-hoc sintética, fora da checklist padrão.",
+            priority="urgent",
+            status=STATUS_IN_PROGRESS,
+            assigned_to_person_id=pm_um.id,
+            due_date=today + dt.timedelta(days=3),
+            created_by_person_id=chefe.id,
+        )
+    )
+
+    ensure_default_tasks_for_project(db, inactive_project)
+
+
+def seed_absences(db: Session) -> None:
+    if db.query(Absence).count() > 0:
+        return
+    today = dt.date.today()
+    pm_um = db.query(Person).filter(Person.display_name == "PM Sintético Um").one()
+    chefe = db.query(Person).filter(Person.display_name == "Chefe Sintético").one()
+    comercial = db.query(Person).filter(Person.display_name == "Comercial Sintético").one()
+    financeiro = db.query(Person).filter(Person.display_name == "Financeiro Sintético").one()
+
+    db.add(
+        Absence(
+            person_id=pm_um.id,
+            start_date=today - dt.timedelta(days=2),
+            end_date=today + dt.timedelta(days=3),
+            type=TYPE_FERIAS,
+            note="Férias sintéticas em curso.",
+            created_by_person_id=pm_um.id,
         )
     )
     db.add(
-        Project(
-            name="Instalação Sintética Incompleta",
-            client_name=None,
-            client_contact=None,
-            client_email=None,
-            address=None,
-            lat=None,
-            lon=None,
-            power_kwp=None,
-            pm_person_id=None,
-            is_active=True,
-            notes="Projeto sintético deliberadamente incompleto, para testar a preservação de campos em falta.",
+        Absence(
+            person_id=chefe.id,
+            start_date=today + dt.timedelta(days=10),
+            end_date=today + dt.timedelta(days=17),
+            type=TYPE_FERIAS,
+            note="Férias sintéticas próximas (dentro de 30 dias).",
+            created_by_person_id=chefe.id,
+        )
+    )
+    db.add(
+        Absence(
+            person_id=comercial.id,
+            start_date=today + dt.timedelta(days=45),
+            end_date=today + dt.timedelta(days=50),
+            type=TYPE_FERIAS,
+            note="Férias sintéticas fora da janela de 30 dias — não deve aparecer como 'próxima'.",
+            created_by_person_id=comercial.id,
+        )
+    )
+    db.add(
+        Absence(
+            person_id=financeiro.id,
+            start_date=today + dt.timedelta(days=5),
+            end_date=today + dt.timedelta(days=6),
+            type=TYPE_BAIXA_MEDICA,
+            note="Ausência sintética cancelada — nunca deve aparecer no dashboard.",
+            status="cancelada",
+            created_by_person_id=financeiro.id,
         )
     )
 
@@ -254,6 +515,7 @@ def run_seed() -> None:
         seed_workflow(db)
         seed_people_and_users(db, role_objs)
         seed_sample_projects(db)
+        seed_absences(db)
         seed_supplier_and_inventory(db)
         db.commit()
     finally:

@@ -39,6 +39,38 @@ def test_required_admin_only_fields_from_the_original_request_are_present():
         assert field_name in ADMIN_ONLY_PROJECT_FIELDS
 
 
+def test_fields_with_unconfirmed_business_impact_are_admin_only_by_default(db_session, api_client):
+    """D-035: potência, coordenadas, datas legadas e pressupostos
+    comerciais ficam administrativos por omissão até haver confirmação de
+    negócio (ver docs/OPEN_QUESTIONS.md, pergunta 5-B) — nunca
+    PM-editáveis sem essa confirmação explícita."""
+    doubtful_fields = {
+        "lat",
+        "lon",
+        "power_kwp",
+        "power_raw",
+        "start_date",
+        "commercial_assumptions",
+        "upac_connection_date_raw",
+        "award_year_raw",
+    }
+    assert doubtful_fields <= ADMIN_ONLY_PROJECT_FIELDS
+
+    db = db_session
+    project = db.query(Project).filter(Project.name == "Instalação Sintética de Demonstração").one()
+    original_power = project.power_kwp
+
+    resp = api_client.patch(
+        f"/api/projects/{project.id}",
+        json={"power_kwp": 999.0},
+        headers=_headers("pm.um.sintetico@example.invalid"),
+    )
+    assert resp.status_code == 403
+
+    db.refresh(project)
+    assert project.power_kwp == original_power
+
+
 # --------------------------------------------------------------------------
 # Comportamento via API — bloqueio no servidor, nunca parcial/silencioso.
 # --------------------------------------------------------------------------

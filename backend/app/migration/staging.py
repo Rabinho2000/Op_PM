@@ -386,6 +386,47 @@ def ingest_export(
     return batch
 
 
+def summarize_import_batch(db: Session, batch: ImportBatch) -> dict[str, int]:
+    """Contagens de um lote de ingestão, para revisão humana antes de
+    resolver conflitos/promover — usado pelo comando de ingestão
+    controlada (`app/cli/ingest_staging.py`) e disponível a quem quiser o
+    mesmo resumo por outra via (ex. um futuro endpoint só de leitura).
+    Lê sempre `mapped_fields_json` dos registos já persistidos, nunca o
+    payload bruto de novo — para nunca divergir de que campos
+    `_map_legacy_fields` realmente extraiu.
+
+    Nunca inclui informação alguma sobre PROJECTS — só sobre os registos de
+    STAGING deste lote, porque a ingestão nunca lê nem escreve em
+    `projects` (D-005/D-017)."""
+    records = db.query(StagingProjectRecord).filter(StagingProjectRecord.import_batch_id == batch.id).all()
+
+    distinct_pm_names: set[str] = set()
+    with_email = 0
+    with_contact = 0
+    with_coordinates = 0
+    for record in records:
+        mapped = json.loads(record.mapped_fields_json)
+        pm_name_raw = mapped.get("pm_name_raw")
+        if pm_name_raw and str(pm_name_raw).strip():
+            distinct_pm_names.add(str(pm_name_raw).strip().lower())
+        if mapped.get("email"):
+            with_email += 1
+        if mapped.get("contact"):
+            with_contact += 1
+        if mapped.get("lat") is not None and mapped.get("lon") is not None:
+            with_coordinates += 1
+
+    return {
+        "projects_seen": batch.records_seen,
+        "ready_to_promote": batch.records_ready,
+        "conflicts": batch.records_conflicted,
+        "distinct_pm_names": len(distinct_pm_names),
+        "with_email": with_email,
+        "with_contact": with_contact,
+        "with_coordinates": with_coordinates,
+    }
+
+
 # --------------------------------------------------------------------------
 # 2) Revisão de conflitos — só isto tira um registo de `conflict`.
 # --------------------------------------------------------------------------
@@ -729,6 +770,82 @@ def rollback_promotion(
     record.reverted_by_person_id = actor_person_id
     record.reverted_at = dt.datetime.now(dt.timezone.utc)
     record.reverted_reason = reason
+
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+# --------------------------------------------------------------------------
+# 5) Repetir a promoção de um registo revertido — nunca automático.
+# --------------------------------------------------------------------------
+
+
+def retry_promotion_after_rollback(
+    db: Session, *, staging_record_id: uuid.UUID, actor_person_id: uuid.UUID
+) -> StagingProjectRecord:
+    """Prepara para promover outra vez um registo já revertido por
+    `rollback_promotion` — nunca automático (um registo revertido fica
+    'pending_review' de propósito, exigindo esta decisão humana explícita
+    antes de voltar a 'ready_to_promote', em vez de reaparecer sozinho na
+    fila de promoção como se o rollback nunca tivesse acontecido).
+
+    Caso especial que esta função trata, e `promote_staging_record` sozinho
+    não sabe tratar em segurança: se a promoção original tinha
+    `resolved_action='create_new'`, o projeto **já existe** (foi criado
+    nessa promoção; o rollback só o desativou, nunca o apaga — D-017).
+    Promover outra vez com `resolved_action='create_new'` inalterado
+    tentaria criar um SEGUNDO projeto com o mesmo `external_id`, o que
+    violaria a unicidade de `ProjectExternalId` (source_system,
+    external_id) e duplicaria o projeto — por isso esta função reescreve
+    `resolved_action` para `'update_existing'`, apontado ao mesmo
+    `promoted_project_id` de antes, e reativa explicitamente o projeto
+    (`is_active=True`, com entrada de histórico própria, fonte
+    `migration_retry`) antes de `promote_staging_record` reaplicar os
+    campos mapeados. Para `resolved_action` já `'update_existing'`/
+    `'link_existing'`, o projeto-alvo é o mesmo de sempre — só a
+    reativação é feita aqui, o resto é igual a uma promoção normal.
+
+    Reaplica a mesma verificação de PM (`_finalize_status_given_pm`) já
+    usada em `ingest_export`/`resolve_conflict`/`retry_pm_resolution` —
+    nunca duas lógicas divergentes sobre quando um registo está pronto
+    para promoção."""
+    record = db.get(StagingProjectRecord, staging_record_id)
+    if record is None:
+        raise ValueError(f"registo de staging não encontrado: {staging_record_id}")
+    if record.status != "pending_review" or record.reverted_at is None:
+        raise ValueError(
+            "só é possível repetir a promoção de um registo revertido por rollback_promotion "
+            f"(estado atual: {record.status!r}, reverted_at={record.reverted_at!r})"
+        )
+    if record.promoted_project_id is None:
+        raise ValueError(f"registo {record.id} não tem promoted_project_id da promoção original — estado inconsistente")
+
+    project = db.get(Project, record.promoted_project_id)
+    if project is None:
+        raise ValueError(f"projeto da promoção original não encontrado: {record.promoted_project_id}")
+
+    if record.resolved_action == "create_new":
+        record.resolved_action = "update_existing"
+        record.resolved_target_project_id = record.promoted_project_id
+
+    if not project.is_active:
+        record_project_change(
+            db,
+            project_id=project.id,
+            field_name="is_active",
+            old_value="False",
+            new_value="True",
+            source="migration_retry",
+            changed_by_person_id=actor_person_id,
+            note=f"Reativação antes de repetir a promoção do registo de staging {record.id} (após rollback).",
+            related_staging_record_id=record.id,
+        )
+        project.is_active = True
+
+    mapped = json.loads(record.mapped_fields_json)
+    pm_classification = classify_pm_name(db, mapped.get("pm_name_raw"))
+    _finalize_status_given_pm(record, pm_classification)
 
     db.commit()
     db.refresh(record)

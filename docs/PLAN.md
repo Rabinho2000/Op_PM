@@ -193,7 +193,7 @@ Ver `docs/DECISIONS.md` D-024 a D-027 para o detalhe técnico completo.
   `docs/DECISIONS.md`.
 - **Integrações:** nenhuma real ainda — Graph/ClickUp/Financial/Claude
   continuam mock/fallback; `GraphAdapter` fica em fallback local até à
-  Fase 3.
+  Fase 6 (renumerada nesta revisão — ver "Dependências entre fases").
 - **Testes:** `tests/test_auth_entra.py` (12 — token válido/inválido/
   malformado/expirado/audience errada/issuer errado, ligação por email e
   por `entra_object_id`, utilizador sem papel, X-Dev-User-Email ignorado
@@ -225,7 +225,230 @@ Ver `docs/DECISIONS.md` D-024 a D-027 para o detalhe técnico completo.
   aberto até à pergunta bloqueante nº 1 ser respondida** — não é um
   critério que este repositório possa cumprir sozinho.
 
-## Fase 2 — Migração real dos 295 projetos (staging → produção)
+## Fase 1 — Fecho técnico para staging/produção (IMPLEMENTADA)
+
+Pedida explicitamente antes de preparar o primeiro deployment de
+staging/produção. Ver `docs/DECISIONS.md` D-032 a D-037 para o detalhe
+técnico completo; `docs/STAGING_CHECKLIST.md`, `docs/GO_LIVE_CHECKLIST.md`
+e `docs/DATA_MIGRATION_RUNBOOK.md` (novos) para os procedimentos
+operacionais que dependem deste fecho.
+
+- **Objetivo:** fechar as lacunas identificadas antes de expor a aplicação
+  fora de `local`/`test` — configuração obrigatória e completa,
+  separação real do login de desenvolvimento, um mecanismo seguro de
+  provisionar os 5 utilizadores, uma allowlist de campos de PM sem
+  suposições de negócio por confirmar, e uma forma controlada e segura de
+  executar a migração real.
+- **O que ficou feito:**
+  1. `Settings` passa a exigir, em `staging`/`production`,
+     `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID`/`ENTRA_REQUIRED_SCOPE`
+     preenchidos, `CORS_ALLOWED_ORIGINS` não vazio, e um override de
+     issuer/JWKS/audience sempre completo ou sempre ausente — nunca
+     parcial (D-032).
+  2. Frontend: o login de desenvolvimento (`X-Dev-User-Email`) nunca
+     sobrevive a um build de produção, mesmo com um valor antigo já em
+     `localStorage` — primeiro framework de testes automatizados do
+     frontend (Vitest), 4 testes (D-033).
+  3. `app/cli/provision_entra_user.py`: comando administrativo controlado
+     para ligar um `User` já existente ao seu `entra_object_id` real —
+     nunca cria utilizadores a partir de um token, nunca reatribui,
+     impede reutilização do mesmo `entra_object_id`, sempre auditado
+     (D-034).
+  4. Allowlist de campos de PM revista: potência, coordenadas, datas
+     legadas e `commercial_assumptions` passam a administrativos até
+     confirmação de negócio — ver `docs/OPEN_QUESTIONS.md` pergunta 5-B
+     (D-035).
+  5. `retry_promotion_after_rollback`: fecha um caso não coberto até
+     agora — repetir a promoção depois de um rollback sem nunca duplicar
+     o projeto (D-036).
+  6. `app/cli/ingest_staging.py`: única forma controlada de invocar a
+     ingestão para staging fora dos testes, com um modo staging-only
+     explícito (recusa `APP_ENV=production`) e contagens de revisão
+     (projetos, PMs distintos, com email/contacto/coordenadas, conflitos)
+     — D-037.
+- **Entidades:** sem alteração de schema — `project_history` ganha o
+  valor de `source` `migration_retry` (D-036).
+- **Integrações:** nenhuma — continuam todas mock/fallback/por confirmar.
+- **Testes:** `test_config_hardening.py` (+14), `client.dev-login.test.ts`
+  (novo, frontend, 4), `test_provision_entra_user.py` (12, novo),
+  `test_project_field_permissions.py` (+1), `test_staging_persistence.py`
+  (+3), `test_migration_api.py` (+2), `test_ingest_staging_cli.py` (10,
+  novo). Ver `docs/DECISIONS.md` D-032 a D-037 para os números exatos por
+  decisão.
+- **Riscos:** ver "Riscos técnicos e operacionais" mais abaixo — a
+  allowlist de PM revista (D-035) introduz atrito operacional aceite
+  deliberadamente até haver decisão de negócio.
+- **Rollback:** reverter para o commit anterior a esta revisão — nenhuma
+  integração real foi tocada, nenhum dado real existe ainda.
+- **Critérios de conclusão:** suite completa a passar (SQLite local);
+  `npm run test`/`npm run build` do frontend sem erros; nenhum segredo,
+  dado real, ou base de dados local no commit; documentos de
+  staging/go-live/migração criados.
+
+## Fase 1.5 — MVP operacional: dashboard, tarefas e workflow (IMPLEMENTADA)
+
+Pedida explicitamente pelo negócio como o MVP a entregar antes da Fase 2
+(migração real dos 295 projetos) — ver "MVP recomendado" mais abaixo para a
+justificação de porque este MVP passou à frente daquele. Não depende da
+Fase 2: usa só os projetos sintéticos já semeados, exatamente como as fases
+anteriores. Ver `docs/DECISIONS.md` D-039 a D-047 para o detalhe técnico
+completo.
+
+- **Objetivo:** uma aplicação utilizável internamente desde já — página
+  inicial com indicadores reais, tarefas com responsável/prazo/estado por
+  projeto, férias/ausências, aniversários — antes de qualquer integração
+  externa ou migração de dados reais.
+- **O que ficou feito:**
+  1. `app/models/task.py`: entidade `Task` genérica (projeto, título, tipo,
+     descrição, estado, prioridade, responsável, prazo, data de conclusão,
+     notas, criado por, timestamps) + `TaskHistory` append-only. Entidade
+     nova, não reaproveita `Phase`/`WorkflowStage`/`ProjectSubtaskProgress`
+     já existentes — ver D-039 para a justificação.
+  2. Máquina de estados (`todo`/`in_progress`/`blocked`/`done`/
+     `cancelled`) aplicada no servidor, nunca confiada ao cliente — D-040.
+  3. `app/services/tasks.py:ensure_default_tasks_for_project`: checklist
+     padrão de 5 tarefas por projeto (visita técnica, preparação da
+     instalação, instalação, comissionamento, colocar fotos na Drive),
+     idempotente.
+  4. `app/models/absence.py`: entidade `Absence` (pessoa, data
+     inicial/final, tipo, nota, estado) — modelo mínimo, sem fluxo de
+     aprovação nesta fase (D-042). `Person` ganha `birth_date`.
+  5. `GET /api/dashboard/summary`: todos os indicadores da página inicial
+     calculados no servidor (projetos ativos, a começar em 30 dias,
+     tarefas atrasadas/pendentes esta semana — sempre em `Europe/Lisbon`,
+     visitas técnicas/comissionamentos pendentes, projetos sem PM/dados em
+     falta, férias atuais/próximas, aniversários próximos, trabalhos
+     urgentes) — nunca calculados no frontend a partir de listas completas
+     (D-041).
+  6. `ProjectRead` ganha indicadores derivados de tarefas: estado
+     (`nao_iniciado`/`em_curso`/`concluido`), próxima tarefa e prazo,
+     contagem de tarefas atrasadas, progresso do workflow (%), e o aviso
+     persistente de fotos pendentes (reaproveita a tarefa padrão
+     `fotos_drive`, sem campo novo — D-043).
+  7. Matriz de permissões alargada: `task.view_all`/`_own`,
+     `task.edit_all`/`_own`, `absence.view_all`/`_own`,
+     `absence.manage_all`/`_own` — ver D-045 para a tabela completa por
+     perfil. Visibilidade de férias/aniversários no dashboard ligada a
+     `absence.view_all`/`_own` (privacidade por omissão — D-044).
+  8. Frontend: `/` passa a ser o painel operacional (`Home.tsx`); conteúdo
+     técnico anterior preservado em `/status` (`SystemStatus.tsx` — D-047);
+     páginas novas `/tasks` e `/vacations`; `ProjectsList`/`ProjectDetail`
+     atualizadas com os novos indicadores, tarefas do projeto, e o aviso de
+     fotos.
+  9. Primeira infraestrutura de testes de frontend (Vitest + Testing
+     Library) — D-046.
+- **Entidades:** `tasks`, `task_history`, `absences` (novas); `people`
+  ganha `birth_date`.
+- **Integrações:** nenhuma — continuam todas mock/fallback. Nenhum dado
+  financeiro em nenhum indicador (o módulo Financial está fora deste MVP),
+  por isso a vista Comercial nunca mostra dado financeiro nenhum, sem
+  precisar de nenhuma lógica extra de ocultação (ver D-045).
+- **Testes:** `tests/test_tasks_api.py` (17), `tests/test_absences_api.py`
+  (10), `tests/test_dashboard.py` (12), `tests/test_project_task_summary.py`
+  (6) — adicionados pela Fase 1.5. Depois de integrar com o hardening da
+  Fase 1 (`mvp-ready`), a suite completa de backend soma 224 testes a
+  passar + 2 skipped em SQLite. Frontend: `src/utils/dates.test.ts`,
+  `src/api/taskTransitions.test.ts`, `src/pages/Home.test.tsx` +
+  `client.dev-login.test.ts` (D-033, hardening) — 18 testes Vitest no
+  total.
+- **Riscos:** ver "Riscos técnicos e operacionais" mais abaixo.
+- **Rollback:** módulo aditivo — nenhuma tabela nem endpoint pré-existente
+  foi alterado de forma incompatível (só `ProjectRead` ganhou campos novos,
+  sempre com omissão razoável). Reverter para o commit anterior a esta fase
+  remove `/`, `/tasks`, `/vacations` e os indicadores novos sem afetar
+  autenticação, CRUD de projetos, ou migração.
+- **Critérios de conclusão (cumpridos):** login com utilizador de
+  desenvolvimento funcional; página inicial mostra métricas reais vindas da
+  base de dados; abrir um projeto mostra tarefas/histórico/avisos/progresso;
+  criar/atribuir/concluir/reabrir tarefas funciona ponta-a-ponta (validado
+  manualmente no browser — mudar o estado de "Colocar fotos na Drive" para
+  concluída faz o aviso desaparecer e o progresso subir para 100% em tempo
+  real); tarefas atrasadas aparecem no dashboard; visita técnica e
+  comissionamento geram o aviso das fotos; férias e aniversários aparecem
+  no dashboard, respeitando permissões; permissões de PM/Comercial/Chefe/
+  Administrador respeitadas (verificado também manualmente trocando de
+  utilizador no browser); suite combinada de 224 testes de backend
+  (+2 skipped) + 18 de frontend a passar em `mvp-ready`; `npm run build`
+  sem erros; nenhum dado real migrado.
+
+## Fase 2 — Dashboard inicial
+
+**Estado: IMPLEMENTADA — ver Fase 1.5 acima.** O roadmap original desta
+fase (estatísticas semanais, separação operacional/comercial, férias e
+aniversários) foi entregue integralmente pelo MVP da Fase 1.5
+(`GET /api/dashboard/summary`, `Absence`, aniversários) — sem depender da
+migração real dos 295 projetos. Mantido aqui só como registo histórico do
+roadmap original; ver `docs/DECISIONS.md` D-041/D-044 para o desenho
+final e `docs/OPEN_QUESTIONS.md` pergunta 21 para a decisão de
+visibilidade ainda em aberto.
+
+## Fase 3 — Workflow de projetos
+
+**Estado: parcialmente coberto pela Fase 1.5, ver nota abaixo.** A Fase
+1.5 deu a cada projeto uma checklist de tarefas (`Task`, D-039/D-040) com
+responsável, prazo e máquina de estados — cobre a necessidade operacional
+imediata de acompanhar o progresso de um projeto sem esperar por este
+roadmap. O que **não** foi feito, e continua a descrição original desta
+fase abaixo: expor o processo oficial fixo por fases já modelado desde a
+Fase 0 (`Phase`/`WorkflowStage`/`WorkflowSubtask` +
+`ProjectStageProgress`/`ProjectSubtaskProgress`), que **continua
+intacto e sem endpoints/UI**, propositadamente não migrado nem ligado a
+`Task` nesta revisão — decisão explícita de não arriscar uma migração de
+dados agora (ver `docs/OPEN_QUESTIONS.md` perguntas 22 e 24). Um futuro
+formulário de visita técnica/comissionamento deve decidir, antes de ser
+construído, qual das duas entidades (ou uma nova) é a fonte de verdade
+única — não ambas.
+
+**Estado: por implementar — o modelo de dados (`Phase`, `WorkflowStage`,
+`WorkflowSubtask`, `ProjectStageProgress`, `ProjectSubtaskProgress`) já
+existe desde a Fase 0 (seed genérico de exemplo em
+`app/migration/seed_dev.py`), mas sem endpoints nem estados oficiais
+confirmados — ver a nota já registada em `docs/DECISIONS.md` ("Âmbito
+deixado de fora da Fase 1").**
+
+- **Objetivo:** expor o processo operacional (fases → etapas →
+  subtarefas) já modelado como um workflow utilizável — estado de cada
+  projeto, responsável por etapa, tarefas, datas, e o que é exigido para
+  avançar de fase.
+- **Funcionalidades pedidas (âmbito, não desenho de detalhe):**
+  1. Estados oficiais do processo — o seed atual (`GENERIC_WORKFLOW` em
+     `seed_dev.py`) é deliberadamente genérico/de exemplo, não o processo
+     real de 6 fases da Solcor; carregar o processo real é
+     `DECISÃO NECESSÁRIA` (confirmar fases/etapas/subtarefas oficiais,
+     não assumidas aqui).
+  2. Responsáveis por etapa — `WorkflowStage.responsible_role_code` já
+     existe (papel, não pessoa); falta confirmar se a atribuição real é
+     sempre "o PM do projeto" ou se varia por etapa.
+  3. Tarefas — `ProjectSubtaskProgress` já modela conclusão de subtarefa;
+     falta o endpoint/UI para marcar/desmarcar.
+  4. Datas — `WorkflowStage.planned_start_offset_days`/
+     `planned_end_offset_days` já existem (offset em dias desde o início
+     do projeto); falta confirmar a partir de que data se conta
+     (`start_date`? data de handover?).
+  5. Requisitos para avançar de fase — **não modelado ainda**: hoje nada
+     impede marcar qualquer etapa/subtarefa em qualquer ordem. Que
+     combinação de etapas/subtarefas concluídas é exigida para uma fase
+     ser considerada "fechada" é `DECISÃO NECESSÁRIA`, para não inventar
+     uma regra de bloqueio que trave o trabalho real por engano.
+- **Entidades:** `phases`, `workflow_stages`, `workflow_subtasks`,
+  `project_stage_progress`, `project_subtask_progress` — todas já
+  existentes desde a Fase 0; endpoints novos (leitura do processo,
+  marcar/desmarcar progresso, respeitando permissões já modeladas).
+- **Integrações:** nenhuma nova.
+- **Testes:** transição de fase bloqueada sem os requisitos definidos
+  acima (quando essa regra existir); progresso de subtarefa só alterável
+  por quem tem `project.edit_own_progress`/`project.edit_all` no projeto
+  em causa.
+- **Riscos:** carregar o processo real errado (fases/etapas/ordem) exige
+  confirmação humana antes de qualquer projeto real passar por aqui —
+  nunca assumir que o seed genérico de exemplo é o processo real.
+- **Rollback:** módulo aditivo — não altera `projects` diretamente, só as
+  tabelas de progresso já existentes.
+- **Critérios de conclusão:** processo real carregado e confirmado;
+  endpoints de leitura/progresso testados; requisitos de avanço de fase
+  definidos e testados (quando confirmados como decisão de negócio).
+
+## Fase 4 — Migração real dos 295 projetos (staging → produção)
 
 - **Objetivo:** migrar os dados reais do repositório do código legado
   (`files/atribuicoes.json`, fora deste repositório público) para a base de
@@ -262,43 +485,7 @@ Ver `docs/DECISIONS.md` D-024 a D-027 para o detalhe técnico completo.
   explicitamente na fila de conflitos com decisão registada; nenhum campo
   incompleto foi inventado; checksum e relatório da execução guardados.
 
-## Fase 3 — Página inicial, planeamento e visitas (Microsoft Graph real)
-
-- **Objetivo:** ligar `GraphAdapter` a sério (substituir o fallback local);
-  dashboard inicial; fluxo de visitas com proposta de data, rascunho de
-  email/evento, aprovação humana antes de envio/marcação real.
-- **Entidades:** `visits`, `calendar_events` (endpoints reais).
-- **Integrações:** Microsoft Graph real (`GRAPH_ENABLED=true`).
-- **Testes:** teste de que nenhum email/evento é criado sem aprovação
-  explícita; teste de compatibilidade com Outlook clássico e novo (ambos
-  via Graph/Exchange Online — ver `ARCHITECTURE_PROPOSAL.md` secção 8).
-- **Riscos:** limites de taxa do Graph API; `DECISÃO NECESSÁRIA` sobre
-  calendários/equipas a considerar (ver `OPEN_QUESTIONS.md`).
-- **Rollback:** manter `GRAPH_ENABLED=false` (fallback local) como via de
-  recuperação até a integração estar validada.
-- **Critérios de conclusão:** uma visita sintética percorre proposta →
-  aprovação → evento/email reais visíveis no Outlook (clássico e novo).
-
-## Fase 4 — ClickUp real
-
-- **Objetivo:** ligar `ClickUpAdapter` a sério; mapear os projetos migrados
-  aos seus `task_id` reais; job agendado (worker — ver
-  `ARCHITECTURE_PROPOSAL.md` secção 7) em vez de execução manual.
-- **Entidades:** `project_external_ids` (source_system='clickup'),
-  `import_batches`, `staging_project_records`.
-- **Integrações:** ClickUp REST API real (`CLICKUP_ENABLED=true`).
-- **Testes:** regressão para garantir zero updates falsos num input sem
-  alterações (corrige o bug conhecido do script legado — ver
-  `.planning/codebase/CONCERNS.md`, C-08, no repositório do código legado);
-  paginação completa testada.
-- **Riscos:** mapeamento inicial de projetos a IDs ClickUp pode exigir
-  revisão manual extensa de casos ambíguos.
-- **Rollback:** manter o script/processo manual anterior disponível como
-  plano B até o job agendado ser validado em produção.
-- **Critérios de conclusão:** sincronização agendada a correr sem
-  intervenção manual; zero "falsas alterações" num teste de estabilidade.
-
-## Fase 5 — Inventário, pedidos de material e custos
+## Fase 5 — Inventário e pedidos de material
 
 - **Objetivo:** cálculo de stock por movimentos; fluxo completo de pedidos
   de material com estados; linhas de custo por categoria/tipo.
@@ -317,7 +504,86 @@ Ver `docs/DECISIONS.md` D-024 a D-027 para o detalhe técnico completo.
   estados definidos em `docs/PRODUCT_SCOPE.md` com aprovação humana nos
   passos críticos; stock calculado corretamente a partir dos movimentos.
 
-## Fase 6 — Biblioteca documental e formulários/fotografias
+## Fase 6 — Planeamento e visitas (Microsoft Graph real)
+
+- **Objetivo:** ligar `GraphAdapter` a sério (substituir o fallback local);
+  fluxo de visitas com proposta de data, rascunho de email/evento,
+  aprovação humana antes de envio/marcação real. Emails, calendário e
+  documentos reais, por esta ordem de prioridade (documentos aprofundados
+  na Fase 9).
+- **Entidades:** `visits`, `calendar_events` (endpoints reais).
+- **Integrações:** Microsoft Graph real (`GRAPH_ENABLED=true`).
+- **Testes:** teste de que nenhum email/evento é criado sem aprovação
+  explícita; teste de compatibilidade com Outlook clássico e novo (ambos
+  via Graph/Exchange Online — ver `ARCHITECTURE_PROPOSAL.md` secção 8).
+- **Riscos:** limites de taxa do Graph API; `DECISÃO NECESSÁRIA` sobre
+  calendários/equipas a considerar (ver `OPEN_QUESTIONS.md`).
+- **Rollback:** manter `GRAPH_ENABLED=false` (fallback local) como via de
+  recuperação até a integração estar validada.
+- **Critérios de conclusão:** uma visita sintética percorre proposta →
+  aprovação → evento/email reais visíveis no Outlook (clássico e novo).
+
+## Fase 7 — Claude: propostas de agenda, preparação de emails e relatórios
+
+- **Objetivo:** ativar `ClaudeAdapter` a sério, com o âmbito pedido nesta
+  revisão do roadmap — propostas de agenda (datas de visita), preparação
+  de rascunhos de email, e relatório semanal — **sempre com aprovação
+  humana antes de qualquer ação real** (enviar email, marcar evento,
+  publicar relatório). Nenhuma ferramenta de IA executa uma ação
+  irreversível sozinha (ver `ARCHITECTURE_PROPOSAL.md` secção 8).
+- **Nota sobre âmbito reduzido face à versão anterior deste roadmap:** a
+  versão anterior incluía aqui "pesquisa documental (RAG) sobre a
+  biblioteca" — essa funcionalidade dependia da Biblioteca Documental
+  (agora Fase 9, depois desta, para respeitar a ordem pedida nesta
+  revisão). Fica como um incremento futuro de Claude, depois da Fase 9,
+  não como parte do âmbito imediato desta fase.
+- **Entidades:** `ai_audit_log` (já implementado, agora usado a sério).
+- **Integrações:** Claude API real (`CLAUDE_ENABLED=true`).
+- **Testes:** teste de que cada ferramenta respeita o âmbito de leitura
+  definido; teste de que nenhuma ferramenta consegue enviar
+  email/criar evento/publicar relatório sem aprovação humana (teste de
+  contrato, não só manual).
+- **Riscos:** custo de uso da API a escalar sem controlo — recomenda-se
+  limite/orçamento configurável desde o início (ver `OPEN_QUESTIONS.md`,
+  pergunta 14).
+- **Rollback:** manter `CLAUDE_ENABLED=false` (mock) como via de
+  recuperação; cada ferramenta pode ser desativada individualmente.
+- **Critérios de conclusão:** relatório semanal gerado, revisto e aprovado
+  por pelo menos 4 semanas consecutivas; auditoria completa de todas as
+  chamadas de IA, sem nenhum caso de ação irreversível sem aprovação.
+
+## Fase 8 — ClickUp real
+
+**Nota sobre posição no roadmap:** não fazia parte da ordem de seis itens
+pedida nesta revisão (Dashboard → Workflow → Migração → Inventário →
+Graph → Claude) — mantida no roadmap, colocada depois dessas seis por não
+haver indicação de prioridade relativa; só depende tecnicamente da Fase 4
+(migração), nunca das Fases 5 a 7. Se a prioridade real for outra, é uma
+reordenação simples desta secção, sem impacto técnico.
+
+- **Objetivo:** ligar `ClickUpAdapter` a sério; mapear os projetos migrados
+  aos seus `task_id` reais; job agendado (worker — ver
+  `ARCHITECTURE_PROPOSAL.md` secção 7) em vez de execução manual.
+- **Entidades:** `project_external_ids` (source_system='clickup'),
+  `import_batches`, `staging_project_records`.
+- **Integrações:** ClickUp REST API real (`CLICKUP_ENABLED=true`).
+- **Testes:** regressão para garantir zero updates falsos num input sem
+  alterações (corrige o bug conhecido do script legado — ver
+  `.planning/codebase/CONCERNS.md`, C-08, no repositório do código legado);
+  paginação completa testada.
+- **Riscos:** mapeamento inicial de projetos a IDs ClickUp pode exigir
+  revisão manual extensa de casos ambíguos.
+- **Rollback:** manter o script/processo manual anterior disponível como
+  plano B até o job agendado ser validado em produção.
+- **Critérios de conclusão:** sincronização agendada a correr sem
+  intervenção manual; zero "falsas alterações" num teste de estabilidade.
+
+## Fase 9 — Biblioteca documental e formulários/fotografias
+
+**Nota sobre posição no roadmap:** tal como a Fase 8 (ClickUp), não fazia
+parte da ordem de seis itens pedida nesta revisão — mantida depois dela,
+sem prioridade relativa confirmada face a essas seis. Depende
+tecnicamente da Fase 6 (Graph real), única razão para vir depois dela.
 
 - **Objetivo:** ligar SharePoint/OneDrive real (estende `GraphAdapter` com
   operações de ficheiros — ver `docs/DECISIONS.md`, "âmbito deixado de
@@ -334,47 +600,39 @@ Ver `docs/DECISIONS.md` D-024 a D-027 para o detalhe técnico completo.
   sintéticos completos de ponta a ponta, com fotos obrigatórias a bloquear
   o fecho até estarem presentes.
 
-## Fase 7 — Claude/MCP completo e relatório semanal
-
-- **Objetivo:** ativar `ClaudeAdapter` a sério; relatório semanal com
-  rascunho gerado por IA e revisão humana obrigatória antes do envio;
-  pesquisa documental (RAG) sobre a biblioteca da Fase 6.
-- **Entidades:** `ai_audit_log` (já implementado, agora usado a sério).
-- **Integrações:** Claude API real (`CLAUDE_ENABLED=true`).
-- **Testes:** teste de que cada ferramenta respeita o âmbito de leitura
-  definido; teste de que nenhuma ferramenta consegue enviar
-  email/criar evento/adjudicar/alterar custo sem aprovação humana (teste de
-  contrato, não só manual).
-- **Riscos:** custo de uso da API a escalar sem controlo — recomenda-se
-  limite/orçamento configurável desde o início.
-- **Rollback:** manter `CLAUDE_ENABLED=false` (mock) como via de
-  recuperação; cada ferramenta pode ser desativada individualmente.
-- **Critérios de conclusão:** relatório semanal gerado, revisto e aprovado
-  por pelo menos 4 semanas consecutivas; auditoria completa de todas as
-  chamadas de IA, sem nenhum caso de ação irreversível sem aprovação.
-
 ## Dependências entre fases
 
 Tabela em vez de árvore de propósito: várias fases dependem de mais do que
 uma fase anterior (um grafo, não uma árvore), o que uma árvore ASCII não
-consegue representar sem ambiguidade — a versão anterior deste documento
-tinha exatamente esse problema (dava a entender que a Fase 3 dependia da
-Fase 2, quando na realidade só depende da Fase 1).
+consegue representar sem ambiguidade.
 
-| Fase | Depende de | Porquê |
+A ordem de números das Fases 2 a 7 segue a prioridade pedida explicitamente
+nesta revisão (Dashboard → Workflow → Migração → Inventário → Graph →
+Claude) — nem sempre coincide com a ordem de dependência técnica estrita
+(ex.: a Fase 4, Migração, só depende tecnicamente da Fase 1, não da 2/3;
+sequenciada depois delas por prioridade de negócio, não por bloqueio
+técnico). As Fases 8 e 9 (ClickUp, Biblioteca documental) não faziam parte
+dessa ordem pedida — ver a nota em cada uma.
+
+| Fase | Depende tecnicamente de | Porquê |
 |---|---|---|
 | Fase 1 — Auth real + CRUD | Fase 0 | Fundação técnica. |
-| Fase 2 — Migração real dos 295 projetos | Fase 1 | Precisa de permissões/auditoria reais antes de tocar em dados reais. |
-| Fase 3 — Graph real (visitas/calendário) | Fase 1 | Não depende da migração — só de autenticação/permissões reais. |
-| Fase 4 — ClickUp real | Fase 2 | Precisa dos projetos já migrados para mapear `task_id`. |
-| Fase 5 — Inventário/custos | Fase 2 | Precisa dos projetos já migrados para atribuir stock/custos. |
-| Fase 6 — Biblioteca documental | Fase 3 | Reforça o mesmo `GraphAdapter` já ligado a sério na Fase 3 (operações de ficheiros). |
-| Fase 7 — Claude/MCP completo | Fase 5 e Fase 6 | Pedidos de material (Fase 5) e pesquisa documental (Fase 6) são pré-requisitos de ferramentas específicas do Claude. |
+| Fase 1.5 — MVP operacional (dashboard/tarefas/workflow) | Fase 1 | Precisa de permissões/CRUD de projetos reais para ter algo a mostrar; usa só os projetos sintéticos, não depende da migração. |
+| Fase 2 — Dashboard inicial | Fase 1.5 | Implementada pela Fase 1.5 — linha mantida só como registo histórico do roadmap original. |
+| Fase 3 — Workflow de projetos | Fase 1.5 | Parcialmente coberta pela Fase 1.5 (`Task`); o processo fixo por fases (`Phase`/`WorkflowStage`) continua sem endpoints — ver nota na secção da Fase 3. |
+| Fase 4 — Migração real dos 295 projetos | Fase 1 | Precisa de permissões/auditoria reais antes de tocar em dados reais. Não depende tecnicamente das Fases 2/3 — pode correr em paralelo com a Fase 1.5. |
+| Fase 5 — Inventário/pedidos de material | Fase 4 | Precisa dos projetos já migrados para atribuir stock/custos. |
+| Fase 6 — Graph real (visitas/calendário) | Fase 1 | Não depende da migração — só de autenticação/permissões reais. |
+| Fase 7 — Claude (agenda/emails/relatórios) | Fase 5 e Fase 6 | Pedidos de material (Fase 5) e propostas de agenda/email (Fase 6) são pré-requisitos das ferramentas específicas do Claude descritas aqui. |
+| Fase 8 — ClickUp real | Fase 4 | Precisa dos projetos já migrados para mapear `task_id`. |
+| Fase 9 — Biblioteca documental | Fase 6 | Reforça o mesmo `GraphAdapter` já ligado a sério na Fase 6 (operações de ficheiros). |
 
-**Só a Fase 1 é estritamente bloqueante para todas as restantes.** Depois
-dela: Fase 2 e Fase 3 podem correr em paralelo; Fase 4 e Fase 5 só depois
-da Fase 2; Fase 6 só depois da Fase 3; Fase 7 só depois de Fase 5 e Fase 6
-estarem ambas concluídas.
+**Só a Fase 1 é estritamente bloqueante para todas as restantes.** A Fase
+1.5 (implementada) só depende da Fase 1 e correu em paralelo com o resto
+do roadmap. Depois da Fase 1: Fases 2, 3 e 6 podem correr em paralelo;
+Fase 4 só precisa da Fase 1 (sequenciada depois de 2/3 por prioridade de
+negócio); Fase 5 e Fase 8 só depois da Fase 4; Fase 9 só depois da Fase 6;
+Fase 7 só depois de Fase 5 e Fase 6 estarem ambas concluídas.
 
 ## Plano de testes
 
@@ -393,14 +651,26 @@ estarem ambas concluídas.
 | Validação de token Entra ID (real e mock) | Implementado e testado (`tests/test_auth_entra.py`) |
 | Endpoints CRUD de projetos + permissões + histórico | Implementado e testado (`tests/test_project_api.py`) |
 | Endpoints de migração (resolução, nunca ingestão) | Implementado e testado (`tests/test_migration_api.py`) |
+| Configuração obrigatória completa em staging/produção (Entra ID/CORS) | Implementado e testado (`tests/test_config_hardening.py`, D-032) |
+| Login de desenvolvimento nunca sobrevive fora de local/test (frontend) | Implementado e testado (`frontend/src/api/client.dev-login.test.ts`, D-033) |
+| Provisionamento administrativo de utilizadores (`entra_object_id`) | Implementado e testado (`tests/test_provision_entra_user.py`, D-034) |
+| Allowlist de campos de PM sem suposições de negócio por confirmar | Implementado e testado (`tests/test_project_field_permissions.py`, D-035) |
+| Repetição segura de promoção após rollback (nunca duplica projeto) | Implementado e testado (`tests/test_staging_persistence.py`, `tests/test_migration_api.py`, D-036) |
+| Ingestão controlada staging-only, com contagens de revisão | Implementado e testado (`tests/test_ingest_staging_cli.py`, D-037) |
+| Tarefas: CRUD, máquina de estados, atribuição, permissões, histórico | Implementado e testado (`tests/test_tasks_api.py`, D-039/D-040) |
+| Indicadores derivados de projeto (estado, próxima tarefa, progresso, aviso de fotos) | Implementado e testado (`tests/test_project_task_summary.py`, D-043) |
+| Férias/ausências: CRUD, validação de datas, permissões | Implementado e testado (`tests/test_absences_api.py`, D-042/D-044) |
+| Dashboard: cada indicador, escopo por perfil, fuso Europe/Lisbon | Implementado e testado (`tests/test_dashboard.py`, D-041) |
+| Frontend: funções puras, máquina de estados espelhada, fumo do painel inicial | Implementado e testado (Vitest — `src/utils/dates.test.ts`, `src/api/taskTransitions.test.ts`, `src/pages/Home.test.tsx`) |
 | Autenticação Entra ID real ponta-a-ponta (tenant de verdade) | Bloqueado pela pergunta nº 1 — código pronto, validado só com mock |
-| Integração Graph/ClickUp/Financial/Claude reais | Por implementar (Fases 3, 4, 5, 7) |
-| Frontend (além do build e validação manual) | Sem testes automatizados de UI ainda (Playwright/Cypress — ver D-027) |
+| Integração Graph/ClickUp/Financial/Claude reais | Por implementar (Fases 6, 7, 8, e a parte Financial da Fase 5) |
+| Frontend end-to-end (fluxos completos, não só funções/fumo) | Sem Playwright/Cypress ainda — ver D-027/D-046; Vitest cobre login de desenvolvimento (D-033) e a suite de UI da Fase 1.5 (D-046) |
 
 CI (`.github/workflows/ci.yml`) corre a cada push/PR: backend contra SQLite
 (rápido, sem serviços), backend contra um serviço PostgreSQL do próprio
 GitHub Actions (D-021 — valida `batch_alter_table`, `Numeric`, `GUID` no
-motor de produção-alvo), e build do frontend.
+motor de produção-alvo), e o job de frontend (lint/`tsc --noEmit`, Vitest,
+build — D-046).
 
 ## Plano de segurança e privacidade
 
@@ -475,10 +745,24 @@ staging.
 
 ## Primeiro MVP recomendado
 
-**MVP = Fase 0 (feita) + Fase 1 + Fase 2**: autenticação real, endpoints
-CRUD de projetos/workflow atrás de permissões reais, e os 295 projetos reais
-migrados para staging com a fila de conflitos revista e resolvida. Isto
-entrega o valor mais crítico (login real, permissões reais, histórico
-completo, dados reais preservados e mapeados por ID estável) antes de
-qualquer funcionalidade nova — visitas, inventário, custos, documentos e IA
-constroem-se todos sobre esta base.
+**Recomendação original desta análise:** Fase 0 + Fase 1 + Fase 4
+(autenticação real, CRUD de projetos/workflow atrás de permissões reais, e
+os 295 projetos reais migrados para staging com a fila de conflitos revista
+e resolvida) — priorizava dados reais preservados e mapeados por ID
+estável antes de qualquer funcionalidade nova.
+
+**MVP efetivamente pedido e construído: Fase 0 + Fase 1 + Fase 1.5**
+(dashboard/tarefas/workflow — ver acima), deliberadamente **sem** a Fase 4
+(migração real). O negócio decidiu ter uma ferramenta internamente
+utilizável (acompanhar projetos, tarefas, trabalhos pendentes) o mais cedo
+possível, com dados sintéticos, antes de investir no esforço de revisão
+manual que a migração real dos 295 projetos exige (reconciliação de PM,
+resolução de conflitos — ver Fase 4 acima). Isto inverte a recomendação
+original por decisão de negócio, não por descoberta técnica nova — os
+riscos documentados da Fase 4 continuam válidos e por resolver quando essa
+fase avançar.
+
+**Consequência prática:** este MVP é demonstrável e usável com dados
+sintéticos (seed), mas **nenhum projeto real está na plataforma ainda** —
+até a Fase 4 avançar, esta app funciona em paralelo com o processo/
+repositório legado, não o substitui.

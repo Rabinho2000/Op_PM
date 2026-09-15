@@ -18,7 +18,7 @@ Authorization Code + PKCE, access token para a API, renovação silenciosa,
 logout) — mas sem um tenant/app registration reais, ninguém consegue
 emitir um token de verdade nem preencher `VITE_ENTRA_CLIENT_ID`/
 `VITE_ENTRA_TENANT_ID`/`VITE_ENTRA_API_SCOPE` para testar isto
-ponta-a-ponta, e a Fase 3 (Graph real — email/calendário) também não pode
+ponta-a-ponta, e a Fase 6 (Graph real — email/calendário, renumerada nesta revisão) também não pode
 avançar. É a única peça que falta para fechar a autenticação real; nada
 no código precisa de ser reescrito quando isto existir — só configurado.
 
@@ -28,7 +28,7 @@ registrations) — uma SPA pública para o frontend (MSAL.js, Authorization
 Code + PKCE, sem client secret) e uma API para o backend expor o âmbito
 `access_as_user` — conceder consentimento de administrador para os
 âmbitos necessários no backend (Mail.Send, Calendars.ReadWrite,
-Files.ReadWrite, etc., quando a Fase 3 avançar), e fornecer
+Files.ReadWrite, etc., quando a Fase 6 avançar), e fornecer
 `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID`/`ENTRA_REQUIRED_SCOPE` (backend) e
 `VITE_ENTRA_CLIENT_ID`/`VITE_ENTRA_TENANT_ID`/`VITE_ENTRA_API_SCOPE`
 (frontend — ver `frontend/.env.example`).
@@ -67,7 +67,7 @@ etapas do workflow (ex. não pode agendar comissionamento sem contacto).
 
 ### 4. Calendários e equipas a considerar no planeamento de visitas
 
-**Impacto:** sem isto, `get_availability` (Fase 3) não sabe que calendários
+**Impacto:** sem isto, `get_availability` (Fase 6) não sabe que calendários
 consultar via Graph.
 
 **Decisão necessária:** confirmar se é o calendário individual de cada PM,
@@ -91,6 +91,36 @@ aprovação adicional).
 `app/security/catalog.py` (Chefe de Operações e Administrador aprovam
 tudo; PM aprova só o seu próprio envio/evento) — a confirmar ou ajustar.
 
+### 5-B. Allowlist de campos editáveis por PM: campos com impacto comercial
+
+**Impacto:** `app/security/project_fields.py` (D-028, revisto em D-035)
+distingue, no servidor, os campos de `Project` que um PM
+(`project.edit_own_progress`) pode alterar no seu próprio projeto dos que
+exigem `project.edit_all` (Chefe de Operações, Administrador). Ficaram
+administrativos por omissão, nesta revisão de fecho de Fase 1,
+`lat`/`lon` (coordenadas), `power_kwp`/`power_raw` (potência),
+`start_date`/`upac_connection_date_raw`/`award_year_raw` (datas legadas) e
+`commercial_assumptions` — nenhum tem uma regra de negócio confirmada
+sobre se um PM pode corrigi-los sem aprovação, e todos têm potencial
+impacto comercial ou contratual (potência/coordenadas afetam
+dimensionamento e localização real da instalação; `commercial_assumptions`
+é, pelo nome, um pressuposto comercial; as datas legadas podem ter valor
+contratual). Enquanto ficam administrativos, uma correção legítima de um
+PM (ex.: coordenadas erradas na migração) exige sempre um Chefe de
+Operações/Administrador a aplicá-la — potencial atrito operacional se a
+resposta acabar por ser "sim, o PM pode".
+
+**Decisão necessária:** para cada um destes campos, o responsável
+operacional confirma se um PM pode editá-lo no seu próprio projeto sem
+aprovação adicional, ou se deve continuar administrativo (ou passar a
+exigir um fluxo de aprovação específico, ainda não modelado).
+
+**Recomendação por defeito (já aplicada como omissão técnica, a
+confirmar como decisão de negócio):** manter todos administrativos até
+resposta explícita — a opção mais restritiva, nunca assumida como
+definitiva. Ver `app/security/project_fields.py` para a lista completa e
+`docs/DECISIONS.md` D-035.
+
 ## Importantes
 
 ### 6. Uma visita pode envolver mais do que uma pessoa/equipa?
@@ -105,7 +135,7 @@ participantes internos desde já no modelo de `calendar_events.attendees`
 
 ### 7. Horários, zonas geográficas, almoço, limites diários
 
-**Impacto:** necessário para `propose_visit_dates`/`analyze_travel` (Fase 3
+**Impacto:** necessário para `propose_visit_dates`/`analyze_travel` (Fase 6
 e o cálculo determinístico de deslocações).
 
 **Recomendação por defeito:** nenhuma sem confirmação — este cálculo é
@@ -132,19 +162,19 @@ necessidade real, sem inventar uma lista.
 `orcamento_recebido` → `aprovado`).
 
 **Recomendação por defeito:** anexo de documento (via biblioteca
-documental, Fase 6) + aprovação manual no estado do pedido — sem
+documental, Fase 9) + aprovação manual no estado do pedido — sem
 integração automática de parsing de orçamento nesta fase.
 
 ### 11. Estrutura atual da Drive e permissões por documento
 
-**Impacto:** afeta o desenho da Fase 6 (biblioteca documental).
+**Impacto:** afeta o desenho da Fase 9 (biblioteca documental).
 
 **Recomendação por defeito:** nenhuma sem confirmação — herdar a estrutura
 e permissões do SharePoint existente é mais seguro do que assumir uma nova.
 
 ### 12. Quantos anos de histórico devem ser migrados
 
-**Impacto:** afeta o volume e o esforço da Fase 2 (migração real).
+**Impacto:** afeta o volume e o esforço da Fase 4 (migração real).
 
 **Recomendação por defeito:** migrar tudo o que existir no export legado —
 o mecanismo de staging já preserva campos incompletos sem custo adicional
@@ -182,7 +212,8 @@ legados (registo UPAC, cartão M2M) um lugar explícito no `Project`
 5), mas como cópia simples do export legado, com Op_PM como fonte de
 verdade por omissão. Se existir um sistema de licenciamento/DGEG ou do
 operador de rede que devesse ser a fonte de verdade real destes valores, a
-Fase 4+ (integrações) precisa de o saber.
+uma fase de integração futura (Fase 8 — ClickUp, ou outra ainda não
+planeada) precisa de o saber.
 
 **Decisão necessária:** confirmar se estes valores vêm só do processo
 manual da equipa (e por isso Op_PM é mesmo a fonte de verdade) ou de um
@@ -194,7 +225,7 @@ existir.
 
 ### 17. Quem resolve a fila de reconciliação de PM na migração real?
 
-**Impacto:** a Fase 2 (migração real) depende de alguém decidir, para cada
+**Impacto:** a Fase 4 (migração real) depende de alguém decidir, para cada
 nome de PM desconhecido/ambíguo do export legado, se corresponde a uma
 pessoa já em `people`, se deve criar uma pessoa nova (histórica, sem
 login), ou se deve ficar sem PM associado (`app.migration.people_reconciliation`,
@@ -210,28 +241,168 @@ confirmação do próprio PM (ex.: confirmar que "Gonçalo Palacino" e
 confirmar como decisão de negócio):** a Fase 1 já restringiu as
 permissões `migration.view`/`migration.resolve` a Administrador e Chefe
 de Operações (`app/security/catalog.py`) — falta só confirmar que é
-mesmo esta a intenção de negócio antes da Fase 2, e resolver quem faz o
+mesmo esta a intenção de negócio antes da Fase 4, e resolver quem faz o
 trabalho concreto de revisão (pode ser uma pessoa diferente de quem tem a
 permissão técnica, ex. um PM a confirmar a identidade de um antigo colega,
 com o Chefe de Operações só a "carimbar" a decisão final na fila).
 
+### 18. Dashboard inicial: métricas semanais, separação operacional/comercial, férias e aniversários
+
+**Impacto:** `docs/PLAN.md` Fase 2 (Dashboard inicial) só define o roadmap
+de alto nível nesta revisão — nenhuma métrica, campo obrigatório, ou
+fonte de dados foi assumida, de propósito.
+
+**Decisão necessária:**
+- Que estatísticas semanais exatamente (projetos que avançaram de fase?
+  pedidos de material novos? algo mais?) e como se calculam.
+- O que distingue a "visão operacional" da "visão comercial" — que
+  métricas pertencem a cada uma, e se são páginas separadas ou a mesma
+  página filtrada por papel.
+- **Férias e aniversários não têm modelo de dados hoje** — `Person` não
+  tem data de nascimento nem qualquer registo de ausências/férias. É
+  preciso confirmar a fonte (mantida dentro do Op_PM? importada de um
+  sistema de RH? do perfil Microsoft 365, via Graph — Fase 6?) antes de
+  desenhar o schema.
+
+**Recomendação por defeito:** nenhuma — implementar um dashboard sem
+estas respostas arrisca construir a métrica errada; ver
+`docs/PLAN.md` Fase 2 para o detalhe de cada pendência.
+
+### 19. Workflow de projetos: processo oficial real e requisitos para avançar de fase
+
+**Impacto:** `docs/PLAN.md` Fase 3 (Workflow de projetos) tem o modelo de
+dados já pronto desde a Fase 0 (`phases`/`workflow_stages`/
+`workflow_subtasks`/`project_stage_progress`/`project_subtask_progress`),
+mas semeado só com um processo genérico de exemplo
+(`GENERIC_WORKFLOW` em `app/migration/seed_dev.py`), nunca o processo
+real de 6 fases da Solcor.
+
+**Decisão necessária:**
+- Carregar as fases/etapas/subtarefas oficiais reais (substituindo o seed
+  genérico) — quem confirma esta lista e o texto exato de cada item.
+- Que combinação de etapas/subtarefas concluídas é exigida para uma fase
+  poder ser considerada fechada/avançada — hoje nada bloqueia isto.
+- Se o responsável por etapa é sempre o PM do projeto, ou varia.
+
+**Recomendação por defeito:** nenhuma — carregar o processo real errado
+(ou inventar requisitos de avanço de fase) pode travar trabalho real por
+engano; ver `docs/PLAN.md` Fase 3 para o detalhe de cada pendência.
+
+### 20. Férias/ausências: registo direto ou fluxo de pedido → aprovação?
+
+**Impacto:** `Absence` (Fase 1.5 — MVP dashboard/workflow) marca qualquer
+ausência criada como `aprovada` de imediato, sem nenhum passo de
+aprovação por outra pessoa — ver `docs/DECISIONS.md` D-042.
+
+**Decisão necessária:** o negócio quer mesmo registo direto (cada pessoa
+regista as suas próprias férias, o Chefe de Operações regista as de
+qualquer pessoa, sem aprovação intermédia), ou precisa de um fluxo real
+de pedido → aprovação (ex. PM pede, Chefe aprova antes de contar como
+confirmada)?
+
+**Recomendação por defeito (já implementada):** registo direto — mais
+simples, e nada impede adicionar um estado `pendente` + uma ação de
+aprovação mais tarde de forma aditiva, sem alterar o que já existe.
+
+### 21. Dashboard: férias/aniversários visíveis a toda a equipa, ou só aos próprios?
+
+**Impacto:** um PM ou Comercial (sem `absence.view_all`) só vê as suas
+próprias férias/ausências e o seu próprio aniversário no dashboard — nunca
+os de colegas. Ver `docs/DECISIONS.md` D-044.
+
+**Decisão necessária:** confirmar se esta é mesmo a política pretendida,
+ou se (prática comum em equipas pequenas) todos devem ver as férias/
+aniversários de toda a gente, para coordenação de equipa.
+
+**Recomendação por defeito (já implementada):** o lado mais restritivo —
+mudar para "toda a equipa vê tudo" é uma alteração pequena (dar
+`absence.view_all` a mais perfis em `app/security/catalog.py`), mas o
+inverso (restringir depois de já ter sido visto por todos) não desfaz a
+exposição já acontecida.
+
+### 22. Unificar `Task` com o sistema `Phase`/`WorkflowStage`/`WorkflowSubtask`?
+
+**Impacto:** o MVP dashboard/workflow criou uma entidade `Task` genérica
+(ver `docs/DECISIONS.md` D-039) que coexiste, sem qualquer ligação, com o
+sistema de processo já modelado antes desta fase (`Phase`→
+`WorkflowStage`→`WorkflowSubtask` + `ProjectStageProgress`/
+`ProjectSubtaskProgress`) — este último semeado (`seed_workflow`) mas sem
+endpoint nem UI ligados em nenhuma fase até agora.
+
+**Decisão necessária:** vale a pena investir em unificar os dois (ex. cada
+`WorkflowSubtask` do catálogo gerar automaticamente uma `Task` por
+projeto, com o catálogo a continuar a definir a ordem/responsável por
+omissão), ou os dois propósitos são suficientemente diferentes para
+coexistirem indefinidamente (checklist de processo fixo vs. tarefas
+livres com responsável/prazo/prioridade)?
+
+**Recomendação por defeito:** nenhuma — depende de o negócio querer mesmo
+usar o processo fixo por fases (`Phase`/`WorkflowStage`) nalguma fase
+futura; se nunca vier a ser ligado a um endpoint/UI, mais vale remover
+essa estrutura do que mantê-la morta.
+
+### 23. A checklist padrão de 5 tarefas deve ser fixa ou configurável?
+
+**Impacto:** `app/services/tasks.py:ensure_default_tasks_for_project` cria
+sempre as mesmas 5 tarefas (visita técnica, preparação da instalação,
+instalação, comissionamento, colocar fotos na Drive) para qualquer
+projeto — não há noção de "tipo de projeto" com checklists diferentes.
+
+**Decisão necessária:** todos os projetos (residencial, comercial,
+industrial, manutenção...) seguem mesmo esta mesma checklist de 5 passos,
+ou existem tipos de projeto que precisam de passos diferentes?
+
+**Recomendação por defeito:** manter fixo enquanto só há um tipo de
+projeto observado nos dados reais — tornar configurável por tipo de
+projeto é um alargamento aditivo simples quando/se for preciso.
+
+### 24. Unificar `Task` com o futuro formulário de visita técnica e comissionamento?
+
+**Impacto:** este MVP mantém `Task` (ver D-039) como unidade operacional
+e preserva, sem alteração nem ligação, os modelos antigos `Phase`/
+`WorkflowStage` (pergunta 22 acima). O roadmap prevê um formulário
+dedicado de visita técnica e comissionamento numa fase futura — se for
+construído contra `Task` (ou contra um novo modelo próprio), duplica
+esforço/dados com qualquer um dos dois sistemas já existentes se não for
+decidido antes.
+
+**Decisão necessária:** confirmar, antes de desenhar esse formulário,
+qual das três entidades (`Task`, `Phase`/`WorkflowStage`, ou uma nova) é
+a fonte de verdade única para o processo de execução de projeto — não
+avançar com uma migração de dados arriscada agora só para unificar
+precocemente.
+
+**Recomendação por defeito:** nenhuma decisão de migração nesta fase —
+documentar a pendência (feito aqui) e decidir no momento de desenhar o
+formulário de visita técnica/comissionamento.
+
 ## Podem ser decididas mais tarde
 
-- **Atualização major de `vite` (5→8) e `react-router-dom` (6→7).**
-  `npm audit` no frontend reporta 4 vulnerabilidades (3 moderadas, 1
-  alta) sem correção dentro do intervalo semver instalado — só resolvidas
-  com um salto de versão maior, uma alteração significativa e fora do
-  âmbito da revisão de hardening que as identificou (D-031). Nenhuma é
-  exploratória à distância no código deste repositório tal como está hoje
-  (`esbuild`/`vite` — só afeta quem tem o servidor de desenvolvimento
-  exposto; `react-router-dom` — open-redirect, relevante sobretudo com
-  entrada de utilizador não confiável nas rotas, que esta app não tem
-  ainda). Decidir quando fazer esta migração (e testar as mudanças de
-  API do `react-router-dom` v7) antes de um primeiro deployment público.
+- **Atualização major de `react-router-dom` (6→7) e `vitest`/
+  `@vitest/mocker` (3→5).** Resolvido nesta integração (`mvp-ready`,
+  D-048): `vite` já foi atualizado para `6.4.3` (sem precisar de ir a 8),
+  o que eliminou a única vulnerabilidade **alta** (`GHSA-fx2h-pf6j-xcff`).
+  Ficam por resolver 4 vulnerabilidades **moderadas** sem correção dentro
+  do intervalo semver instalado — só resolvidas com um salto de versão
+  maior de cada pacote (D-031, e D-033 que acrescentou `vitest` como
+  primeira dependência de testes do frontend — já atualizado uma vez, de
+  `vitest@2` para `vitest@3.2.7`, especificamente para eliminar uma
+  vulnerabilidade **crítica** do servidor de UI do Vitest,
+  `GHSA-5xrq-8626-4rwp`; a moderada remanescente de `@vitest/mocker`,
+  `GHSA-82fw-gwwq-j7x9`, só se resolve saltando para `vitest@5`). Nenhuma
+  destas é exploratória à distância no código deste repositório tal como
+  está hoje (`vitest`/`@vitest/mocker` — dependências só de
+  desenvolvimento/teste, nunca incluídas no bundle de produção
+  (`vite build`); `react-router-dom` — open-redirect, relevante sobretudo
+  com entrada de utilizador não confiável nas rotas, que esta app não tem
+  ainda). Decidir quando fazer estas migrações (e testar as mudanças de
+  API do `react-router-dom` v7 e do `vitest` v5) antes de um primeiro
+  deployment público.
 - Fornecedor do serviço de mapas/rotas.
 - Modelo específico do Claude a usar em produção (a interface já é
   agnóstica ao modelo — `Settings.claude_model`).
-- Aparência final do dashboard.
+- Aparência final do dashboard (Fase 1.5 entregou uma primeira versão
+  funcional, estilo utilitário/tabelas — sem investimento de design ainda).
 - Notificações por email, Teams, ou só dentro da aplicação (`notifications`
   já modelado, sem canal de entrega definido).
 - Relatórios adicionais além do semanal.
@@ -251,3 +422,10 @@ com o Chefe de Operações só a "carimbar" a decisão final na fila).
   Resolvida arquiteturalmente: separação `Person`/`User` (D-003) — todos os
   PMs (ativos ou não) existem como `Person` para preservar o histórico;
   só até 5 têm `User` (conta de login) associada.
+- **"Qual é o primeiro MVP: migração real dos 295 projetos, ou uma
+  ferramenta operacional interna (dashboard/tarefas) com dados
+  sintéticos?"** — Resolvida por instrução explícita do negócio: o MVP
+  passou a ser Fase 0 + Fase 1 + Fase 1.5 (dashboard/workflow), **sem** a
+  Fase 2 — ver "Primeiro MVP recomendado" em `docs/PLAN.md`. A migração
+  real dos 295 projetos continua planeada como Fase 2, só que depois deste
+  MVP, não antes.
