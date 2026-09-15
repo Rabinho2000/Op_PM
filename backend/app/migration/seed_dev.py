@@ -9,6 +9,15 @@ cujo histórico se preserva mas que já não têm acesso de login.
 
 Utilização:
     python -m app.migration.seed_dev
+
+**Nunca corre em staging/produção** (docs/STAGING_RUNBOOK.md): mesma
+barreira de `HARDENED_ENVIRONMENTS` já usada em `app/config.py`
+(D-020/D-032) e em `app/cli/ingest_staging.py` (D-037) — este seed cria
+utilizadores/pessoas/projetos sintéticos (`*.invalid`), pensados só para
+`local`/`test`. Staging usa pessoas/utilizadores reais desde o início
+(provisionados manualmente — ver `docs/STAGING_RUNBOOK.md` secção
+"Utilizadores") e só recebe projetos via `app.cli.ingest_staging`
+(D-037), nunca via este seed.
 """
 from __future__ import annotations
 
@@ -17,6 +26,7 @@ import datetime as dt
 from sqlalchemy.orm import Session
 
 import app.models  # noqa: F401  — garante que todas as tabelas estão registadas em Base.metadata
+from app.config import HARDENED_ENVIRONMENTS, get_settings
 from app.db import Base, SessionLocal, engine
 from app.models.absence import TYPE_BAIXA_MEDICA, TYPE_FERIAS, Absence
 from app.models.identity import Permission, Role, RolePermission, User, UserRole
@@ -507,7 +517,27 @@ def seed_supplier_and_inventory(db: Session) -> None:
         db.add(InventoryItem(sku="SYNTH-INV-001", name="Item de inventário sintético", unit="un", min_stock=5))
 
 
+class SeedNotAllowedError(RuntimeError):
+    """Erro de negócio conhecido — mensagem sempre segura para mostrar
+    diretamente a quem corre o comando."""
+
+
+def assert_seed_allowed_environment(app_env: str) -> None:
+    """Barreira contra dados sintéticos em staging/produção. Separada de
+    `run_seed()` para ser testável sem depender do cache de
+    `get_settings()` (mesmo padrão de
+    `app.cli.ingest_staging.assert_staging_only_environment`)."""
+    if app_env in HARDENED_ENVIRONMENTS:
+        raise SeedNotAllowedError(
+            f"seed sintético recusado em APP_ENV={app_env!r} — este seed cria utilizadores, "
+            "pessoas e projetos fictícios (*.invalid), só para local/test. Em staging/produção, "
+            "os 5 utilizadores são provisionados manualmente (docs/STAGING_RUNBOOK.md secção "
+            "\"Utilizadores\") e os projetos chegam só via app.cli.ingest_staging (D-037)."
+        )
+
+
 def run_seed() -> None:
+    assert_seed_allowed_environment(get_settings().app_env)
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
@@ -523,5 +553,11 @@ def run_seed() -> None:
 
 
 if __name__ == "__main__":
-    run_seed()
+    import sys
+
+    try:
+        run_seed()
+    except SeedNotAllowedError as exc:
+        print(f"Erro: {exc}", file=sys.stderr)
+        raise SystemExit(1)
     print("Seed sintético aplicado com sucesso.")

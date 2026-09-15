@@ -13,11 +13,17 @@ resolvido, ignorado (decisão humana explícita), ou ainda por resolver.
 Quatro funções fazem as etapas exigidas, nunca misturadas:
 
 - `ingest_export`: lê um export externo e cria registos de staging.
-  NUNCA escreve em `projects`. Sempre persistente (commit imediato) — não
-  há "dry run", porque não há nada arriscado a simular: nada aqui pode
-  corromper dados canónicos. Um registo com PM presente mas não resolvido
-  fica em `conflict` (`pm_unresolved`) — nunca segue para promoção como se
-  não tivesse PM.
+  NUNCA escreve em `projects`. Por omissão, persistente (commit imediato)
+  — a ingestão em si já não pode corromper dados canónicos. Aceita
+  `dry_run=True` (usado pelo piloto de staging, `docs/STAGING_RUNBOOK.md`
+  secção "Piloto") para pré-visualizar o resumo (contagens, conflitos) sem
+  deixar nenhum vestígio — nem nas tabelas de staging: a transação é
+  revertida (`db.rollback()`) pelo chamador depois de ler o resumo, nunca
+  commitada. Aceita também `only_external_ids`/`limit` para processar só
+  um subconjunto do payload (piloto de 5 a 10 projetos antes dos 295 —
+  ver `app/cli/ingest_staging.py --only-ids`/`--limit`). Um registo com PM
+  presente mas não resolvido fica em `conflict` (`pm_unresolved`) — nunca
+  segue para promoção como se não tivesse PM.
 - `resolve_conflict`: decisão humana sobre um registo em conflito
   (`create_new` / `link_existing` / `skip` para conflitos de projeto;
   `proceed_without_pm` só para `pm_unresolved`). Só isto (ou
@@ -286,7 +292,19 @@ def ingest_export(
     payload: dict,
     source_system: str = SOURCE_LEGACY_JSON,
     actor_person_id: uuid.UUID | None = None,
+    only_external_ids: set[str] | None = None,
+    limit: int | None = None,
+    dry_run: bool = False,
 ) -> ImportBatch:
+    """`only_external_ids`/`limit` restringem o processamento a um
+    subconjunto das chaves de `payload["projects"]` (piloto de staging —
+    nunca alteram o `raw_payload_json` gravado, que preserva sempre o
+    payload completo tal como recebido, mesmo quando só uma parte dele foi
+    processada nesta chamada). `dry_run=True` faz tudo o resto de forma
+    idêntica (incl. deteção de duplicados/conflitos contra a base de dados
+    real) mas não commita — cabe ao chamador (`app/cli/ingest_staging.py`)
+    chamar `db.rollback()` depois de ler o resumo, para não deixar
+    nenhuma linha em `import_batches`/`staging_project_records`."""
     if "projects" not in payload or not isinstance(payload["projects"], dict):
         raise ValueError("payload inválido: esperado um objeto com a chave 'projects'")
 
@@ -314,7 +332,13 @@ def ingest_export(
     # ainda não promovidos — ver docs/DECISIONS.md.
     seen_in_batch: dict[str, list[str]] = {}
 
-    for legacy_id, record in payload["projects"].items():
+    items = list(payload["projects"].items())
+    if only_external_ids is not None:
+        items = [(legacy_id, record) for legacy_id, record in items if str(legacy_id) in only_external_ids]
+    if limit is not None:
+        items = items[:limit]
+
+    for legacy_id, record in items:
         batch.records_seen += 1
         external_id = str(legacy_id)
         mapped = _map_legacy_fields(record)
@@ -381,8 +405,12 @@ def ingest_export(
             batch.records_ready += 1
         db.add(staging)
 
-    db.commit()
-    db.refresh(batch)
+    if dry_run:
+        db.flush()
+        db.refresh(batch)
+    else:
+        db.commit()
+        db.refresh(batch)
     return batch
 
 
