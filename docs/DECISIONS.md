@@ -1475,3 +1475,63 @@ PM/Chefe/Comercial/Financeiro/Admin, aviso de fotos pendentes,
 transições de estado inválidas bloqueadas, validação de datas de férias,
 projeto inativo excluído do dashboard, fluxo de ingestão para staging
 com contagens/conflitos/promoção/rollback).
+
+## D-049 — Preparação para staging: piloto de importação, seed bloqueado, .env.staging.example
+
+**Contexto:** antes de um primeiro piloto com dados reais em staging,
+faltavam três coisas: uma forma segura de testar 5 a 10 projetos reais
+sem arriscar os 295 de uma vez; uma barreira de código (não só
+disciplina documentada) contra o seed sintético correr em staging; e
+exemplos de configuração dedicados a staging, distintos dos de
+local/dev, com todos os valores obrigatórios já assinalados.
+
+**Decisão:**
+
+1. `app.migration.staging.ingest_export` ganha `only_external_ids`,
+   `limit` e `dry_run`, expostos em `app.cli.ingest_staging` como
+   `--only-ids`, `--limit`, `--dry-run` — permite pré-visualizar
+   (contagens, conflitos) e depois ingerir só um subconjunto do export
+   real, sem tocar nos restantes 285-290 projetos. `dry_run=True` corre
+   exatamente a mesma lógica (incl. deteção de duplicados contra a base
+   de dados real) mas nunca commita — o chamador reverte a transação
+   depois de ler o resumo, para não deixar nenhum vestígio nem em
+   `import_batches`/`staging_project_records`.
+2. `app.cli.ingest_staging` recusa-se a ler um ficheiro que esteja
+   dentro da árvore de trabalho do Git e que **não** esteja coberto pelo
+   `.gitignore` (`assert_file_is_not_trackable_by_git`) — uma segunda
+   barreira, em código, contra um export com dados reais ser
+   acidentalmente `git add`ado, além da disciplina manual já documentada
+   em `docs/DATA_MIGRATION_RUNBOOK.md`. Nunca falha "a fechado": qualquer
+   erro a invocar o Git (ausente, timeout, ambiente sem repositório)
+   deixa passar — o disparador real (`.gitignore` + revisão manual de
+   `git status`) continua sempre ativo.
+3. `app.migration.seed_dev.run_seed()` recusa-se a correr em
+   `staging`/`production` (`assert_seed_allowed_environment`, mesma
+   barreira `HARDENED_ENVIRONMENTS` de `app/config.py`) — antes desta
+   revisão, nada impedia tecnicamente correr o seed sintético contra uma
+   base de dados de staging, só a disciplina documentada em
+   `docs/STAGING_CHECKLIST.md`.
+4. `backend/.env.staging.example` e `frontend/.env.staging.example`
+   (novos, distintos de `.env.example` de local/dev): todos os valores
+   obrigatórios em staging já com placeholder explícito (nunca um valor
+   plausível-mas-falso que alguém possa esquecer-se de substituir),
+   comentários a explicar a origem de cada um (qual app registration
+   Entra ID, qual secção do runbook). `docs/STAGING_RUNBOOK.md` (novo) é
+   o procedimento operacional completo — comandos exatos para as duas
+   app registrations Entra ID, PostgreSQL, migrações, os 5 utilizadores,
+   health checks, logs, backups/rollback, testes de aceitação, o piloto
+   de 5 a 10 projetos, e como parar o ambiente; `docs/STAGING_CHECKLIST.md`
+   passa a ser só o registo de sign-off, apontando para lá.
+
+**Por decidir, não assumido nesta revisão (ver `docs/OPEN_QUESTIONS.md`):**
+quem cria `Person`/`User`/`UserRole` reais em staging antes do primeiro
+provisionamento (não existe ainda um script de seed dedicado a staging,
+só o SQL/Python manual documentado em `docs/STAGING_RUNBOOK.md` secção
+9.1); alojamento concreto (condiciona os comandos exatos de arranque,
+logs e backups automáticos); "who can consent" no scope
+`access_as_user`; ativar `ENTRA_JIT_LINK_BY_EMAIL` em staging (por
+omissão, desligado).
+
+**Testes:** `tests/test_ingest_staging_cli.py` (+8 — dry-run, subconjunto
+por IDs/limite, barreira do Git), `tests/test_seed_dev_staging_guard.py`
+(4, novo).

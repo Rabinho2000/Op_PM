@@ -48,6 +48,15 @@ uma lista explícita de campos, aplicada no servidor (D-028); o frontend já faz
 real via MSAL (Authorization Code + PKCE), pendente só de um tenant/app registration
 reais para ter credenciais (ver `docs/OPEN_QUESTIONS.md`, pergunta 1, e D-031).
 
+**Preparação para staging (D-049):** `docs/STAGING_RUNBOOK.md` (novo) e
+`backend/.env.staging.example`/`frontend/.env.staging.example` (novos)
+cobrem o procedimento completo. `app.cli.ingest_staging` ganhou
+`--dry-run`/`--only-ids`/`--limit` para testar um piloto de 5 a 10
+projetos reais antes dos 295; `app.migration.seed_dev` recusa-se agora a
+correr fora de `local`/`test`. Continua pendente: tenant Entra ID real,
+domínio e alojamento de staging (ver `docs/STAGING_RUNBOOK.md` secção 16
+para a lista objetiva).
+
 Documentação:
 
 - [`docs/PRODUCT_SCOPE.md`](docs/PRODUCT_SCOPE.md) — escopo inicial do produto.
@@ -55,7 +64,8 @@ Documentação:
 - [`docs/PLAN.md`](docs/PLAN.md) — roadmap por fases, plano de migração, testes, segurança.
 - [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) — perguntas bloqueantes/importantes.
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — decisões de arquitetura já tomadas e a sua justificação.
-- [`docs/STAGING_CHECKLIST.md`](docs/STAGING_CHECKLIST.md) — checklist do primeiro deployment de staging.
+- [`docs/STAGING_RUNBOOK.md`](docs/STAGING_RUNBOOK.md) — runbook operacional completo de staging (App registrations Entra ID, PostgreSQL, migrações, os 5 utilizadores, health checks, backups/rollback, piloto de 5 a 10 projetos reais).
+- [`docs/STAGING_CHECKLIST.md`](docs/STAGING_CHECKLIST.md) — checklist de sign-off do primeiro deployment de staging (usa o runbook acima para os comandos exatos).
 - [`docs/GO_LIVE_CHECKLIST.md`](docs/GO_LIVE_CHECKLIST.md) — checklist de passagem a produção.
 - [`docs/DATA_MIGRATION_RUNBOOK.md`](docs/DATA_MIGRATION_RUNBOOK.md) — procedimento da migração real dos 295 projetos.
 

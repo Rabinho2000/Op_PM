@@ -376,6 +376,73 @@ precocemente.
 documentar a pendência (feito aqui) e decidir no momento de desenhar o
 formulário de visita técnica/comissionamento.
 
+### 25. Alojamento de staging/produção (bloqueia parte do runbook)
+
+**Impacto:** `docs/STAGING_RUNBOOK.md` secções 7 (arranque), 10 (logs) e
+11 (backups) só têm comandos genéricos (Uvicorn/Gunicorn em primeiro
+plano, `pg_dump` manual) porque não há decisão de alojamento (cloud vs.
+on-premises, fornecedor concreto). Sem isto, staging pode ser levantado
+manualmente uma vez, mas não de forma repetível/automatizada.
+
+**Decisão necessária:** fornecedor/mecanismo concreto de alojamento do
+backend, frontend, e do serviço PostgreSQL de staging.
+
+**Recomendação por defeito:** nenhuma — ver `docs/PLAN.md` "Plano de
+deployment" para a recomendação já registada (cloud pequeno alinhado com
+o tenant Microsoft 365).
+
+### 26. Quem cria `Person`/`User`/`UserRole` reais em staging (não há seed dedicado)
+
+**Impacto:** `app.migration.seed_dev.run_seed()` está agora bloqueado em
+staging/produção (D-049) — correto, porque cria dados sintéticos — mas
+isso deixa um vazio: não existe nenhum script que crie os registos reais
+de `Person`/`User`/`UserRole`/`Role`/`Permission` em staging.
+`docs/STAGING_RUNBOOK.md` secção 9.1 documenta um procedimento manual
+(Python/SQL) como solução temporária.
+
+**Decisão necessária:** vale a pena escrever um script de seed dedicado
+a staging (só catálogo de papéis/permissões + os 5 `Person`/`User`
+reais, nunca projetos/tarefas fictícios), ou o procedimento manual da
+secção 9.1 é aceitável para uma equipa desta dimensão?
+
+**Recomendação por defeito:** manter o procedimento manual enquanto só
+houver 5 utilizadores — escrever um script só quando/se o número de
+ambientes de staging a levantar justificar automatizar isto.
+
+### 27. "Who can consent" no scope `access_as_user` da app registration da API
+
+**Impacto:** `docs/STAGING_RUNBOOK.md` secção 2.1 pede esta decisão ao
+criar o scope delegado — "Admins and users" facilita o primeiro login de
+cada um dos 5 utilizadores (sem pedir a um admin para consentir por
+cada um), mas "Admins only" é mais restritivo por omissão.
+
+**Decisão necessária:** confirmar a política preferida da organização
+para este tenant.
+
+**Recomendação por defeito:** "Admins and users" — com só 5 utilizadores
+conhecidos e "Grant admin consent" já aplicado ao nível da app
+registration (secção 2.2 do runbook), o consentimento individual nunca
+chega a ser pedido na prática; a diferença só importa se outro
+utilizador tentar aceder sem ter sido provisionado.
+
+### 28. Ativar `ENTRA_JIT_LINK_BY_EMAIL=true` em staging?
+
+**Impacto:** por omissão, desligado em staging/produção (D-029) — cada
+utilizador só fica ligado ao seu `entra_object_id` via
+`app.cli.provision_entra_user` (`docs/STAGING_RUNBOOK.md` secção 9.2),
+nunca automaticamente a partir de um token com email correspondente.
+
+**Decisão necessária:** com só 5 utilizadores conhecidos de antemão, o
+provisionamento manual é preferível (mais controlo, auditado
+explicitamente) ou a ligação automática por email pouparia trabalho
+suficiente para justificar o risco de ligar a pessoa errada por um email
+duplicado/trocado?
+
+**Recomendação por defeito:** manter desligado — 5 utilizadores é pouco
+para o provisionamento manual ser um fardo, e a ligação automática
+remove a barreira humana que confirma que o `entra_object_id` certo foi
+associado à pessoa certa.
+
 ## Podem ser decididas mais tarde
 
 - **Atualização major de `react-router-dom` (6→7) e `vitest`/

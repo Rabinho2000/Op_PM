@@ -371,6 +371,48 @@ completo.
   (+2 skipped) + 18 de frontend a passar em `mvp-ready`; `npm run build`
   sem erros; nenhum dado real migrado.
 
+## Fase 1.6 — Preparação para staging (IMPLEMENTADA, código; alojamento/tenant reais pendentes)
+
+Pedida explicitamente antes de um primeiro piloto com dados reais em
+staging. Ver `docs/DECISIONS.md` D-049 e `docs/STAGING_RUNBOOK.md` (novo)
+para o procedimento operacional completo.
+
+- **Objetivo:** tudo o que depende só de código/documentação, sem tenant
+  Entra ID nem alojamento reais, ficar pronto — para o dia em que esses
+  dois existirem, restar só seguir o runbook.
+- **O que ficou feito:**
+  1. `app.cli.ingest_staging` ganha `--dry-run`/`--only-ids`/`--limit` —
+     testar um piloto de 5 a 10 projetos reais antes dos 295, com
+     pré-visualização sem escrever nada (D-049).
+  2. Segunda barreira em código (além da disciplina já documentada)
+     contra um export com dados reais entrar no Git por engano —
+     `assert_file_is_not_trackable_by_git`.
+  3. `app.migration.seed_dev.run_seed()` recusa-se a correr em
+     staging/produção — antes, só a checklist documentava isto.
+  4. `backend/.env.staging.example`/`frontend/.env.staging.example`
+     (novos) — todos os valores obrigatórios de staging já assinalados
+     com placeholder explícito, distintos dos exemplos de local/dev.
+  5. `docs/STAGING_RUNBOOK.md` (novo): procedimento completo — App
+     registrations Entra ID (passo a passo exato), PostgreSQL,
+     migrações, os 5 utilizadores, health checks, logs, backups/
+     rollback, testes de aceitação, o piloto, e como parar o ambiente.
+- **Entidades:** sem alteração de schema.
+- **Integrações:** nenhuma — continuam todas mock/fallback.
+- **Testes:** `tests/test_ingest_staging_cli.py` (+8),
+  `tests/test_seed_dev_staging_guard.py` (4, novo).
+- **Riscos:** ver `docs/OPEN_QUESTIONS.md` perguntas 25 a 28 (alojamento,
+  seed de staging, consentimento, JIT linking) — nenhuma decisão de
+  negócio foi assumida.
+- **Rollback:** módulo aditivo — reverter para o commit anterior a esta
+  revisão não afeta nenhum dado nem funcionalidade já existente.
+- **Critérios de conclusão (cumpridos, quanto ao que depende só de
+  código):** suite completa a passar; `npm run lint`/`npm test`/
+  `npm run build` sem erros; nenhum segredo real nos exemplos de
+  configuração. **Em aberto** (dependem de dados externos — ver
+  `docs/STAGING_RUNBOOK.md` secção 16): tenant Entra ID real, domínio,
+  alojamento — sem eles, staging não pode ser levantado de facto, só
+  preparado.
+
 ## Fase 2 — Dashboard inicial
 
 **Estado: IMPLEMENTADA — ver Fase 1.5 acima.** O roadmap original desta
@@ -618,6 +660,7 @@ dessa ordem pedida — ver a nota em cada uma.
 |---|---|---|
 | Fase 1 — Auth real + CRUD | Fase 0 | Fundação técnica. |
 | Fase 1.5 — MVP operacional (dashboard/tarefas/workflow) | Fase 1 | Precisa de permissões/CRUD de projetos reais para ter algo a mostrar; usa só os projetos sintéticos, não depende da migração. |
+| Fase 1.6 — Preparação para staging | Fase 1 e Fase 1.5 | Precisa do fecho técnico (Fase 1) e do MVP a proteger (Fase 1.5) antes de decidir o que fica seguro/pronto para expor em staging; não depende da Fase 4 (a migração real é o que a Fase 1.6 prepara o terreno para receber, via piloto). |
 | Fase 2 — Dashboard inicial | Fase 1.5 | Implementada pela Fase 1.5 — linha mantida só como registo histórico do roadmap original. |
 | Fase 3 — Workflow de projetos | Fase 1.5 | Parcialmente coberta pela Fase 1.5 (`Task`); o processo fixo por fases (`Phase`/`WorkflowStage`) continua sem endpoints — ver nota na secção da Fase 3. |
 | Fase 4 — Migração real dos 295 projetos | Fase 1 | Precisa de permissões/auditoria reais antes de tocar em dados reais. Não depende tecnicamente das Fases 2/3 — pode correr em paralelo com a Fase 1.5. |
