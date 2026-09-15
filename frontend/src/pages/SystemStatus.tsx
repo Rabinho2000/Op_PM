@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import { getHealth, getMe, HealthResponse, MeResponse } from "../api/client";
 
-export default function Dashboard() {
+// Antiga página inicial da Fase 1 (estado do backend / utilizador de
+// desenvolvimento) — mantida em /status como diagnóstico técnico; a
+// página inicial "/" passou a ser o painel de operações real (ver
+// src/pages/Home.tsx, Fase 1.5 — MVP dashboard/workflow).
+export default function SystemStatus() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [me, setMe] = useState<MeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);

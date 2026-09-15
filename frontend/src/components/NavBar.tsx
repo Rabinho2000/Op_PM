@@ -33,7 +33,10 @@ export default function NavBar() {
       }}
     >
       <strong>Op_PM</strong>
+      <Link to="/">Painel</Link>
       <Link to="/projects">Projetos</Link>
+      <Link to="/tasks">Tarefas</Link>
+      <Link to="/vacations">Férias</Link>
       <Link to="/reconciliation">Reconciliação de PM</Link>
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.75rem" }}>
         <span style={{ color: "#666" }}>{displayName}</span>
