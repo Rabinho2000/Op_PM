@@ -105,3 +105,46 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+
+  docker-build:
+    # Valida que backend/Dockerfile e frontend/Dockerfile constroem, e que
+    # docker-compose.staging.example.yml é sintaticamente válido (D-050) —
+    # não foi possível validar isto localmente sem Docker disponível no
+    # ambiente onde estes ficheiros foram escritos. Só confirma que os
+    # builds/a composição funcionam; não sobe nenhum container, não corre
+    # HEALTHCHECK, não precisa de PostgreSQL real. Todos os valores abaixo
+    # (ARGs, .env temporário) são placeholders óbvios gerados só para este
+    # job — nunca segredos nem dados reais, e nunca commitados (o .env
+    # temporário é apagado no fim do job, dentro do runner efémero do CI).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker build — backend
+        run: docker build -t op_pm-backend:ci ./backend
+      - name: docker build — frontend (com placeholders óbvios, nunca segredos reais)
+        run: |
+          docker build -t op_pm-frontend:ci \
+            --build-arg VITE_API_BASE_URL=https://backend.staging.invalid \
+            --build-arg VITE_ENTRA_CLIENT_ID=00000000-0000-0000-0000-000000000000 \
+            --build-arg VITE_ENTRA_TENANT_ID=00000000-0000-0000-0000-000000000000 \
+            --build-arg VITE_ENTRA_API_SCOPE=api://00000000-0000-0000-0000-000000000000/access_as_user \
+            ./frontend
+      - name: Validar docker-compose.staging.example.yml (config, sem subir containers)
+        run: |
+          cat > backend/.env <<'EOF'
+          APP_ENV=staging
+          SECRET_KEY=ci-only-placeholder-never-a-real-secret
+          DATABASE_URL=postgresql+psycopg://ci:ci@localhost:5432/ci
+          AUTH_ENABLED=true
+          ENTRA_VALIDATION_MODE=real
+          ENTRA_TENANT_ID=00000000-0000-0000-0000-000000000000
+          ENTRA_CLIENT_ID=00000000-0000-0000-0000-000000000000
+          ENTRA_REQUIRED_SCOPE=access_as_user
+          CORS_ALLOWED_ORIGINS=https://frontend.staging.invalid
+          EOF
+          VITE_API_BASE_URL=https://backend.staging.invalid \
+          VITE_ENTRA_CLIENT_ID=00000000-0000-0000-0000-000000000000 \
+          VITE_ENTRA_TENANT_ID=00000000-0000-0000-0000-000000000000 \
+          VITE_ENTRA_API_SCOPE=api://00000000-0000-0000-0000-000000000000/access_as_user \
+            docker compose -f docker-compose.staging.example.yml config --quiet
+          rm -f backend/.env
