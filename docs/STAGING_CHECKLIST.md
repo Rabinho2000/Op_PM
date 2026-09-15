@@ -1,12 +1,15 @@
 # Checklist de staging — Op_PM
 
-> Procedimento para o primeiro deployment de `staging` (e para validar
-> qualquer deployment de staging seguinte). Não cobre a migração dos 295
-> projetos reais — ver `docs/DATA_MIGRATION_RUNBOOK.md` — nem a passagem
-> a produção — ver `docs/GO_LIVE_CHECKLIST.md`. Sempre que este documento
-> pedir uma decisão que a organização ainda não tomou, a caixa fica por
-> marcar e aponta para `docs/OPEN_QUESTIONS.md` — nunca inventar a
-> resposta para poder marcar a caixa.
+> Esta checklist é o registo de sign-off (o que já foi feito e
+> verificado); os comandos exatos para cada passo estão em
+> `docs/STAGING_RUNBOOK.md` (runbook operacional completo, incluindo o
+> piloto de 5 a 10 projetos reais antes dos 295 — secção 13). Não cobre a
+> migração completa dos 295 projetos reais — ver
+> `docs/DATA_MIGRATION_RUNBOOK.md` — nem a passagem a produção — ver
+> `docs/GO_LIVE_CHECKLIST.md`. Sempre que este documento pedir uma
+> decisão que a organização ainda não tomou, a caixa fica por marcar e
+> aponta para `docs/OPEN_QUESTIONS.md` — nunca inventar a resposta para
+> poder marcar a caixa.
 >
 > Alojamento (cloud vs. on-premises) não está decidido — ver
 > `docs/OPEN_QUESTIONS.md`, secção "Podem ser decididas mais tarde",
@@ -79,8 +82,10 @@ client secret; a API nunca deve ser pública):
 
 ## 3. Variáveis de ambiente obrigatórias
 
-Backend (`backend/.env` — nunca commitado; ver `backend/.env.example`
-para a lista completa). A aplicação **recusa-se a arrancar** em
+Backend (`backend/.env` — nunca commitado; ver
+`backend/.env.staging.example`, específico de staging, para a lista
+completa comentada — `backend/.env.example` é a versão de local/dev). A
+aplicação **recusa-se a arrancar** em
 `APP_ENV=staging` se alguma destas faltar ou estiver incorreta (ver
 `app/config.py:Settings._enforce_hardening_in_non_local_envs`,
 `docs/DECISIONS.md` D-020/D-032):
@@ -112,7 +117,7 @@ para a lista completa). A aplicação **recusa-se a arrancar** em
       destas.
 
 Frontend (`frontend/.env.local` de build, ou variáveis injetadas no
-processo de build de staging — ver `frontend/.env.example`):
+processo de build de staging — ver `frontend/.env.staging.example`):
 
 - [ ] `VITE_API_BASE_URL=` URL público do backend de staging.
 - [ ] `VITE_ENTRA_CLIENT_ID`, `VITE_ENTRA_TENANT_ID`, `VITE_ENTRA_API_SCOPE`
@@ -132,30 +137,40 @@ processo de build de staging — ver `frontend/.env.example`):
       do backend (`DATABASE_URL`).
 - [ ] Aplicar as migrações: `python -m alembic upgrade head` a partir de
       `backend/`, com `DATABASE_URL` já apontado à base de dados de
-      staging.
-- [ ] **Nunca correr `app/migration/seed_dev.py` em staging** — esse seed
-      cria utilizadores/pessoas/projetos sintéticos (`*.invalid`), pensados
-      só para `local`/`test`. Staging usa dados reais (pessoas/utilizadores
-      reais desde o início — secção 5; projetos, só depois de
-      `docs/DATA_MIGRATION_RUNBOOK.md`).
-  - Isto implica criar manualmente (ou por um script de seed específico de
-    staging, ainda por escrever) os `Role`/`Permission`/`RolePermission`
-    de `app/security/catalog.py` e as `Person`/`User` reais (secção 5) —
-    `seed_dev.py` pode servir de referência de estrutura, nunca ser
-    corrido tal como está.
+      staging (ou `docker compose --profile migrate run --rm
+      backend-migrate`, se estiver a usar `docker-compose.staging.example.yml`
+      — nunca corre automaticamente ao subir o serviço `backend`).
+- [ ] **Nunca correr `app/migration/seed_dev.py` em staging** — recusa-se
+      sozinho a partir de `run_seed()`/`assert_seed_allowed_environment`
+      (testado em `tests/test_seed_dev_staging_guard.py`), não é só
+      disciplina manual. Esse seed cria utilizadores/pessoas/projetos
+      sintéticos (`*.invalid`), pensados só para `local`/`test`. Staging
+      usa dados reais (pessoas/utilizadores reais desde o início — secção
+      5; projetos, só via `docs/STAGING_RUNBOOK.md` secção 13 — piloto —
+      e depois `docs/DATA_MIGRATION_RUNBOOK.md`).
+  - Os `Role`/`Permission`/`RolePermission` de `app/security/catalog.py`
+    e as `Person`/`User` reais (secção 5) são criados por
+    `python -m app.cli.provision_staging` (D-050) — ver
+    `docs/STAGING_BOOTSTRAP.md`, nunca por SQL/Python manual nem por
+    `seed_dev.py`.
 - [ ] Configurar backups automáticos (ver secção 6) antes de qualquer
       dado real entrar nesta base de dados.
 
 ## 5. Provisionamento dos 5 utilizadores
 
-Ver `docs/DECISIONS.md` D-034 e `app/cli/provision_entra_user.py`. Nunca
-cria um `User`/`Person` a partir daqui — pressupõe que os registos
-`Person`/`User` já existem na base de dados de staging (criados
-manualmente ou por um script de seed de staging, ver secção 4).
+- [ ] **Criar os `Person`/`User`/`UserRole` reais** com
+      `python -m app.cli.provision_staging --file <fora-do-repo>.json
+      --actor-email <...> --confirm` (D-050) — ver
+      `docs/STAGING_BOOTSTRAP.md` para o procedimento passo-a-passo.
+      Idempotente; pode incluir já `entra_object_id` no ficheiro (resolve
+      o resto desta secção no mesmo passo) ou deixá-lo de fora.
+- [ ] Confirmar o resumo impresso e as entradas `admin_bootstrap_user` em
+      `auth_audit_log`.
 
-Para cada um dos 5 utilizadores ativos (papéis: Administrador, Chefe de
-Operações, Project Manager, Comercial, Financeiro — ver
-`app/security/catalog.py`):
+Se `entra_object_id` não foi incluído no ficheiro do passo anterior, usar
+`app/cli/provision_entra_user.py` (D-034) para cada utilizador ainda por
+ligar — nunca cria um `User`/`Person` a partir daqui, só liga um `User`
+já existente (criado no passo anterior) ao seu `entra_object_id`:
 
 - [ ] Confirmar que a pessoa já iniciou sessão pelo menos uma vez no
       Microsoft 365 da organização (para existir um `oid` real a ligar) —
@@ -217,7 +232,8 @@ Operações, Project Manager, Comercial, Financeiro — ver
     `403` em `GET /api/migration/import-batches`.
 - [ ] **Teste de auditoria:** depois do teste de login, confirmar que
       nenhuma entrada indevida foi criada em `auth_audit_log` (só deve
-      haver as entradas de `admin_provision_link` da secção 5 — o JIT
+      haver as entradas de `admin_bootstrap_user`/`admin_provision_link`
+      da secção 5 — o JIT
       linking por email está desligado por omissão em staging, D-029, por
       isso não deve haver `jit_link_by_email` a menos que alguém tenha
       definido `ENTRA_JIT_LINK_BY_EMAIL=true` explicitamente). Editar um

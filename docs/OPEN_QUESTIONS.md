@@ -3,8 +3,8 @@
 > Cada pergunta bloqueante/importante indica: impacto, a decisão necessária,
 > e uma recomendação por defeito (quando existe uma razoável) — mas nenhuma
 > resposta foi assumida no código ou nos outros documentos sem confirmação.
-> Duas perguntas da versão anterior deste documento já ficaram resolvidas
-> nesta sessão — ver "Resolvidas" no final.
+> Várias perguntas de versões anteriores deste documento já ficaram
+> resolvidas — ver "Resolvidas" no final.
 
 ## Bloqueantes
 
@@ -376,6 +376,66 @@ precocemente.
 documentar a pendência (feito aqui) e decidir no momento de desenhar o
 formulário de visita técnica/comissionamento.
 
+### 25. Alojamento de staging/produção (bloqueia parte do runbook)
+
+**Impacto:** `docs/STAGING_RUNBOOK.md` secções 7 (arranque), 10 (logs) e
+11 (backups) só têm comandos genéricos (Uvicorn/Gunicorn em primeiro
+plano, `pg_dump` manual) porque não há decisão de alojamento (cloud vs.
+on-premises, fornecedor concreto). Sem isto, staging pode ser levantado
+manualmente uma vez, mas não de forma repetível/automatizada.
+
+**Atualização (D-050):** `backend/Dockerfile`, `frontend/Dockerfile` e
+`docker-compose.staging.example.yml` já existem — tornam o arranque
+repetível independentemente do alojamento escolhido (o mesmo
+`docker compose up` funciona em qualquer VM/serviço de containers). Isto
+**não decide** o alojamento em si (onde esses containers correm, quem os
+gere, backups do PostgreSQL) — só remove a dependência de decidir o
+alojamento antes de ter um arranque repetível.
+
+**Decisão necessária:** fornecedor/mecanismo concreto de alojamento do
+backend, frontend, e do serviço PostgreSQL gerido de staging (o `db`
+comentado em `docker-compose.staging.example.yml` é só para testar a
+composição localmente, nunca staging real — ver
+`docs/STAGING_RUNBOOK.md` secção 3).
+
+**Recomendação por defeito:** nenhuma — ver `docs/PLAN.md` "Plano de
+deployment" para a recomendação já registada (cloud pequeno alinhado com
+o tenant Microsoft 365).
+
+### 26. "Who can consent" no scope `access_as_user` da app registration da API
+
+**Impacto:** `docs/STAGING_RUNBOOK.md` secção 2.1 pede esta decisão ao
+criar o scope delegado — "Admins and users" facilita o primeiro login de
+cada um dos 5 utilizadores (sem pedir a um admin para consentir por
+cada um), mas "Admins only" é mais restritivo por omissão.
+
+**Decisão necessária:** confirmar a política preferida da organização
+para este tenant.
+
+**Recomendação por defeito:** "Admins and users" — com só 5 utilizadores
+conhecidos e "Grant admin consent" já aplicado ao nível da app
+registration (secção 2.2 do runbook), o consentimento individual nunca
+chega a ser pedido na prática; a diferença só importa se outro
+utilizador tentar aceder sem ter sido provisionado.
+
+### 27. Ativar `ENTRA_JIT_LINK_BY_EMAIL=true` em staging?
+
+**Impacto:** por omissão, desligado em staging/produção (D-029) — cada
+utilizador só fica ligado ao seu `entra_object_id` via
+`app.cli.provision_entra_user` (`docs/STAGING_RUNBOOK.md` secção 9.2),
+nunca automaticamente a partir de um token com email correspondente.
+
+**Decisão necessária:** com só 5 utilizadores conhecidos de antemão, o
+provisionamento manual é preferível (mais controlo, auditado
+explicitamente) ou a ligação automática por email pouparia trabalho
+suficiente para justificar o risco de ligar a pessoa errada por um email
+duplicado/trocado?
+
+**Recomendação por defeito:** manter desligado — 5 utilizadores é pouco
+para o provisionamento manual ser um fardo, e a ligação automática
+remove a barreira humana que confirma que o `entra_object_id` certo foi
+associado à pessoa certa.
+
 ## Podem ser decididas mais tarde
 
 - **Atualização major de `react-router-dom` (6→7) e `vitest`/
@@ -414,6 +474,13 @@ formulário de visita técnica/comissionamento.
 
 ## Resolvidas nesta sessão
 
+- **"Quem cria `Person`/`User`/`UserRole` reais em staging (não há seed
+  dedicado)?"** — Resolvida: `python -m app.cli.provision_staging`
+  (D-050) cria o catálogo de papéis/permissões e os `Person`/`User`/
+  `UserRole` reais a partir de um ficheiro JSON externo ao repositório,
+  de forma idempotente e auditada — ver `docs/STAGING_BOOTSTRAP.md`.
+  `docs/STAGING_RUNBOOK.md` secção 9.1 já não descreve um procedimento
+  manual Python/SQL.
 - **"O repositório deve continuar público ou passar a privado?"** —
   Resolvida: mantém-se público, por instrução explícita do utilizador. Ver
   `docs/DECISIONS.md` D-015. A regra que passa a valer sempre: nunca dados
