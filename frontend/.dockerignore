@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+!.env.staging.example
+*.tsbuildinfo
+coverage/
+.git/
+src/**/*.test.ts
+src/**/*.test.tsx
