@@ -4,11 +4,44 @@ reais de staging — comando administrativo controlado, nunca um endpoint HTTP
 ver docs/DECISIONS.md D-034/D-037/D-050).
 
 Resolve o vazio deixado por `docs/DECISIONS.md` D-049 e
-`docs/OPEN_QUESTIONS.md` pergunta 26: até agora, criar `Person`/`User`/
+`docs/OPEN_QUESTIONS.md` (pergunta "Quem cria `Person`/`User`/`UserRole`
+reais em staging?", secção "Resolvidas"): até agora, criar `Person`/`User`/
 `UserRole` reais em staging exigia Python/SQL manual (documentado em
 `docs/STAGING_RUNBOOK.md` secção 9.1), porque `app.migration.seed_dev` está
 deliberadamente bloqueado fora de `local`/`test` (D-049) — esse seed cria
 dados sintéticos, nunca aceitável em staging.
+
+**Duas barreiras de segurança, sempre aplicadas (D-050, revisão de
+hardening):**
+
+1. **Staging-only.** A CLI real (`main()`, o que corre
+   `python -m app.cli.provision_staging`) recusa-se a fazer seja o que for
+   fora de `APP_ENV=staging` — nunca `production` (provisionamento real de
+   produção exige um processo próprio, fora do âmbito deste comando), nunca
+   `local` (usar `app.migration.seed_dev`, que cria dados sintéticos), nunca
+   `test` (os testes automatizados chamam `bootstrap_staging_users`
+   diretamente, nunca via CLI). Ver `assert_staging_environment`. A lógica
+   interna (`bootstrap_staging_users`) continua testável isoladamente em
+   SQLite/`test` — só o `main()` tem esta barreira, de propósito, para os
+   testes poderem exercer o núcleo sem precisar de simular `APP_ENV=staging`.
+2. **`--actor-email` tem de ser um administrador real, ativo e autorizado.**
+   Nunca um texto livre gravado às cegas em auditoria: `main()` resolve o
+   email a um `User` ativo já existente e confirma que tem a permissão
+   `admin.manage_users` (`app/security/catalog.py` — hoje só o papel
+   `administrador` tem esta permissão) antes de escrever seja o que for.
+   Email desconhecido, utilizador inativo, ou utilizador ativo sem essa
+   permissão são todos recusados — **nunca um utilizador comum consegue
+   criar/promover outro utilizador (incluindo administradores) através
+   deste comando.** Exceção deliberada e estreita: se a base de dados não
+   tiver **nenhum** `User` ainda (arranque a frio, mesmo problema do "primeiro
+   administrador" de qualquer sistema novo), a verificação de autorização é
+   dispensada só nesse caso específico — não existe nenhum "utilizador
+   comum" que pudesse abusar disto, porque não existe nenhum utilizador de
+   todo. Assim que o primeiro `User` for criado, todas as corridas
+   seguintes voltam a exigir um `--actor-email` autorizado. Ver
+   `_resolve_and_authorize_actor`. O `person_id`/`user_id` reais do ator
+   (nunca só o texto do email fornecido) ficam gravados em
+   `AuthAuditLog.detail`.
 
 **O que este comando faz, sempre a partir de um ficheiro JSON externo ao
 repositório** (nunca inventa nem lê dados de outro sítio):
@@ -34,26 +67,28 @@ repositório** (nunca inventa nem lê dados de outro sítio):
 - Sempre auditado em `AuthAuditLog`: evento `admin_bootstrap_user` para
   cada `Person`/`User`/`UserRole` criado ou atualizado, e
   `admin_provision_link` (mesmo nome usado por `provision_entra_user.py`)
-  quando associa um `entra_object_id`.
+  quando associa um `entra_object_id` — sempre com o ator real (verificado)
+  no detalhe, nunca só um texto não confirmado.
 
 **O que este comando nunca faz:** nunca remove um papel já atribuído a um
 utilizador que não esteja no ficheiro (edição é sempre aditiva); nunca
 desativa um utilizador que deixe de aparecer no ficheiro (desativação é uma
 decisão administrativa separada, fora do âmbito deste comando); nunca cria
 projetos — a ingestão de projetos é sempre via `app.cli.ingest_staging`
-(D-037).
+(D-037); nunca escreve nada (nem o catálogo) se a validação do payload ou a
+autorização do ator falhar primeiro.
 
-Utilização (staging — nunca necessário em local/test, onde
-`app.migration.seed_dev` já resolve isto com dados sintéticos):
+Utilização (só em `APP_ENV=staging` — a CLI recusa-se em qualquer outro
+ambiente, ver acima):
 
     python -m app.cli.provision_staging \\
         --file /caminho/fora/do/repo/utilizadores_staging.json \\
-        --actor-email admin@empresa.pt \\
+        --actor-email admin.ja.autorizado@empresa.pt \\
         --dry-run
 
     python -m app.cli.provision_staging \\
         --file /caminho/fora/do/repo/utilizadores_staging.json \\
-        --actor-email admin@empresa.pt \\
+        --actor-email admin.ja.autorizado@empresa.pt \\
         --confirm
 
 Formato do ficheiro JSON (ver docs/STAGING_BOOTSTRAP.md):
@@ -85,11 +120,15 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.cli.ingest_staging import assert_file_is_not_trackable_by_git
+from app.config import get_settings
 from app.db import SessionLocal
 from app.migration.seed_dev import seed_catalog
-from app.models.identity import AuthAuditLog, Role, User, UserRole
+from app.models.identity import AuthAuditLog, Permission, Role, RolePermission, User, UserRole
 from app.models.people import Person
 from app.security.catalog import ROLES
+
+STAGING_ENVIRONMENT = "staging"
+ADMIN_PERMISSION_CODE = "admin.manage_users"
 
 
 class BootstrapError(ValueError):
@@ -125,6 +164,83 @@ class BootstrapResult:
             "entra_object_ids_linked": sum(1 for o in self.outcomes if o.entra_object_id_linked),
             "unchanged": sum(1 for o in self.outcomes if o.unchanged),
         }
+
+
+def assert_staging_environment(app_env: str) -> None:
+    """Barreira staging-only da CLI real (D-050, revisão de hardening):
+    este comando cria/liga identidades reais e nunca deve correr fora de
+    `staging` — nunca `production` (fora do âmbito deste comando), nunca
+    `local` (usar `app.migration.seed_dev`), nunca `test` (os testes
+    chamam `bootstrap_staging_users` diretamente, nunca via CLI). Separada
+    de `main()` para ser testável sem depender do cache de
+    `get_settings()` (mesmo padrão de
+    `app.cli.ingest_staging.assert_staging_only_environment`)."""
+    if app_env != STAGING_ENVIRONMENT:
+        raise BootstrapError(
+            f"comando staging-only recusado em APP_ENV={app_env!r} — só corre em "
+            f"{STAGING_ENVIRONMENT!r}. Nunca 'production' (provisionamento real de produção é um "
+            "processo à parte), nunca 'local' (usar app.migration.seed_dev), nunca 'test' (os "
+            "testes chamam bootstrap_staging_users diretamente, nunca via esta CLI)."
+        )
+
+
+def _actor_has_admin_permission(db: Session, actor: User) -> bool:
+    return (
+        db.query(RolePermission)
+        .join(UserRole, UserRole.role_id == RolePermission.role_id)
+        .join(Permission, Permission.id == RolePermission.permission_id)
+        .filter(UserRole.user_id == actor.id, Permission.code == ADMIN_PERMISSION_CODE)
+        .first()
+        is not None
+    )
+
+
+def _resolve_and_authorize_actor(db: Session, actor_email: str) -> User | None:
+    """Resolve `actor_email` a um `User` ativo com a permissão
+    `admin.manage_users` — nunca aceita um texto livre não verificado.
+    Devolve `None` só na exceção de arranque a frio (ver docstring do
+    módulo): a base de dados ainda não tem **nenhum** `User`, logo não
+    existe nenhum "utilizador comum" que pudesse abusar da ausência de
+    verificação — o próprio acesso direto ao servidor/BD para correr esta
+    CLI já é a barreira nesse caso (mesma filosofia de D-034/D-037).
+    Só lê a base de dados — nunca escreve nada, para que uma falha de
+    autorização não deixe nenhum rasto na base de dados."""
+    actor_email = actor_email.strip()
+    if not actor_email:
+        raise BootstrapError(
+            "actor_email (quem está a executar este comando) não pode ficar vazio — exigido para "
+            "autorização e auditoria."
+        )
+
+    if db.query(User).count() == 0:
+        return None
+
+    actor = (
+        db.query(User)
+        .filter(func.lower(User.email) == actor_email.lower(), User.is_active.is_(True))
+        .one_or_none()
+    )
+    if actor is None:
+        raise BootstrapError(
+            f"nenhum utilizador ATIVO com email {actor_email!r} — só um administrador real e ativo "
+            "pode executar este comando."
+        )
+    if not _actor_has_admin_permission(db, actor):
+        raise BootstrapError(
+            f"utilizador {actor_email!r} não tem a permissão {ADMIN_PERMISSION_CODE!r} — só um "
+            "administrador pode executar este comando (nunca um utilizador comum, mesmo que ativo, "
+            "mesmo para criar outro utilizador comum)."
+        )
+    return actor
+
+
+def _actor_descriptor(actor: User | None, actor_email: str) -> str:
+    if actor is not None:
+        return f"actor_user_id={actor.id!r} actor_person_id={actor.person_id!r} actor_email={actor.email!r}"
+    return (
+        f"actor_email={actor_email!r} (arranque a frio — base de dados sem nenhum utilizador "
+        "ainda, sem ator a verificar)"
+    )
 
 
 def _validate_payload(payload: dict) -> list[dict]:
@@ -187,7 +303,7 @@ def _bootstrap_one_user(
     *,
     entry: dict,
     role_objs: dict[str, Role],
-    actor_label: str,
+    actor_descriptor: str,
 ) -> UserBootstrapOutcome:
     email = entry["email"]
     outcome = UserBootstrapOutcome(email=email)
@@ -214,7 +330,7 @@ def _bootstrap_one_user(
             AuthAuditLog(
                 user_id=user.id,
                 event="admin_bootstrap_user",
-                detail=f"User criado por bootstrap de staging (email={email!r}), executado por actor={actor_label!r}.",
+                detail=f"User criado por bootstrap de staging (email={email!r}), executado por {actor_descriptor}.",
             )
         )
     else:
@@ -239,7 +355,7 @@ def _bootstrap_one_user(
                     event="admin_bootstrap_user",
                     detail=(
                         f"User atualizado por bootstrap de staging (email={email!r}), campos: "
-                        f"{', '.join(changed_fields)}, executado por actor={actor_label!r}."
+                        f"{', '.join(changed_fields)}, executado por {actor_descriptor}."
                     ),
                 )
             )
@@ -257,7 +373,7 @@ def _bootstrap_one_user(
                 event="admin_bootstrap_user",
                 detail=(
                     f"Papel {entry['role']!r} atribuído por bootstrap de staging (email={email!r}), "
-                    f"executado por actor={actor_label!r}."
+                    f"executado por {actor_descriptor}."
                 ),
             )
         )
@@ -291,7 +407,7 @@ def _bootstrap_one_user(
                     event="admin_provision_link",
                     detail=(
                         f"Ligação de entra_object_id={entra_object_id!r} a user_email={email!r} via "
-                        f"bootstrap de staging, executada por actor={actor_label!r}."
+                        f"bootstrap de staging, executada por {actor_descriptor}."
                     ),
                 )
             )
@@ -313,28 +429,34 @@ def bootstrap_staging_users(
     db: Session,
     *,
     payload: dict,
-    actor_label: str,
+    actor_email: str,
     dry_run: bool = False,
 ) -> BootstrapResult:
     """Núcleo do comando — chamado tanto por `main()` como pelos testes
     (`tests/test_provision_staging_cli.py`), para nunca haver duas lógicas
-    divergentes entre a CLI e o que é realmente testado.
+    divergentes entre a CLI e o que é realmente testado. Corre em qualquer
+    ambiente (a barreira staging-only vive só em `main()`, ver
+    `assert_staging_environment`) — para que os testes automatizados
+    (`APP_ENV=test`) continuem a exercer exatamente esta lógica.
+
+    `actor_email` é sempre resolvido e autorizado antes de qualquer
+    escrita (`_resolve_and_authorize_actor`) — nunca um texto livre. Nada
+    é escrito (nem o catálogo de papéis/permissões) se a validação do
+    payload ou a autorização do ator falhar.
 
     Idempotente: chamar duas vezes com o mesmo `payload` produz o mesmo
     estado final na base de dados (nenhuma linha duplicada, nenhum erro na
     segunda chamada) — ver `UserBootstrapOutcome.unchanged` para o que cada
     entrada reportou na segunda corrida."""
-    actor_label = actor_label.strip()
-    if not actor_label:
-        raise BootstrapError("actor_label (quem está a executar este comando) não pode ficar vazio — exigido para auditoria.")
-
     users = _validate_payload(payload)
+    actor = _resolve_and_authorize_actor(db, actor_email)
+    actor_descriptor = _actor_descriptor(actor, actor_email.strip())
 
     role_objs = seed_catalog(db)
 
     result = BootstrapResult()
     for entry in users:
-        outcome = _bootstrap_one_user(db, entry=entry, role_objs=role_objs, actor_label=actor_label)
+        outcome = _bootstrap_one_user(db, entry=entry, role_objs=role_objs, actor_descriptor=actor_descriptor)
         result.outcomes.append(outcome)
 
     if not dry_run:
@@ -352,7 +474,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--actor-email",
         required=True,
-        help="Email de quem está a executar este comando — gravado em auditoria (AuthAuditLog).",
+        help="Email de um administrador (permissão admin.manage_users) já existente e ativo — "
+        "verificado antes de qualquer escrita, gravado em auditoria (AuthAuditLog).",
     )
     parser.add_argument(
         "--dry-run",
@@ -368,6 +491,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    settings = get_settings()
+    try:
+        assert_staging_environment(settings.app_env)
+    except BootstrapError as exc:
+        print(f"Erro: {exc}", file=sys.stderr)
+        return 1
+
     args = _build_parser().parse_args(argv)
     effective_dry_run = args.dry_run or not args.confirm
 
@@ -390,7 +520,7 @@ def main(argv: list[str] | None = None) -> int:
         result = bootstrap_staging_users(
             db,
             payload=payload,
-            actor_label=args.actor_email,
+            actor_email=args.actor_email,
             dry_run=effective_dry_run,
         )
     except (BootstrapError, ValueError) as exc:
