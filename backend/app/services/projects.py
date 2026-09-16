@@ -102,6 +102,8 @@ def list_projects(
     pm_person_id: uuid.UUID | None = None,
     is_active: bool | None = None,
     search: str | None = None,
+    start_from: dt.date | None = None,
+    start_to: dt.date | None = None,
 ) -> list[Project]:
     query = visible_projects_query(db, ctx)
     if pm_person_id is not None:
@@ -117,6 +119,10 @@ def list_projects(
                 func.lower(Project.client_contact).like(pattern),
             )
         )
+    if start_from is not None:
+        query = query.filter(Project.start_date >= start_from)
+    if start_to is not None:
+        query = query.filter(Project.start_date <= start_to)
     return query.order_by(Project.name.asc()).all()
 
 
