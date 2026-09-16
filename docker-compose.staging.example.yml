@@ -1,0 +1,92 @@
+# EXEMPLO de composição de staging baseada em containers (D-050) --
+# ponto de partida enquanto o alojamento concreto (cloud vs.
+# on-premises, fornecedor) não estiver decidido (ver
+# docs/OPEN_QUESTIONS.md pergunta 25, docs/STAGING_RUNBOOK.md secção
+# 16). Nenhum recurso cloud é criado por este ficheiro -- correr
+# `docker compose` com isto só levanta containers na máquina onde for
+# executado. Copiar para `docker-compose.staging.yml` (fora do
+# controlo de versões, ou coberto pelo .gitignore) e ajustar antes de
+# usar a sério -- nunca commitar a cópia com segredos reais.
+#
+# Arquitetura igual à de local/dev (backend FastAPI + Uvicorn, frontend
+# estático servido por nginx) -- ver `docker-compose.yml` (Postgres de
+# desenvolvimento local) e `backend/Dockerfile`/`frontend/Dockerfile`.
+#
+# PostgreSQL de staging: por desenho (docs/STAGING_RUNBOOK.md secção 3)
+# deve ser um serviço gerido/externo dedicado, com backups automáticos
+# geridos por esse serviço -- NUNCA um container efémero sem backups
+# como staging real, e NUNCA partilhado com produção. O serviço `db`
+# abaixo está comentado -- serve só para experimentar a composição
+# completa localmente (ex. antes de decidir o alojamento real), não
+# para staging a sério.
+#
+# Migrações (`alembic upgrade head`) NUNCA correm automaticamente ao
+# subir o serviço `backend` -- correr sempre primeiro, explicitamente:
+#   docker compose -f docker-compose.staging.example.yml \
+#     --profile migrate run --rm backend-migrate
+#
+# Depois:
+#   docker compose -f docker-compose.staging.example.yml up -d backend frontend
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      # Nunca commitado -- copiar de backend/.env.staging.example e
+      # preencher com valores reais (docs/STAGING_RUNBOOK.md secção 4).
+      - ./backend/.env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    # depends_on: db   # só se estiver a usar o serviço 'db' comentado abaixo
+
+  backend-migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    profiles: ["migrate"]  # nunca corre com um simples `docker compose up`
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Definidas no ambiente de quem corre `docker compose build`
+        # (nunca commitadas) -- ver frontend/.env.staging.example para
+        # o significado de cada uma. VITE_ENABLE_DEV_LOGIN=false já vem
+        # fixado no Dockerfile, não um ARG.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:?defina VITE_API_BASE_URL antes do build}
+        VITE_ENTRA_CLIENT_ID: ${VITE_ENTRA_CLIENT_ID:?defina VITE_ENTRA_CLIENT_ID antes do build}
+        VITE_ENTRA_TENANT_ID: ${VITE_ENTRA_TENANT_ID:?defina VITE_ENTRA_TENANT_ID antes do build}
+        VITE_ENTRA_API_SCOPE: ${VITE_ENTRA_API_SCOPE:?defina VITE_ENTRA_API_SCOPE antes do build}
+        VITE_ENTRA_REDIRECT_URI: ${VITE_ENTRA_REDIRECT_URI:-}
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # db:
+  #   # Só para testar a composição completa localmente -- nunca usar
+  #   # como staging real (sem backups automáticos geridos, sem
+  #   # isolamento de rede próprio). Ver docs/STAGING_RUNBOOK.md secção 3.
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_USER: op_pm_staging
+  #     POSTGRES_PASSWORD: op_pm_staging_change_me
+  #     POSTGRES_DB: op_pm_staging
+  #   volumes:
+  #     - op_pm_staging_pg_data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U op_pm_staging -d op_pm_staging"]
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 10
+
+# volumes:
+#   op_pm_staging_pg_data:
