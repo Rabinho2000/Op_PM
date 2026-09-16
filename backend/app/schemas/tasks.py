@@ -28,6 +28,9 @@ class TaskRead(BaseModel):
     project_name: str | None = None
     assigned_to_display_name: str | None = None
     is_overdue: bool = False
+    # Permissão efetiva do utilizador atual (D-051) — só para a UI; o
+    # servidor valida sempre em app/services/tasks.py:update_task.
+    can_edit: bool = False
 
 
 class TaskCreate(BaseModel):

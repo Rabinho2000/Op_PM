@@ -90,8 +90,11 @@ def list_tasks(
     overdue_only: bool = False,
     due_before: dt.date | None = None,
     due_after: dt.date | None = None,
+    priority: str | None = None,
 ) -> list[Task]:
     query = visible_tasks_query(db, ctx)
+    if priority is not None:
+        query = query.filter(Task.priority == priority)
     if project_id is not None:
         query = query.filter(Task.project_id == project_id)
     if status is not None:

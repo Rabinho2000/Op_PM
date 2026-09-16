@@ -21,6 +21,8 @@ class AbsenceRead(BaseModel):
     updated_at: dt.datetime
 
     person_display_name: str | None = None
+    # Permissão efetiva do utilizador atual (D-051) — só para a UI.
+    can_cancel: bool = False
 
 
 class AbsenceCreate(BaseModel):

@@ -129,6 +129,8 @@ jobs:
             --build-arg VITE_ENTRA_TENANT_ID=00000000-0000-0000-0000-000000000000 \
             --build-arg VITE_ENTRA_API_SCOPE=api://00000000-0000-0000-0000-000000000000/access_as_user \
             ./frontend
+      - name: docker build — frontend de demonstração (Dockerfile.demo)
+        run: docker build -f frontend/Dockerfile.demo -t op_pm-frontend-demo:ci ./frontend
       - name: Validar docker-compose.staging.example.yml (config, sem subir containers)
         run: |
           cat > backend/.env <<'EOF'
@@ -148,3 +150,53 @@ jobs:
           VITE_ENTRA_API_SCOPE=api://00000000-0000-0000-0000-000000000000/access_as_user \
             docker compose -f docker-compose.staging.example.yml config --quiet
           rm -f backend/.env
+
+  demo-smoke:
+    # Demonstração local (D-051): constrói e arranca docker-compose.demo.yml
+    # de verdade (só dados sintéticos, sem PostgreSQL nem credenciais) e
+    # confirma que o frontend responde, que a API é servida pela mesma
+    # origem, que o seed sintético foi aplicado e que o login de
+    # demonstração funciona. Não foi possível correr Docker no ambiente
+    # onde isto foi escrito — este job é a validação real.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validar docker-compose.demo.yml (config)
+        run: docker compose -f docker-compose.demo.yml config --quiet
+      - name: Construir e arrancar a demonstração
+        run: |
+          docker compose -f docker-compose.demo.yml up --build -d
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8080/health > /dev/null 2>&1; then echo "demo pronta"; exit 0; fi
+            sleep 2
+          done
+          echo "a demonstração não respondeu a tempo"; exit 1
+      - name: Verificar frontend, API e dados sintéticos
+        run: |
+          set -euo pipefail
+          curl -fsS http://127.0.0.1:8080/ | grep -q '<div id="root">'
+          curl -fsS http://127.0.0.1:8080/projects | grep -q '<div id="root">'
+          curl -fsS http://127.0.0.1:8080/health | tee /tmp/health.json
+          python3 -c "import json; h=json.load(open('/tmp/health.json')); assert h['app_env']=='local' and h['demo_mode'] and h['dev_login_available'], h"
+          curl -fsS -H 'X-Dev-User-Email: chefe.sintetico@example.invalid'             http://127.0.0.1:8080/api/dashboard/summary > /tmp/summary.json
+          python3 -c "import json; s=json.load(open('/tmp/summary.json')); assert s['active_projects_count'] >= 20, s['active_projects_count']; assert s['projects_photos_pending'] and len(s['week_overview']) == 7; print('projetos ativos:', s['active_projects_count'])"
+          # Sem cabeçalho de desenvolvimento, a API recusa.
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/dashboard/summary)" = "401"
+      - name: Idempotência — reiniciar não duplica dados
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.demo.yml up -d --force-recreate
+          sleep 5
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8080/health > /dev/null 2>&1 && break
+            sleep 2
+          done
+          test "$(docker compose -f docker-compose.demo.yml ps -a --format '{{.Service}} {{.ExitCode}}' | awk '$1=="demo-setup"{print $2}')" = "0"
+          curl -fsS -H 'X-Dev-User-Email: chefe.sintetico@example.invalid'             http://127.0.0.1:8080/api/projects > /tmp/projects.json
+          python3 -c "import json,collections; p=json.load(open('/tmp/projects.json')); c=collections.Counter(x['name'] for x in p); d=[n for n,k in c.items() if k>1]; assert not d, d; print(len(p), 'projetos, sem duplicados')"
+      - name: Registos em caso de falha
+        if: failure()
+        run: docker compose -f docker-compose.demo.yml logs
+      - name: Parar
+        if: always()
+        run: docker compose -f docker-compose.demo.yml down -v

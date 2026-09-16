@@ -41,6 +41,16 @@ class BirthdayMini(BaseModel):
     days_until: int
 
 
+class WeekDaySummary(BaseModel):
+    """Um dia (Europe/Lisbon) da semana corrente — base do "resumo visual
+    da semana" no dashboard (D-051). Contagens calculadas no servidor."""
+
+    date: dt.date
+    tasks_due_count: int
+    tasks_completed_count: int
+    people_absent_count: int
+
+
 class DashboardSummary(BaseModel):
     generated_at: dt.datetime
     scope: str  # all | own | none
@@ -59,3 +69,6 @@ class DashboardSummary(BaseModel):
     upcoming_absences: list[AbsenceMini]
     upcoming_birthdays: list[BirthdayMini]
     urgent_tasks: list[TaskMini]
+    # D-051 — aditivos, com omissão vazia para não partir clientes antigos.
+    projects_photos_pending: list[ProjectMini] = []
+    week_overview: list[WeekDaySummary] = []

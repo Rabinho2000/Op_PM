@@ -1,0 +1,43 @@
+# Imagem da DEMONSTRAÇÃO LOCAL do frontend Op_PM (D-051) — nunca usar em
+# staging/produção (para isso existe `frontend/Dockerfile`, que fixa
+# VITE_ENABLE_DEV_LOGIN=false).
+#
+# Diferenças em relação ao Dockerfile de staging/produção:
+# - VITE_ENABLE_DEV_LOGIN=true: o ecrã de login oferece os utilizadores
+#   sintéticos. Mesmo assim, a secção só aparece quando o backend confirma
+#   em /health que aceita o login de desenvolvimento (APP_ENV=local/test,
+#   AUTH_ENABLED=false) — contra um backend de staging/produção não
+#   aparece, e o backend recusa o cabeçalho X-Dev-User-Email de qualquer
+#   forma (app/config.py + app/security/current_user.py).
+# - VITE_API_BASE_URL=/: a API é servida pela mesma origem; o nginx
+#   (docker/nginx.demo.conf) encaminha /api, /me, /health e /docs para o
+#   serviço `backend` da composição docker-compose.demo.yml.
+# - Sem variáveis Entra ID: o botão "Entrar com Microsoft" aparece
+#   desativado, com a explicação.
+
+FROM node:20-slim AS build
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY tsconfig.json vite.config.ts index.html ./
+COPY src ./src
+
+ENV VITE_API_BASE_URL=/ \
+    VITE_ENABLE_DEV_LOGIN=true \
+    VITE_ENTRA_CLIENT_ID= \
+    VITE_ENTRA_TENANT_ID= \
+    VITE_ENTRA_API_SCOPE=
+
+RUN npm run build
+
+
+FROM nginx:1.27-alpine AS runtime
+COPY --from=build /app/dist /usr/share/nginx/html
+COPY docker/nginx.demo.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=5s --retries=5 \
+  CMD wget --quiet --spider http://127.0.0.1:80/ || exit 1

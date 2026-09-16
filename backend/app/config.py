@@ -49,6 +49,11 @@ class Settings(BaseSettings):
         description="Nunca usar o valor por omissão fora de 'local'/'test'.",
     )
 
+    # Modo demonstração (D-051): só informativo para o frontend (banner
+    # "Dados sintéticos") e para o arranque demo (`app.cli.demo`). Nunca
+    # aceite em staging/produção — ver _enforce_hardening_in_non_local_envs.
+    demo_mode: bool = Field(default=False, alias="DEMO_MODE")
+
     # --- Base de dados ---
     # Produção/staging: PostgreSQL (fonte de verdade operacional única).
     # Local/test por omissão: SQLite em ficheiro, para arrancar sem serviços
@@ -173,6 +178,8 @@ class Settings(BaseSettings):
           de quem está a configurar isto, por isso falha já no arranque em
           vez de deixar a API silenciosamente inacessível a qualquer
           frontend (D-032);
+        - DEMO_MODE não pode estar ligado — a demonstração com dados
+          sintéticos só existe em 'local' (D-051);
         - se algum de ENTRA_ISSUER/ENTRA_JWKS_URL/ENTRA_AUDIENCE for
           definido explicitamente, os três têm de estar (um override
           parcial deixaria os campos não definidos a cair para o valor
@@ -202,6 +209,8 @@ class Settings(BaseSettings):
             problems.append("ENTRA_REQUIRED_SCOPE tem de estar preenchido")
         if not self.cors_allowed_origins.strip():
             problems.append("CORS_ALLOWED_ORIGINS tem de ter pelo menos uma origem")
+        if self.demo_mode:
+            problems.append("DEMO_MODE tem de ser 'false' (o modo demonstração só existe em local)")
 
         explicit_entra_overrides = {
             "ENTRA_ISSUER": self.entra_issuer.strip(),

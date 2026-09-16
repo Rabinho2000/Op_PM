@@ -9,4 +9,16 @@ export default defineConfig({
   server: {
     port: 5173,
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // MSAL e React em ficheiros próprios — melhor cache entre versões e
+        // nenhum chunk acima do limite de aviso do Vite.
+        manualChunks: {
+          msal: ["@azure/msal-browser"],
+          react: ["react", "react-dom", "react-router-dom"],
+        },
+      },
+    },
+  },
 });

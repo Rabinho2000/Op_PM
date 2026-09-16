@@ -1,65 +1,95 @@
 import { useEffect, useState } from "react";
-import { getHealth, getMe, HealthResponse, MeResponse } from "../api/client";
+import { getHealth, HealthResponse } from "../api/client";
+import { Badge, Card, ErrorState, LoadingState, PageHeader } from "../components/ui";
+import { useSession } from "../session/SessionContext";
 
-// Antiga página inicial da Fase 1 (estado do backend / utilizador de
-// desenvolvimento) — mantida em /status como diagnóstico técnico; a
-// página inicial "/" passou a ser o painel de operações real (ver
-// src/pages/Home.tsx, Fase 1.5 — MVP dashboard/workflow).
+// Diagnóstico técnico (antiga página inicial da Fase 1): estado do backend,
+// integrações e utilizador atual.
+const INTEGRATION_LABELS: Record<string, string> = {
+  graph_enabled: "Microsoft Graph (email/calendário)",
+  clickup_enabled: "ClickUp",
+  financial_enabled: "Financial",
+  claude_enabled: "Claude",
+};
+
 export default function SystemStatus() {
+  const { me } = useSession();
   const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [me, setMe] = useState<MeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    getHealth().then(setHealth).catch((e) => setError(String(e)));
-    getMe().then(setMe).catch((e) => setError(String(e)));
-  }, []);
+  function load() {
+    setError(null);
+    getHealth()
+      .then(setHealth)
+      .catch(() => setError("Não foi possível contactar o servidor."));
+  }
+
+  useEffect(load, []);
 
   return (
-    <div style={{ fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 720 }}>
-      <h1>Op_PM — Estado do sistema</h1>
-      <p style={{ color: "#666" }}>
-        Sem integrações reais ativas (ClickUp, Microsoft Graph, Financial, Claude) e sem dados
-        de produção. Autenticação real via Entra ID já implementada no backend, pendente de
-        configuração do tenant (ver docs/OPEN_QUESTIONS.md).
-      </p>
-
-      {error && <p style={{ color: "crimson" }}>Erro a contactar a API: {error}</p>}
-
-      <section style={{ marginTop: "1.5rem" }}>
-        <h2>Estado do backend</h2>
-        {health ? (
-          <ul>
-            <li>Estado: {health.status}</li>
-            <li>Ambiente: {health.app_env}</li>
-            <li>Base de dados: {health.database_dialect}</li>
-            <li>
-              Integrações ativas:{" "}
-              {Object.entries(health.integrations).filter(([, v]) => v).length === 0
-                ? "nenhuma (esperado nesta fase)"
-                : Object.entries(health.integrations)
-                    .filter(([, v]) => v)
-                    .map(([k]) => k)
-                    .join(", ")}
-            </li>
-          </ul>
-        ) : (
-          !error && <p>A contactar o backend…</p>
-        )}
-      </section>
-
-      <section style={{ marginTop: "1.5rem" }}>
-        <h2>Utilizador de desenvolvimento</h2>
-        {me ? (
-          <ul>
-            <li>Email: {me.email}</li>
-            <li>Papéis: {me.roles.join(", ") || "(nenhum)"}</li>
-            <li>Permissões: {me.permissions.join(", ") || "(nenhuma)"}</li>
-          </ul>
-        ) : (
-          !error && <p>A carregar…</p>
-        )}
-      </section>
-    </div>
+    <>
+      <PageHeader
+        title="Estado do sistema"
+        subtitle="Diagnóstico técnico: servidor, integrações e o seu utilizador. Sem dados de produção nem integrações reais ativas."
+      />
+      <div className="grid grid--2">
+        <Card title="Servidor" icon="activity">
+          {error && <ErrorState message={error} onRetry={load} />}
+          {!error && !health && <LoadingState />}
+          {health && (
+            <dl className="kv">
+              <dt>Estado</dt>
+              <dd>
+                <Badge tone={health.status === "ok" ? "success" : "danger"} dot>
+                  {health.status === "ok" ? "Operacional" : health.status}
+                </Badge>
+              </dd>
+              <dt>Ambiente</dt>
+              <dd>{health.app_env}</dd>
+              <dt>Base de dados</dt>
+              <dd>{health.database_dialect}</dd>
+              <dt>Modo demonstração</dt>
+              <dd>{health.demo_mode ? "Ativo (dados sintéticos)" : "Inativo"}</dd>
+            </dl>
+          )}
+        </Card>
+        <Card title="Integrações externas" icon="link" tone="neutral">
+          {health ? (
+            <ul className="list">
+              {Object.entries(health.integrations).map(([key, enabled]) => (
+                <li key={key} className="list__item" style={{ paddingLeft: 0, paddingRight: 0 }}>
+                  <span className="list__main">{INTEGRATION_LABELS[key] ?? key}</span>
+                  <Badge tone={enabled ? "success" : "neutral"}>{enabled ? "Ativa" : "Não ativada"}</Badge>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            !error && <LoadingState />
+          )}
+        </Card>
+        <Card title="O seu utilizador" icon="user">
+          {me && (
+            <dl className="kv">
+              <dt>Nome</dt>
+              <dd>{me.display_name ?? "—"}</dd>
+              <dt>Email</dt>
+              <dd>{me.email}</dd>
+              <dt>Papéis</dt>
+              <dd>{(me.role_labels ?? me.roles).join(", ") || "(nenhum)"}</dd>
+            </dl>
+          )}
+        </Card>
+        <Card title="Permissões efetivas" icon="lock" tone="neutral">
+          {me && (
+            <div className="badges">
+              {me.permissions.length === 0 && <span className="muted">(nenhuma)</span>}
+              {me.permissions.map((p) => (
+                <Badge key={p}>{p}</Badge>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+    </>
   );
 }

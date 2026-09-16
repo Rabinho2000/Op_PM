@@ -1649,3 +1649,87 @@ sintaticamente (`ci.yml` e `docker-compose.staging.example.yml`
 carregados com PyYAML sem erro); o novo job `docker-build` do CI corre
 isto a sério no GitHub Actions (que tem Docker disponível), a confirmar
 quando o CI remoto correr.
+
+## D-051 — MVP de demonstração: interface nova, arranque num comando, modo demo só em `local`
+
+**Pedido:** uma demonstração visualmente desenvolvida, em português de
+Portugal, que qualquer pessoa consiga levantar com um comando e dados
+sintéticos, sem Entra ID, alojamento, Graph, Claude, Financial nem dados
+reais. Guia operacional: `docs/MVP_DEMO.md`.
+
+**Decisões:**
+
+1. **Interface sem biblioteca de UI externa.** Design system próprio em
+   `frontend/src/styles/app.css` (tokens de cor com contraste AA, sidebar,
+   cartões, tabelas, badges, barras de progresso, alertas, estados de
+   carregamento/vazio/erro, modais, notificações) e ícones SVG inline
+   (`src/components/Icon.tsx`). Nenhuma dependência nova no
+   `package.json` — menos superfície de ataque, funciona offline, sem
+   fontes remotas. Responsivo: sidebar completa em desktop, compacta
+   (só ícones) em tablet, gaveta em ecrãs estreitos; ligação "saltar para
+   o conteúdo", foco visível, separadores com setas, modais com Escape e
+   foco contido.
+2. **Indicadores sempre da API.** O painel apresenta só o que
+   `GET /api/dashboard/summary` devolve. Dois campos aditivos no
+   servidor: `projects_photos_pending` (mesma regra de D-043, via
+   `compute_project_task_summary`) e `week_overview` (por dia da semana
+   em Europe/Lisbon: tarefas abertas com prazo, tarefas concluídas,
+   pessoas ausentes). "Ausentes hoje"/"próximas" na página de férias
+   também vêm do dashboard.
+3. **Permissões efetivas expostas por recurso, não deduzidas no
+   cliente.** `ProjectRead.editable_fields` (mesma regra de D-028/D-035:
+   todos os campos com `project.edit_all`, só a allowlist PM com
+   `project.edit_own_progress` no próprio projeto, nada caso contrário),
+   `ProjectRead.can_manage_tasks`, `TaskRead.can_edit` e
+   `AbsenceRead.can_cancel`. A UI só mostra o que estes campos permitem;
+   o servidor continua a validar cada escrita (nenhuma regra de
+   autorização mudou). `/me` ganha `display_name` e `role_labels`.
+4. **Filtros novos no servidor, não no cliente:** `GET /api/projects`
+   aceita `status` (derivado das tarefas, filtrado depois do cálculo —
+   nunca uma segunda regra), `start_from`, `start_to`;
+   `GET /api/tasks` aceita `priority`.
+5. **`DEMO_MODE` (omissão `false`)** — informativo (banner na UI,
+   `/health.demo_mode`), mas **bloqueia o arranque em staging/produção**
+   (`_enforce_hardening_in_non_local_envs`), tal como `AUTH_ENABLED=false`
+   ou SQLite. `/health` expõe também `dev_login_available`
+   (`APP_ENV` local/test e `AUTH_ENABLED=false`); o ecrã de login só
+   mostra os utilizadores de demonstração quando o build o permite
+   (`devLoginEnabled`) **e** o servidor o confirma — contra staging/
+   produção a secção nunca aparece, e uma sessão de demonstração antiga é
+   descartada.
+6. **Seed de demonstração separado do seed de desenvolvimento.**
+   `app/migration/seed_demo.py` só acrescenta (14 projetos, 2 técnicos
+   sem login, ausências, histórico), nunca altera os dados de
+   `seed_dev.py` de que os testes dependem, nunca cria `User` (continuam
+   5 — D-003), é idempotente (projeto marcador) e gera datas relativas a
+   hoje. `app/cli/demo.py` (`setup` = `alembic upgrade head` + seeds;
+   `reset --yes` = `downgrade base` + `upgrade head` + seeds) recusa
+   qualquer `APP_ENV` que não seja `local` — mais restrito do que o seed
+   de desenvolvimento (que também aceita `test`), antes de tocar na base
+   de dados. Nunca imprime a password do `DATABASE_URL`.
+7. **Docker da demo sem tocar nas imagens de staging.**
+   `docker-compose.demo.yml` reutiliza `backend/Dockerfile` (migrações e
+   seed num serviço `demo-setup` explícito que termina antes de o
+   `backend` arrancar — mesmo princípio de D-050: migrações nunca no
+   arranque da app) e usa um `frontend/Dockerfile.demo` próprio
+   (`VITE_ENABLE_DEV_LOGIN=true`, API na mesma origem via
+   `docker/nginx.demo.conf`). `frontend/Dockerfile` continua a fixar
+   `VITE_ENABLE_DEV_LOGIN=false`. SQLite num volume próprio — PostgreSQL
+   não é necessário para a demonstração. Portas publicadas só em
+   `127.0.0.1`. Alternativa sem Docker: `scripts/demo_local.py`
+   (Windows/Linux/macOS).
+8. **CI:** `docker-build` constrói também `Dockerfile.demo`; job novo
+   `demo-smoke` arranca a composição e verifica frontend, `/health`,
+   painel com dados sintéticos, 401 sem sessão e idempotência do seed ao
+   recriar os containers.
+
+**Validado nesta máquina:** backend 291 passed + 2 skipped (SQLite, 25
+testes novos em `tests/test_demo_mvp.py`); frontend `npm run lint`,
+`npm test` (53 testes, 35 novos) e `npm run build`; migrações
+round-trip (`upgrade head` → `downgrade base` → `upgrade head`) e
+`alembic check` sem diferenças; `app.cli.demo setup/reset`; aplicação
+percorrida no browser como Chefe, PM e Comercial (desktop e tablet);
+build "mesma origem" do `Dockerfile.demo` servido por um proxy local
+equivalente ao nginx. **Não validado localmente (sem Docker nesta
+máquina):** `docker build`/`docker compose` — ficam a cargo dos jobs
+`docker-build` e `demo-smoke` do CI.

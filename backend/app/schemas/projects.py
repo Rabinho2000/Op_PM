@@ -58,6 +58,12 @@ class ProjectRead(BaseModel):
     workflow_progress_percent: int = 0
     photos_pending_warning: bool = False
 
+    # Permissões efetivas do utilizador atual sobre ESTE projeto (D-051) —
+    # só para a UI decidir o que mostrar; o servidor continua a validar
+    # cada escrita (app/services/projects.py, app/services/tasks.py).
+    editable_fields: list[str] = []
+    can_manage_tasks: bool = False
+
 
 class ProjectUpdate(BaseModel):
     """Todos os campos opcionais — só os presentes no pedido são

@@ -17,14 +17,14 @@ from app.models.project import Project
 from app.models.task import Task, TaskHistory
 from app.schemas.tasks import TaskCreate, TaskHistoryRead, TaskRead, TaskUpdate
 from app.security.current_user import get_auth_context
-from app.security.permissions import AuthContext, PermissionDenied
+from app.security.permissions import AuthContext, PermissionDenied, can_edit_task
 from app.services.tasks import InvalidTaskAssignment, InvalidTaskTransition, create_task, get_visible_task, list_tasks
 from app.services.tasks import update_task as update_task_service
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 
-def _to_read(db: Session, task: Task) -> TaskRead:
+def _to_read(db: Session, task: Task, ctx: AuthContext) -> TaskRead:
     data = TaskRead.model_validate(task)
     project = task.project or db.get(Project, task.project_id)
     data.project_name = project.name if project else None
@@ -32,6 +32,7 @@ def _to_read(db: Session, task: Task) -> TaskRead:
         assignee = task.assigned_to or db.get(Person, task.assigned_to_person_id)
         data.assigned_to_display_name = assignee.display_name if assignee else None
     data.is_overdue = task.is_overdue
+    data.can_edit = can_edit_task(ctx, task)
     return data
 
 
@@ -43,6 +44,7 @@ def list_tasks_endpoint(
     overdue_only: bool = False,
     due_before: dt.date | None = Query(default=None),
     due_after: dt.date | None = Query(default=None),
+    priority: str | None = Query(default=None, description="low | medium | high | urgent"),
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[TaskRead]:
@@ -55,8 +57,9 @@ def list_tasks_endpoint(
         overdue_only=overdue_only,
         due_before=due_before,
         due_after=due_after,
+        priority=priority,
     )
-    return [_to_read(db, t) for t in tasks]
+    return [_to_read(db, t, ctx) for t in tasks]
 
 
 @router.get("/{task_id}", response_model=TaskRead)
@@ -68,7 +71,7 @@ def get_task_endpoint(
     task = get_visible_task(db, ctx, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada ou sem permissão para a ver.")
-    return _to_read(db, task)
+    return _to_read(db, task, ctx)
 
 
 @router.post("", response_model=TaskRead, status_code=201)
@@ -85,7 +88,7 @@ def create_task_endpoint(
         raise HTTPException(status_code=400, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return _to_read(db, task)
+    return _to_read(db, task, ctx)
 
 
 @router.patch("/{task_id}", response_model=TaskRead)
@@ -108,7 +111,7 @@ def update_task_endpoint(
         raise HTTPException(status_code=400, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return _to_read(db, updated)
+    return _to_read(db, updated, ctx)
 
 
 @router.get("/{task_id}/history", response_model=list[TaskHistoryRead])

@@ -17,6 +17,12 @@ def health(db: Session = Depends(get_db), settings: Settings = Depends(get_setti
         "status": "ok",
         "app_env": settings.app_env,
         "database_dialect": db.bind.dialect.name if db.bind else "unknown",
+        # Informativo para o frontend (D-051): o banner "modo demonstração"
+        # e o login de desenvolvimento só fazem sentido quando o próprio
+        # backend os aceita — a barreira real continua em
+        # app/config.py e app/security/current_user.py.
+        "demo_mode": settings.demo_mode and settings.app_env == "local",
+        "dev_login_available": settings.app_env in ("local", "test") and not settings.auth_enabled,
         "integrations": {
             "graph_enabled": settings.graph_enabled,
             "clickup_enabled": settings.clickup_enabled,
