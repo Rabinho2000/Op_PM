@@ -1,48 +1,52 @@
-/* Op_PM — design system da interface (D-051).
-   Sem dependências externas (sem fontes remotas nem bibliotecas de UI):
-   a demonstração funciona offline. Cores definidas como tokens; os pares
-   texto/fundo cumprem contraste WCAG AA (>= 4.5:1). */
+/* Op_PM — design system da interface (D-051), com a identidade Solcor da
+   plataforma original (solcor-gestao.html): verde Solcor, ardósia escura,
+   Archivo nos títulos e Manrope no texto. As fontes são servidas pelo
+   próprio build (@fontsource) — a demonstração continua a funcionar
+   offline. Cores definidas como tokens; os pares texto/fundo cumprem
+   contraste WCAG AA (>= 4.5:1). */
 
 :root {
-  --font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font: "Manrope", -apple-system, "Segoe UI", system-ui, Arial, sans-serif;
+  --font-display: "Archivo", "Manrope", "Segoe UI", system-ui, sans-serif;
 
-  --bg: #f4f6f9;
+  --bg: #eaeeec;
   --surface: #ffffff;
-  --surface-2: #f8fafc;
-  --border: #e2e7ee;
-  --border-strong: #cbd3de;
-  --text: #16202c;
-  --text-muted: #556274;
-  --text-subtle: #6b7686;
+  --surface-2: #f6f8f7;
+  --border: #e2e7e5;
+  --border-strong: #c9d3cf;
+  --text: #0e1d26;
+  --text-muted: #38474f;
+  --text-subtle: #5b6a71;
 
-  --brand: #0b5c8c;
-  --brand-strong: #084870;
-  --brand-soft: #e3f0f8;
-  --accent: #f0a01f;
-  --accent-soft: #fff4dc;
+  --brand: #1e7a4b;
+  --brand-strong: #125c37;
+  --brand-soft: #e6f2eb;
+  --accent: #b87200;
+  --accent-soft: #fbf1dc;
 
-  --sidebar-bg: #0e2233;
-  --sidebar-text: #c9d6e2;
+  --sidebar-bg: #0e1a22;
+  --sidebar-bg-2: #16242d;
+  --sidebar-text: #9fb2b8;
   --sidebar-active: #ffffff;
-  --sidebar-active-bg: rgba(255, 255, 255, 0.1);
+  --sidebar-active-bg: rgba(46, 148, 99, 0.22);
 
-  --success: #17784f;
-  --success-soft: #e2f4eb;
-  --warning: #8a5300;
-  --warning-soft: #fff1d6;
-  --danger: #b42318;
-  --danger-soft: #fdeceb;
-  --info: #1d5fa8;
-  --info-soft: #e5eefb;
-  --violet: #5b3fa6;
-  --violet-soft: #eeeafa;
-  --neutral-soft: #edf0f4;
+  --success: #1e7a4b;
+  --success-soft: #e6f2eb;
+  --warning: #8a5500;
+  --warning-soft: #fbf1dc;
+  --danger: #b3352f;
+  --danger-soft: #fcedec;
+  --info: #1e4b7a;
+  --info-soft: #e6eef7;
+  --violet: #7c58b8;
+  --violet-soft: #efe9f8;
+  --neutral-soft: #edf0ef;
 
   --radius: 12px;
   --radius-sm: 8px;
-  --shadow: 0 1px 2px rgba(16, 32, 48, 0.06), 0 1px 3px rgba(16, 32, 48, 0.08);
-  --shadow-lg: 0 12px 32px rgba(16, 32, 48, 0.18);
-  --focus: 0 0 0 3px rgba(11, 92, 140, 0.35);
+  --shadow: 0 1px 2px rgba(14, 29, 38, 0.06), 0 8px 24px rgba(14, 29, 38, 0.05);
+  --shadow-lg: 0 12px 32px rgba(14, 29, 38, 0.18);
+  --focus: 0 0 0 3px rgba(30, 122, 75, 0.35);
 
   --sidebar-w: 248px;
   --header-h: 64px;
@@ -70,7 +74,10 @@ body {
 
 h1,
 h2,
-h3 {
+h3,
+h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
   line-height: 1.25;
   margin: 0;
 }
@@ -157,8 +164,8 @@ a:hover {
   width: 34px;
   height: 34px;
   border-radius: 9px;
-  background: linear-gradient(135deg, var(--accent), #e46b1f);
-  color: #1b1300;
+  background: var(--brand);
+  color: #fff;
   flex-shrink: 0;
 }
 
@@ -188,7 +195,7 @@ a:hover {
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #8fa3b6;
+  color: #9fb2b8;
   padding: 14px 12px 6px;
 }
 
@@ -211,17 +218,17 @@ a:hover {
 .nav-link.active {
   color: var(--sidebar-active);
   background: var(--sidebar-active-bg);
-  box-shadow: inset 3px 0 0 var(--accent);
+  box-shadow: inset 3px 0 0 #2e9463;
 }
 
 .nav-link:focus-visible {
-  box-shadow: 0 0 0 3px rgba(240, 160, 31, 0.6);
+  box-shadow: 0 0 0 3px rgba(46, 148, 99, 0.6);
 }
 
 .sidebar__footer {
   padding: 14px 20px;
   font-size: 0.75rem;
-  color: #8fa3b6;
+  color: #9fb2b8;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
@@ -344,6 +351,17 @@ a:hover {
     padding: 0;
   }
 
+  /* Só o símbolo (lado esquerdo do logótipo) cabe na barra compacta. */
+  .sidebar .solcor-logo {
+    width: 30px;
+    object-fit: cover;
+    object-position: left center;
+  }
+
+  .sidebar .solcor-logo__word {
+    display: none;
+  }
+
   .nav-link {
     justify-content: center;
     padding: 12px;
@@ -377,6 +395,15 @@ a:hover {
     padding: 0 20px;
   }
 
+  .sidebar .solcor-logo {
+    width: auto;
+    object-fit: contain;
+  }
+
+  .sidebar .solcor-logo__word {
+    display: revert;
+  }
+
   .nav-link {
     justify-content: flex-start;
     padding: 10px 12px;
@@ -394,7 +421,7 @@ a:hover {
     display: block;
     position: fixed;
     inset: 0;
-    background: rgba(10, 20, 30, 0.45);
+    background: rgba(10, 17, 20, 0.45);
     z-index: 35;
   }
 
@@ -792,7 +819,7 @@ a:hover {
 a.stat:hover {
   transform: translateY(-1px);
   border-color: var(--border-strong);
-  box-shadow: 0 6px 16px rgba(16, 32, 48, 0.1);
+  box-shadow: 0 6px 16px rgba(14, 29, 38, 0.1);
   color: inherit;
 }
 
@@ -970,14 +997,14 @@ a.stat:hover {
 
 .alert--info {
   background: var(--info-soft);
-  border-color: #bfd3ee;
-  color: #173f6e;
+  border-color: #bfd0e4;
+  color: #173b61;
 }
 
 .alert--success {
   background: var(--success-soft);
-  border-color: #b5dfc9;
-  color: #0f4f34;
+  border-color: #b7dbc6;
+  color: #125c37;
 }
 
 /* ---------- Listas ---------- */
@@ -1158,7 +1185,7 @@ a.cell-title:hover {
 
 .skeleton {
   border-radius: 8px;
-  background: linear-gradient(90deg, #e9edf2 25%, #f4f6f9 37%, #e9edf2 63%);
+  background: linear-gradient(90deg, #e2e7e5 25%, #f1f4f2 37%, #e2e7e5 63%);
   background-size: 400% 100%;
   animation: shimmer 1.3s ease infinite;
 }
@@ -1258,7 +1285,7 @@ a.cell-title:hover {
 }
 
 .kanban__col {
-  background: #eaeef3;
+  background: #e2e7e5;
   border-radius: var(--radius);
   padding: 10px;
   min-height: 160px;
@@ -1465,7 +1492,7 @@ a.cell-title:hover {
 }
 
 .calendar__cell--weekend {
-  background: #fafbfd;
+  background: #f6f8f7;
 }
 
 .calendar__num {
@@ -1639,7 +1666,7 @@ a.cell-title:hover {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(10, 20, 30, 0.5);
+  background: rgba(10, 17, 20, 0.5);
   display: grid;
   place-items: center;
   padding: 16px;
@@ -1700,7 +1727,7 @@ a.cell-title:hover {
   align-items: flex-start;
   padding: 12px 14px;
   border-radius: 10px;
-  background: #13293b;
+  background: var(--sidebar-bg-2);
   color: #fff;
   box-shadow: var(--shadow-lg);
   font-size: 0.9rem;
@@ -1708,7 +1735,7 @@ a.cell-title:hover {
 }
 
 .toast--success svg {
-  color: #6fe0a8;
+  color: #7fddaa;
 }
 
 .toast--error svg {
@@ -1735,8 +1762,8 @@ a.cell-title:hover {
 }
 
 .login__brand {
-  background: radial-gradient(circle at 20% 20%, #1a4a6e 0%, var(--sidebar-bg) 60%);
-  color: #e6eef5;
+  background: radial-gradient(circle at 20% 20%, #1c4a33 0%, var(--sidebar-bg) 62%);
+  color: #edf3f1;
   padding: 48px;
   display: flex;
   flex-direction: column;
@@ -1751,7 +1778,7 @@ a.cell-title:hover {
 }
 
 .login__brand p {
-  color: #b8c9d8;
+  color: #b8c4c2;
   max-width: 440px;
 }
 
@@ -1767,11 +1794,11 @@ a.cell-title:hover {
   display: flex;
   gap: 10px;
   align-items: center;
-  color: #d6e2ec;
+  color: #d3dedb;
 }
 
 .login__features svg {
-  color: var(--accent);
+  color: #7fddaa;
 }
 
 .login__panel {
@@ -1866,4 +1893,44 @@ a.cell-title:hover {
   .login__features {
     display: none;
   }
+}
+
+/* Identidade Solcor ------------------------------------------------------ */
+
+.solcor-logo {
+  display: block;
+  width: auto;
+  max-width: 150px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.solcor-logo--fallback {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: none;
+  color: #fff;
+}
+
+.solcor-logo__word {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
+}
+
+.sidebar__brand .brand-text {
+  padding-left: 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+  white-space: nowrap;
+}
+
+.brand-name,
+.stat__value {
+  font-family: var(--font-display);
+}
+
+.login__brand .solcor-logo {
+  max-width: 220px;
 }

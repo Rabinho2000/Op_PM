@@ -4,6 +4,7 @@ import { getHealth, HealthResponse, setDevUser } from "../api/client";
 import { devLoginEnabled, isEntraConfigured, loginWithMicrosoft } from "../auth/msal";
 import Icon from "../components/Icon";
 import { Alert, Avatar } from "../components/ui";
+import { SolcorLogo } from "../components/SolcorLogo";
 
 // Fase 1 (D-031): login real via Microsoft Entra ID com MSAL —
 // Authorization Code + PKCE, access token dedicado à API (nunca o ID
@@ -61,7 +62,7 @@ export default function Login() {
   const demoUnavailable = searchParams.get("demoUnavailable") === "1";
 
   useEffect(() => {
-    document.title = "Entrar · Op_PM";
+    document.title = "Entrar · Solcor Operações";
     if (!devLoginEnabled) return;
     getHealth()
       .then(setHealth)
@@ -98,10 +99,8 @@ export default function Login() {
     <div className="login">
       <section className="login__brand" aria-label="Apresentação">
         <div>
-          <span className="brand-mark" style={{ width: 48, height: 48, borderRadius: 12 }}>
-            <Icon name="sun" size={28} />
-          </span>
-          <h1>Op_PM</h1>
+          <SolcorLogo height={40} />
+          <h1>Gestão de Operações</h1>
           <p>
             Plataforma de gestão de operações: projetos, tarefas, visitas técnicas, comissionamentos e a disponibilidade da
             equipa — num só lugar.

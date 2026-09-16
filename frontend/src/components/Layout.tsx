@@ -2,6 +2,7 @@
 // o utilizador atual, banner do modo demonstração e área de conteúdo.
 import { ReactNode, useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { SolcorLogo } from "./SolcorLogo";
 import { getDevUser, getSessionDisplayName, logoutCurrentSession } from "../api/client";
 import { useSession } from "../session/SessionContext";
 import Icon, { IconName } from "./Icon";
@@ -39,7 +40,7 @@ const PAGE_TITLES: [string, string][] = [
 
 function pageTitle(pathname: string): string {
   if (pathname === "/") return "Painel de operações";
-  return PAGE_TITLES.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? "Op_PM";
+  return PAGE_TITLES.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? "Solcor Operações";
 }
 
 export default function Layout({ children }: { children: ReactNode }) {
@@ -52,7 +53,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   useEffect(() => setMenuOpen(false), [location.pathname]);
 
   useEffect(() => {
-    document.title = `${pageTitle(location.pathname)} · Op_PM`;
+    document.title = `${pageTitle(location.pathname)} · Solcor Operações`;
   }, [location.pathname]);
 
   const displayName = me?.display_name ?? getSessionDisplayName() ?? "Utilizador";
@@ -87,12 +88,10 @@ export default function Layout({ children }: { children: ReactNode }) {
 
       <aside className={`sidebar ${menuOpen ? "open" : ""}`} id="menu-principal">
         <NavLink to="/" className="sidebar__brand" aria-label="Op_PM — página inicial">
-          <span className="brand-mark">
-            <Icon name="sun" size={20} />
-          </span>
+          <SolcorLogo height={24} />
           <span className="brand-text">
-            <span className="brand-name">Op_PM</span>
-            <span className="brand-sub">Gestão de operações</span>
+            <span className="brand-name">Operações</span>
+            <span className="brand-sub">Gestão de obra</span>
           </span>
         </NavLink>
         <nav className="sidebar__nav" aria-label="Navegação principal">
