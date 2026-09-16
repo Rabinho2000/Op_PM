@@ -7,6 +7,34 @@ emails, tokens, `.env`, `.secrets`, backups ou exports de produção — ver `.g
 e `docs/DECISIONS.md`. Todos os dados de exemplo neste repositório (fixtures, seed de
 desenvolvimento) são sintéticos.
 
+## Demonstração rápida (dados sintéticos)
+
+Para ver a aplicação a funcionar em poucos minutos, sem Entra ID,
+PostgreSQL nem credenciais:
+
+```bash
+docker compose -f docker-compose.demo.yml up --build
+```
+
+Abrir **http://localhost:8080** e escolher um utilizador de demonstração
+(ex.: Chefe de Operações). Sem Docker: `python scripts/demo_local.py` e
+abrir **http://localhost:5173**. Guia completo — pré-requisitos,
+utilizadores e papéis, guião de demonstração, reposição de dados,
+testes, diferenças entre demo/staging/produção e limitações:
+[`docs/MVP_DEMO.md`](docs/MVP_DEMO.md).
+
+| Utilizador de demonstração | Papel |
+|---|---|
+| `chefe.sintetico@example.invalid` | Chefe de Operações (vê e gere toda a operação) |
+| `pm.um.sintetico@example.invalid` | Project Manager (só os seus projetos) |
+| `admin.sintetico@example.invalid` | Administrador (todas as permissões) |
+| `comercial.sintetico@example.invalid` | Comercial (consulta) |
+| `financeiro.sintetico@example.invalid` | Financeiro (consulta) |
+
+O modo demonstração só funciona com `APP_ENV=local`: em staging/produção
+a aplicação recusa-se a arrancar com `DEMO_MODE=true`, o seed sintético é
+recusado e o login de desenvolvimento nunca é aceite (D-051).
+
 ## Estado atual
 
 **Fase 0 concluída** (fundação técnica + revisão de hardening), **Fase 1
@@ -25,8 +53,8 @@ trabalhos urgentes), entidade `Task` genérica (checklist padrão de 5 tarefas p
 projeto + tarefas ad-hoc, máquina de estados, histórico), férias/ausências
 (`Absence`), e o aviso persistente de fotos por colocar na Drive quando visita
 técnica/comissionamento é concluído — ver `docs/DECISIONS.md` D-039 a D-047.
-224 testes automatizados de backend a passar (+2 skipped) em SQLite (e em
-PostgreSQL, ver abaixo) + 18 testes Vitest no frontend. Sem integrações
+291 testes automatizados de backend a passar (+2 skipped) em SQLite (e em
+PostgreSQL, ver abaixo) + 53 testes Vitest no frontend (após D-051). Sem integrações
 externas reais ligadas (Claude, Microsoft
 Graph, ClickUp, Financial); sem migração de dados reais (os 295 projetos reais
 continuam por migrar); sem envio de email ou criação de eventos reais; sem
@@ -68,8 +96,18 @@ arranque da app — não decidem nem criam nenhum alojamento/recurso cloud.
 Continua pendente: tenant Entra ID real, domínio e alojamento de staging
 (ver `docs/STAGING_RUNBOOK.md` secção 16 para a lista objetiva).
 
+**MVP de demonstração (D-051):** interface nova (sidebar, painel com
+resumo visual da semana e aviso de fotografias, projetos com filtros por
+estado/PM/datas, tarefas em lista e Kanban, calendário de férias e
+aniversários), sempre alimentada pela API e limitada pelas permissões do
+servidor (`editable_fields`, `can_manage_tasks`, `can_edit`,
+`can_cancel`); arranque num comando com `docker-compose.demo.yml` ou
+`scripts/demo_local.py`; seed de demonstração só em `APP_ENV=local`
+(`python -m app.cli.demo setup|reset`). Ver [`docs/MVP_DEMO.md`](docs/MVP_DEMO.md).
+
 Documentação:
 
+- [`docs/MVP_DEMO.md`](docs/MVP_DEMO.md) — **como levantar e apresentar a demonstração** (Docker ou manual, utilizadores sintéticos, limitações).
 - [`docs/PRODUCT_SCOPE.md`](docs/PRODUCT_SCOPE.md) — escopo inicial do produto.
 - [`docs/ARCHITECTURE_PROPOSAL.md`](docs/ARCHITECTURE_PROPOSAL.md) — arquitetura, modelo de dados, integrações.
 - [`docs/PLAN.md`](docs/PLAN.md) — roadmap por fases, plano de migração, testes, segurança.
@@ -85,7 +123,8 @@ Documentação:
 
 ```text
 backend/    API (FastAPI + SQLAlchemy + Alembic), adapters de integração, migração/staging
-frontend/   Casca web mínima (React + Vite + TypeScript)
+frontend/   Aplicação web (React + Vite + TypeScript, sem biblioteca de UI externa)
+scripts/    demo_local.py — arranque da demonstração sem Docker
 docs/       Documentação de arquitetura e planeamento
 .github/    CI
 ```
@@ -114,6 +153,11 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 Com o servidor a correr: `http://localhost:8000/docs` (Swagger), `http://localhost:8000/health`.
+
+Para a demonstração com mais dados sintéticos (só `APP_ENV=local`):
+`python -m app.cli.demo setup` (migrações + seed, idempotente) ou
+`python -m app.cli.demo reset --yes` (apaga e volta a criar) — ver
+`docs/MVP_DEMO.md`.
 
 Endpoints principais da Fase 1.5 (ver `docs/PLAN.md`):
 `GET /api/dashboard/summary` (indicadores do painel inicial, já filtrados pela
@@ -165,14 +209,17 @@ Com o backend também a correr (`uvicorn` — ver acima), abrir
 o mecanismo de desenvolvimento (`X-Dev-User-Email`, só em `vite dev`/testes por
 omissão) — depois:
 
-- **Painel** (`/`, página inicial): indicadores reais do dashboard, ver acima.
-- **Projetos** (`/projects`, `/projects/:id`): lista com estado/próxima tarefa/prazo/
-  tarefas atrasadas/indicadores de dados em falta; detalhe com dados principais,
-  progresso do workflow, aviso de fotos pendentes, tarefas do projeto, edição
-  autorizada por campo, e histórico.
-- **Tarefas** (`/tasks`): todas as tarefas visíveis ao utilizador, filtráveis por
-  estado/responsável/atrasadas, com criação e transição de estado.
-- **Férias** (`/vacations`): registo e consulta de férias/ausências.
+- **Painel** (`/`, página inicial): indicadores reais do dashboard, aviso de
+  fotografias pendentes e resumo visual da semana (tudo calculado no servidor).
+- **Projetos** (`/projects`, `/projects/:id`): pesquisa e filtros por estado/PM/
+  datas/situação; estado, progresso, próxima tarefa, prazo, tarefas atrasadas,
+  avisos de dados em falta e de fotos; detalhe em separadores (resumo, tarefas,
+  histórico, cliente) com edição limitada aos campos que o servidor permite.
+- **Tarefas** (`/tasks`): vista de lista e Kanban, filtros por projeto/
+  responsável/prioridade/atraso/estado, criação e transição de estado com
+  confirmação visual.
+- **Férias e aniversários** (`/vacations`): calendário mensal, ausentes hoje,
+  próximas ausências, aniversários, registo e cancelamento conforme permissões.
 - **Reconciliação de PM** (`/reconciliation`): fila de reconciliação da migração.
 - **Estado do sistema** (`/status`): diagnóstico técnico (saúde do backend,
   integrações ativas, utilizador atual) — antiga página inicial da Fase 1.
