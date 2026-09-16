@@ -212,7 +212,7 @@ DEMO_PROJECTS: list[ProjectSpec] = [
             TASK_TYPE_VISITA_TECNICA: _done(25, assignee=TEC_BRUNO),
             TASK_TYPE_PREPARACAO_INSTALACAO: TaskSpec(STATUS_IN_PROGRESS, due_in_days=3, assignee=CHEFE),
             TASK_TYPE_INSTALACAO: TaskSpec(STATUS_BLOCKED, due_in_days=14, notes="Bloqueado: aguarda licença sintética."),
-            TASK_TYPE_FOTOS_DRIVE: TaskSpec(due_in_days=4, assignee=TEC_BRUNO),
+            TASK_TYPE_FOTOS_DRIVE: _done(22, assignee=TEC_BRUNO, notes="Fotografias da visita técnica já na Drive."),
         },
     ),
     ProjectSpec(
@@ -263,6 +263,7 @@ DEMO_PROJECTS: list[ProjectSpec] = [
             TASK_TYPE_PREPARACAO_INSTALACAO: TaskSpec(
                 STATUS_BLOCKED, due_in_days=-8, assignee=CHEFE, notes="Material em atraso no fornecedor sintético."
             ),
+            TASK_TYPE_FOTOS_DRIVE: _done(38, notes="Fotografias da visita técnica já na Drive."),
         },
     ),
     ProjectSpec(
