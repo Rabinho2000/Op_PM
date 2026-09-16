@@ -9,7 +9,9 @@
 // ClickUp, Financial, Entra) é colocada aqui: essas só existem no backend.
 import { SessionExpiredError, devLoginEnabled, getActiveMsalAccount, getApiAccessToken, logoutFromMicrosoft } from "../auth/msal";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+// "/" (ou vazio) = mesma origem do frontend — usado pela demonstração em
+// Docker, onde o nginx encaminha /api, /me e /health para o backend.
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/+$/, "");
 const DEV_USER_STORAGE_KEY = "op_pm_dev_user_email";
 
 // Hardening (fecho da Fase 1): `devLoginEnabled` já desliga a SECÇÃO da UI
@@ -161,13 +163,17 @@ export interface HealthResponse {
   app_env: string;
   database_dialect: string;
   integrations: Record<string, boolean>;
+  demo_mode?: boolean;
+  dev_login_available?: boolean;
 }
 
 export interface MeResponse {
   user_id: string;
   email: string;
   person_id: string;
+  display_name?: string;
   roles: string[];
+  role_labels?: string[];
   permissions: string[];
 }
 
@@ -227,7 +233,13 @@ export interface Project {
   overdue_tasks_count: number;
   workflow_progress_percent: number;
   photos_pending_warning: boolean;
+
+  // Permissões efetivas do utilizador atual sobre este projeto (servidor).
+  editable_fields: string[];
+  can_manage_tasks: boolean;
 }
+
+export type ProjectStatus = Project["status"];
 
 export const PROJECT_STATUS_LABELS: Record<Project["status"], string> = {
   nao_iniciado: "Não iniciado",
@@ -253,6 +265,9 @@ export interface ProjectFilters {
   pm_person_id?: string;
   is_active?: boolean;
   q?: string;
+  status?: ProjectStatus;
+  start_from?: string;
+  start_to?: string;
 }
 
 export function listProjects(filters: ProjectFilters = {}): Promise<Project[]> {
@@ -260,6 +275,9 @@ export function listProjects(filters: ProjectFilters = {}): Promise<Project[]> {
   if (filters.pm_person_id) params.set("pm_person_id", filters.pm_person_id);
   if (filters.is_active !== undefined) params.set("is_active", String(filters.is_active));
   if (filters.q) params.set("q", filters.q);
+  if (filters.status) params.set("status", filters.status);
+  if (filters.start_from) params.set("start_from", filters.start_from);
+  if (filters.start_to) params.set("start_to", filters.start_to);
   const qs = params.toString();
   return apiGet<Project[]>(`/api/projects${qs ? `?${qs}` : ""}`);
 }
@@ -414,6 +432,7 @@ export interface Task {
   project_name: string | null;
   assigned_to_display_name: string | null;
   is_overdue: boolean;
+  can_edit: boolean;
 }
 
 export interface TaskHistoryEntry {
@@ -436,6 +455,7 @@ export interface TaskFilters {
   overdue_only?: boolean;
   due_before?: string;
   due_after?: string;
+  priority?: TaskPriority;
 }
 
 export function listTasks(filters: TaskFilters = {}): Promise<Task[]> {
@@ -446,6 +466,7 @@ export function listTasks(filters: TaskFilters = {}): Promise<Task[]> {
   if (filters.overdue_only) params.set("overdue_only", "true");
   if (filters.due_before) params.set("due_before", filters.due_before);
   if (filters.due_after) params.set("due_after", filters.due_after);
+  if (filters.priority) params.set("priority", filters.priority);
   const qs = params.toString();
   return apiGet<Task[]>(`/api/tasks${qs ? `?${qs}` : ""}`);
 }
@@ -501,6 +522,7 @@ export interface Absence {
   created_at: string;
   updated_at: string;
   person_display_name: string | null;
+  can_cancel: boolean;
 }
 
 export function listAbsences(filters: { person_id?: string; status?: string } = {}): Promise<Absence[]> {
@@ -559,6 +581,13 @@ export interface BirthdayMini {
   days_until: number;
 }
 
+export interface WeekDaySummary {
+  date: string;
+  tasks_due_count: number;
+  tasks_completed_count: number;
+  people_absent_count: number;
+}
+
 export interface DashboardSummary {
   generated_at: string;
   scope: "all" | "own" | "none";
@@ -576,6 +605,8 @@ export interface DashboardSummary {
   upcoming_absences: AbsenceMini[];
   upcoming_birthdays: BirthdayMini[];
   urgent_tasks: TaskMini[];
+  projects_photos_pending: ProjectMini[];
+  week_overview: WeekDaySummary[];
 }
 
 export const getDashboardSummary = () => apiGet<DashboardSummary>("/api/dashboard/summary");
