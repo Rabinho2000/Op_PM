@@ -129,8 +129,16 @@ def compute_goal_progress(db: Session, goal: GoalPeriod, *, today: dt.date | Non
 
     total_days = (end - start).days + 1
     elapsed_days = max(0, min((today - start).days + 1, total_days))
-    expected_pace = (target * Decimal(elapsed_days) / Decimal(total_days)) if total_days > 0 else ZERO
-    projection = (realized / Decimal(elapsed_days) * Decimal(total_days)) if elapsed_days > 0 else ZERO
+    # Quantizado a 3 casas decimais (mesma escala de GOAL_VALUE) — divisões
+    # de Decimal sem isto produzem dízimas com dezenas de casas, inúteis
+    # para apresentação.
+    quantum = Decimal("0.001")
+    expected_pace = (
+        (target * Decimal(elapsed_days) / Decimal(total_days)).quantize(quantum) if total_days > 0 else ZERO
+    )
+    projection = (
+        (realized / Decimal(elapsed_days) * Decimal(total_days)).quantize(quantum) if elapsed_days > 0 else ZERO
+    )
 
     if target <= ZERO:
         pace_status = "no_target"

@@ -610,3 +610,198 @@ export interface DashboardSummary {
 }
 
 export const getDashboardSummary = () => apiGet<DashboardSummary>("/api/dashboard/summary");
+
+// --- Inventário (MVP de Operações) ---
+
+export interface InventoryItem {
+  id: string;
+  sku: string;
+  name: string;
+  unit: string;
+  min_stock: string;
+  preferred_supplier_id: string | null;
+  lead_time_days: number | null;
+  is_active: boolean;
+  physical_stock: string;
+  available_stock: string;
+  total_reserved: string;
+  below_min_stock: boolean;
+}
+
+export const listInventoryItems = () => apiGet<InventoryItem[]>("/api/inventory/items");
+
+export interface InventoryMovement {
+  id: string;
+  item_id: string;
+  movement_type: string;
+  quantity: string;
+  project_id: string | null;
+  location_id: string | null;
+  destination_location_id: string | null;
+  unit_cost: string | null;
+  reference: string;
+  idempotency_key: string | null;
+  created_by_person_id: string | null;
+  created_at: string;
+  item_name: string | null;
+  project_name: string | null;
+}
+
+export function listInventoryMovements(
+  filters: { item_id?: string; project_id?: string; movement_type?: string } = {},
+): Promise<InventoryMovement[]> {
+  const params = new URLSearchParams();
+  if (filters.item_id) params.set("item_id", filters.item_id);
+  if (filters.project_id) params.set("project_id", filters.project_id);
+  if (filters.movement_type) params.set("movement_type", filters.movement_type);
+  const qs = params.toString();
+  return apiGet<InventoryMovement[]>(`/api/inventory/movements${qs ? `?${qs}` : ""}`);
+}
+
+export const createCentralMovement = (payload: {
+  item_id: string;
+  movement_type: "entrada" | "ajuste";
+  quantity: string;
+  reference?: string;
+  unit_cost?: string;
+}) => apiPost<InventoryMovement>("/api/inventory/movements", payload);
+
+export interface ProjectMaterialRequirement {
+  id: string;
+  project_id: string;
+  item_id: string;
+  quantity_required: string;
+  notes: string;
+  source: string;
+  created_at: string;
+  item_name: string | null;
+  item_unit: string | null;
+  reserved: string;
+  consumed: string;
+  missing: string;
+  available_stock_sufficient: boolean;
+}
+
+export interface ProjectInventorySummary {
+  project_id: string;
+  requirements: ProjectMaterialRequirement[];
+  reservations: InventoryMovement[];
+}
+
+export const getProjectInventory = (projectId: string) =>
+  apiGet<ProjectInventorySummary>(`/api/projects/${projectId}/inventory`);
+
+export const createMaterialRequirement = (
+  projectId: string,
+  payload: { item_id: string; quantity_required: string; notes?: string },
+) => apiPost<ProjectMaterialRequirement>(`/api/projects/${projectId}/inventory/requirements`, payload);
+
+export const updateMaterialRequirement = (
+  projectId: string,
+  requirementId: string,
+  payload: { quantity_required?: string; notes?: string },
+) => apiPatch<ProjectMaterialRequirement>(`/api/projects/${projectId}/inventory/requirements/${requirementId}`, payload);
+
+function projectInventoryOperation(
+  projectId: string,
+  action: "reserve" | "consume" | "release" | "return",
+  payload: { item_id: string; quantity: string; reference?: string },
+) {
+  return apiPost<InventoryMovement>(`/api/projects/${projectId}/inventory/${action}`, payload);
+}
+
+export const reserveProjectMaterial = (projectId: string, payload: { item_id: string; quantity: string; reference?: string }) =>
+  projectInventoryOperation(projectId, "reserve", payload);
+export const consumeProjectMaterial = (projectId: string, payload: { item_id: string; quantity: string; reference?: string }) =>
+  projectInventoryOperation(projectId, "consume", payload);
+export const releaseProjectMaterial = (projectId: string, payload: { item_id: string; quantity: string; reference?: string }) =>
+  projectInventoryOperation(projectId, "release", payload);
+export const returnProjectMaterial = (projectId: string, payload: { item_id: string; quantity: string; reference?: string }) =>
+  projectInventoryOperation(projectId, "return", payload);
+
+// --- Metas e indicadores (página única — nunca "Metas"/"Dashboards" separados) ---
+
+export type GoalMetric =
+  | "installations"
+  | "kwp"
+  | "projects_completed"
+  | "projects_certified"
+  | "power_installed"
+  | "power_delivered";
+
+export const GOAL_METRIC_LABELS: Record<GoalMetric, string> = {
+  installations: "Instalações concluídas",
+  kwp: "Potência instalada (kWp)",
+  projects_completed: "Obras concluídas",
+  projects_certified: "Obras certificadas",
+  power_installed: "Potência instalada",
+  power_delivered: "Potência entregue",
+};
+
+export interface GoalPeriod {
+  id: string;
+  period_type: "year" | "quarter" | "semester" | "month";
+  year: number;
+  quarter: number | null;
+  semester: number | null;
+  month: number | null;
+  metric: GoalMetric;
+  target_value: string;
+  scope: "company" | "pm";
+  pm_person_id: string | null;
+  pm_display_name: string | null;
+  notes: string;
+  realized: string;
+  percent: number;
+  missing: string;
+  expected_pace: string;
+  projection: string;
+  pace_status: "on_track" | "behind" | "ahead" | "no_target";
+}
+
+export interface PortfolioBreakdown {
+  not_started: number;
+  in_progress: number;
+  completed: number;
+  kwp_not_started: string;
+  kwp_in_progress: string;
+  kwp_completed: string;
+  certified_count: number;
+  pending_certification_count: number;
+}
+
+export interface YearlyIndicator {
+  year: number;
+  installations: string;
+  kwp: string;
+}
+
+export interface PerformanceSummary {
+  goals: GoalPeriod[];
+  portfolio: PortfolioBreakdown;
+  yearly: YearlyIndicator[];
+}
+
+export function getPerformanceSummary(filters: { year?: number; pm_person_id?: string } = {}): Promise<PerformanceSummary> {
+  const params = new URLSearchParams();
+  if (filters.year) params.set("year", String(filters.year));
+  if (filters.pm_person_id) params.set("pm_person_id", filters.pm_person_id);
+  const qs = params.toString();
+  return apiGet<PerformanceSummary>(`/api/performance/summary${qs ? `?${qs}` : ""}`);
+}
+
+export const createGoal = (payload: {
+  period_type: "year" | "quarter" | "semester" | "month";
+  year: number;
+  quarter?: number;
+  semester?: number;
+  month?: number;
+  metric: GoalMetric;
+  target_value: string;
+  scope?: "company" | "pm";
+  pm_person_id?: string;
+  notes?: string;
+}) => apiPost<GoalPeriod>("/api/performance/goals", payload);
+
+export const updateGoal = (id: string, payload: { target_value?: string; notes?: string }) =>
+  apiPatch<GoalPeriod>(`/api/performance/goals/${id}`, payload);

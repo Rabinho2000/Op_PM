@@ -12,8 +12,10 @@ interface NavItem {
   to: string;
   label: string;
   icon: IconName;
-  // Só aparece a quem tem esta permissão (o servidor volta a validar).
-  permission?: string;
+  // Só aparece a quem tem pelo menos uma destas permissões (o servidor
+  // volta sempre a validar em cada pedido — isto é só para não mostrar um
+  // link que levaria a um 403).
+  permission?: string | string[];
   end?: boolean;
 }
 
@@ -21,6 +23,13 @@ export const NAV_ITEMS: NavItem[] = [
   { to: "/", label: "Painel", icon: "dashboard", end: true },
   { to: "/projects", label: "Projetos", icon: "folder" },
   { to: "/tasks", label: "Tarefas", icon: "tasks" },
+  { to: "/inventory", label: "Inventário", icon: "database", permission: "inventory.view" },
+  {
+    to: "/performance",
+    label: "Metas e indicadores",
+    icon: "flag",
+    permission: ["performance.view_all", "performance.view_own"],
+  },
   { to: "/vacations", label: "Férias e aniversários", icon: "calendar" },
 ];
 
@@ -33,6 +42,8 @@ const PAGE_TITLES: [string, string][] = [
   ["/projects/", "Detalhe do projeto"],
   ["/projects", "Projetos"],
   ["/tasks", "Tarefas"],
+  ["/inventory", "Inventário"],
+  ["/performance", "Metas e indicadores"],
   ["/vacations", "Férias e aniversários"],
   ["/reconciliation", "Reconciliação de PM"],
   ["/status", "Estado do sistema"],
@@ -78,7 +89,13 @@ export default function Layout({ children }: { children: ReactNode }) {
     </NavLink>
   );
 
-  const adminItems = ADMIN_NAV_ITEMS.filter((item) => !item.permission || can(item.permission));
+  const hasNavPermission = (item: NavItem) => {
+    if (!item.permission) return true;
+    const codes = Array.isArray(item.permission) ? item.permission : [item.permission];
+    return codes.some(can);
+  };
+  const mainItems = NAV_ITEMS.filter(hasNavPermission);
+  const adminItems = ADMIN_NAV_ITEMS.filter(hasNavPermission);
 
   return (
     <div className="app-shell">
@@ -95,7 +112,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           </span>
         </NavLink>
         <nav className="sidebar__nav" aria-label="Navegação principal">
-          {NAV_ITEMS.map(renderLink)}
+          {mainItems.map(renderLink)}
           {adminItems.length > 0 && <div className="sidebar__section">Administração</div>}
           {adminItems.map(renderLink)}
         </nav>
