@@ -11,6 +11,7 @@ from app.api.routes_inventory import router as inventory_router
 from app.api.routes_me import router as me_router
 from app.api.routes_migration import router as migration_router
 from app.api.routes_people import router as people_router
+from app.api.routes_project_data import router as project_data_router
 from app.api.routes_projects import router as projects_router
 from app.api.routes_tasks import router as tasks_router
 from app.config import get_settings
@@ -46,6 +47,7 @@ app.include_router(absences_router)
 app.include_router(dashboard_router)
 app.include_router(inventory_router)
 app.include_router(project_inventory_router)
+app.include_router(project_data_router)
 
 
 @app.get("/")
