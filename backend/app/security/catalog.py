@@ -50,7 +50,11 @@ PERMISSIONS: dict[str, str] = {
     "task.view_all": "Ver tarefas de qualquer projeto",
     "task.view_own": "Ver tarefas dos projetos próprios (como PM) e tarefas atribuídas a si",
     "task.edit_all": "Criar/editar/atribuir/concluir tarefas de qualquer projeto",
-    "task.edit_own": "Criar/editar/atribuir/concluir tarefas dos projetos próprios (como PM)",
+    "task.edit_own": (
+        "Criar tarefas atribuídas a si mesmo e editar tarefas que criou ou que lhe "
+        "estão atribuídas — nunca atribuir/reatribuir a outra pessoa (ver "
+        "app/security/permissions.py:can_edit_task/can_create_task)"
+    ),
     "absence.view_all": "Ver férias/ausências de todas as pessoas",
     "absence.view_own": "Ver as próprias férias/ausências",
     "absence.manage_all": "Registar/cancelar férias de qualquer pessoa",
@@ -94,7 +98,11 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "calendar.propose",
         "calendar.approve_send",
         "ai.use_tools",
-        "task.view_own",
+        # PM vê tarefas de todos os projetos (visibilidade global), mas só
+        # pode criar/editar as suas (ver task.edit_own e
+        # app/security/permissions.py:can_edit_task/can_create_task) — a
+        # separação entre "ver" e "escrever" é o que torna isto seguro.
+        "task.view_all",
         "task.edit_own",
         "absence.view_own",
         "absence.manage_own",

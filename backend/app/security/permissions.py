@@ -82,19 +82,27 @@ def can_view_project(ctx: AuthContext, project: Project) -> bool:
 
 
 def can_view_task(ctx: AuthContext, task: Task) -> bool:
-    """Uma tarefa é visível a quem consegue ver o projeto a que pertence, ou
-    a quem lhe está atribuída diretamente (mesmo que não seja o PM do
-    projeto — ex. um técnico atribuído pontualmente)."""
+    """Uma tarefa é visível a quem tem `task.view_all` (ex. PM — vê tarefas
+    de todos os projetos, não só os seus), a quem consegue ver o projeto a
+    que pertence, ou a quem lhe está atribuída diretamente (mesmo que não
+    seja o PM do projeto — ex. um técnico atribuído pontualmente)."""
+    if ctx.has_permission("task.view_all"):
+        return True
     if task.assigned_to_person_id == ctx.person_id:
         return True
     return can_view_project(ctx, task.project)
 
 
 def can_edit_task(ctx: AuthContext, task: Task) -> bool:
+    """`task.edit_all` (Chefe/Administrador) edita qualquer tarefa.
+    `task.edit_own` (PM) só edita tarefas que criou ou que lhe estão
+    atribuídas — nunca por ser o PM do projeto (um PM vê agora todas as
+    tarefas via `task.view_all`, mas isso não lhe dá direito de escrita
+    sobre tarefas de outra pessoa nesse projeto)."""
     if ctx.has_permission("task.edit_all"):
         return True
     if ctx.has_permission("task.edit_own"):
-        return task.project.pm_person_id == ctx.person_id or task.assigned_to_person_id == ctx.person_id
+        return task.created_by_person_id == ctx.person_id or task.assigned_to_person_id == ctx.person_id
     return False
 
 
