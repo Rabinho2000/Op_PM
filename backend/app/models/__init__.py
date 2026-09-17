@@ -17,9 +17,11 @@ from app.models.absence import Absence  # noqa: F401
 from app.models.supplier import Supplier  # noqa: F401
 from app.models.inventory import (  # noqa: F401
     InventoryItem,
+    InventoryLocation,
     InventoryMovement,
     MaterialRequest,
     MaterialRequestItem,
+    ProjectMaterialRequirement,
 )
 from app.models.cost import CostLine  # noqa: F401
 from app.models.document import Document, Photo  # noqa: F401
@@ -27,3 +29,11 @@ from app.models.form import FormResponse, FormTemplate  # noqa: F401
 from app.models.notification import Notification  # noqa: F401
 from app.models.migration import ImportBatch, PersonReconciliationItem, StagingProjectRecord  # noqa: F401
 from app.models.ai import AiAuditLog  # noqa: F401
+from app.models.project_data import (  # noqa: F401
+    ProjectCommunicationData,
+    ProjectDataHistory,
+    ProjectInstallationData,
+    ProjectLicensingData,
+)
+from app.models.map_ops import PickupPoint, ProjectIssue  # noqa: F401
+from app.models.performance import GoalPeriod, GoalPeriodHistory  # noqa: F401
