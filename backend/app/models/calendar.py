@@ -54,9 +54,11 @@ class CalendarEvent(UUIDPk, TimestampMixin, Base):
     ends_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(
         String(32), default="rascunho", nullable=False
-    )  # rascunho | aprovado | publicado
+    )  # rascunho | aprovado | publicado | cancelado
     graph_event_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     # caminho local do fallback .ics enquanto o Graph não está configurado
     ics_fallback_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     visit: Mapped["Visit | None"] = relationship(back_populates="events")
+    project: Mapped["Project | None"] = relationship()
+    task: Mapped["Task | None"] = relationship()
