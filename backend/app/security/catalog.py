@@ -149,10 +149,14 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "task.edit_own",
         "absence.view_own",
         "absence.manage_own",
-        # MVP de Operações — PM opera reservas/consumo/libertação (nunca o
-        # stock físico central) e os dados satélite dos seus próprios
-        # projetos (ver docs/PLAN_OPERATIONS_MVP.md secção 4 e 11 para a
-        # decisão de não conceder inventory.manage_central a PM).
+        # MVP de Operações — decisão de negócio confirmada: Administrador,
+        # Chefe de Operações e PM podem todos gerir o inventário central
+        # (entrada/ajuste), além de reservar/consumir/libertar material dos
+        # projetos que gerem (ver docs/PLAN_OPERATIONS_MVP.md secção 4,
+        # revista — a versão anterior deste catálogo excluía PM de
+        # inventory.manage_central; corrigido a pedido explícito do
+        # negócio).
+        "inventory.manage_central",
         "inventory.allocate_project",
         "inventory.consume_project",
         "inventory.release_project",

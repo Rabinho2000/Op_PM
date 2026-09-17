@@ -443,23 +443,25 @@ calendário/metas (ver `docs/PLAN_OPERATIONS_MVP.md`). Nenhuma bloqueou o
 desenvolvimento — todas resolvidas pela opção mais segura, reversível,
 documentada aqui e no código.
 
-### 28. PM deve ter `inventory.manage_central`?
+### 28. PM deve ter `inventory.manage_central`? — **RESOLVIDA**
 
-**Impacto:** o pedido original contradiz-se entre a secção 2 ("Podem
-alterar o inventário central: Administrador; Chefe de Operações; Project
-Managers") e a secção de permissões ("PM: pode alterar stock central e
-operar os seus próprios projetos") vs. o resto do pedido, que trata o
-stock central como um recurso partilhado por toda a operação, não por
-projeto.
+**Impacto:** o pedido original parecia contradizer-se entre a secção 2
+("Podem alterar o inventário central: Administrador; Chefe de Operações;
+Project Managers") e a secção de permissões ("PM: pode alterar stock
+central e operar os seus próprios projetos") vs. o resto do pedido, que
+trata o stock central como um recurso partilhado por toda a operação,
+não por projeto.
 
-**Decisão necessária:** confirmar se um PM deve poder registar
-entradas/ajustes no stock físico central (afeta todos os projetos), ou só
-reservar/consumir/libertar material nos seus próprios projetos.
-
-**Decisão assumida (opção mais segura):** PM não recebe
-`inventory.manage_central` nesta versão — só `allocate_project`/
-`consume_project`/`release_project`. Reversível numa linha em
-`app/security/catalog.py` se o negócio confirmar a primeira leitura.
+**Resolvida — decisão de negócio confirmada explicitamente:**
+Administrador, Chefe de Operações **e PM** podem todos gerir o
+inventário central (entrada/ajuste), sem distinção. A leitura anterior
+("opção mais segura" perante uma aparente contradição) estava errada.
+`app/security/catalog.py` (`ROLE_PM` ganhou `inventory.manage_central`)
+e `app/migration/seed_dev.py` (via `ROLE_PERMISSIONS`) já refletem isto;
+testado em `tests/test_inventory_api.py::test_pm_can_do_every_inventory_operation_end_to_end`.
+As restrições de projeto mantêm-se para reservar/consumir/libertar
+(`allocate_project`/`consume_project`/`release_project`) — um PM continua
+sem poder operar o inventário de um projeto que não gere.
 
 ### 29. Consumo de inventário sem reserva prévia
 

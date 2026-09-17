@@ -171,8 +171,11 @@ def can_edit_project_communication_data(ctx: AuthContext, project: Project) -> b
 
 
 def can_manage_central_inventory(ctx: AuthContext) -> bool:
-    """Entrada/ajuste no stock físico central — nunca por projeto (ver
-    docs/PLAN_OPERATIONS_MVP.md secção 11: PM não recebe esta permissão)."""
+    """Entrada/ajuste no stock físico central — nunca por projeto (o stock
+    central é um recurso partilhado por toda a operação, não de um
+    projeto). Administrador, Chefe de Operações e PM têm todos esta
+    permissão (decisão de negócio confirmada — ver
+    docs/PLAN_OPERATIONS_MVP.md secção 4)."""
     return ctx.has_permission("inventory.manage_central")
 
 

@@ -1797,17 +1797,24 @@ central sem reabrir a reserva de origem (pergunta 30). Todas as operações
 aceitam `idempotency_key` opcional — repetir a mesma chave devolve o
 movimento já existente em vez de duplicar.
 
-**PM não recebe `inventory.manage_central`** (só
-`allocate_project`/`consume_project`/`release_project`, sempre compostas
-com o âmbito de projeto já existente via `can_edit_project`) — o pedido
-original contradiz-se entre secções sobre isto; a opção mais segura é
-não deixar um PM inflar/reduzir o stock físico partilhado por toda a
-operação (pergunta 28, reversível numa linha de `catalog.py`).
+**Revisto depois do relatório inicial — PM recebe `inventory.manage_central`.**
+A primeira versão desta decisão excluía o PM de `inventory.manage_central`
+("opção mais segura" perante uma aparente contradição no pedido entre
+secções). **O negócio confirmou explicitamente que essa leitura estava
+errada:** Administrador, Chefe de Operações e PM podem todos gerir o
+inventário central (entrada/ajuste), sem distinção — só
+`allocate_project`/`consume_project`/`release_project` continuam
+compostas com o âmbito de projeto já existente via `can_edit_project`
+(reservar/consumir/libertar continuam limitados aos projetos que o PM
+gere; entrada/ajuste não são um recurso por projeto). Corrigido em
+`app/security/catalog.py` (`ROLE_PM` ganha `inventory.manage_central`) —
+ver `docs/OPEN_QUESTIONS.md` pergunta 28 (resolvida).
 
 **Testes:** `tests/test_inventory_ledger.py` (11, incluindo o exemplo
 exato do pedido — 100 km entram, reserva 20, consome 5, liberta 10 ⇒
 físico 95/disponível 90/reservado 5/consumido 5), `tests/test_inventory_api.py`
-(9, permissões por perfil e por âmbito de projeto).
+(11, permissões por perfil e por âmbito de projeto, incluindo a prova
+ponta-a-ponta das seis operações que o PM tem de conseguir fazer).
 
 ## D-054 — Dados satélite de projeto (instalação/licenciamento/comunicação): três tabelas 1:1, nunca campos novos em `Project`
 

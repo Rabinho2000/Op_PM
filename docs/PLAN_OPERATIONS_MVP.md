@@ -200,27 +200,27 @@ performance.manage_goals       — novo (só chefe/admin)
 ```
 
 Matriz por papel (resumo — ver `app/security/catalog.py` para a lista
-exata): Administrador e Chefe de Operações recebem tudo; PM recebe
-`inventory.allocate_project`/`consume_project`/`release_project`/`view`
-(mas não `manage_central`, **decisão revista** — ver nota abaixo),
-`project.edit_installation_data`/`licensing_data` só nos seus projetos
-(reaproveita `can_edit_project` como base), `calendar.view`/`manage` nos
-seus projetos, `performance.view_own`; Comercial/Financeiro só as
-variantes `view`.
+exata): Administrador e Chefe de Operações recebem tudo; **PM recebe
+`inventory.manage_central` além de `allocate_project`/`consume_project`/
+`release_project`/`view`** — decisão de negócio confirmada explicitamente
+(ver nota abaixo), `project.edit_installation_data`/`licensing_data` só
+nos seus projetos (reaproveita `can_edit_project` como base),
+`calendar.view`/`manage` nos seus projetos, `performance.view_own`;
+Comercial/Financeiro só as variantes `view`.
 
-**Nota sobre "PM pode alterar o inventário central":** o pedido diz
-explicitamente, em dois sítios diferentes, coisas distintas — secção 2
-("Podem alterar o inventário central: Administrador; Chefe de Operações;
-Project Managers") vs. secção 10, permissões ("PM: pode alterar stock
-central e operar os seus próprios projetos"). Isto contradiz o exemplo de
-negócio do próprio pedido (só operações centrais — entrada/ajuste — deviam
-ficar reservadas a quem gere o armazém). **Decisão assumida (opção mais
-seguraa, documentada em `docs/OPEN_QUESTIONS.md` pergunta nova):** PM
-recebe as permissões de projeto (`allocate`/`consume`/`release`), não
-`manage_central` — evita qualquer PM poder inflar/reduzir o stock físico
-central sem revisão, o que teria impacto em todos os projetos, não só nos
-seus. Reversível numa linha em `catalog.py` se o negócio confirmar o texto
-da secção 2 literalmente.
+**Nota sobre "PM pode alterar o inventário central" (revista):** uma
+versão anterior deste documento assumia, por segurança, que PM não devia
+receber `inventory.manage_central` (o pedido original parecia
+contraditório entre secções). **O negócio confirmou explicitamente que
+essa leitura estava errada:** Administrador, Chefe de Operações e PM
+podem todos gerir o inventário central (entrada/ajuste), sem
+distinção — o stock físico central não é um recurso por projeto, é
+partilhado por toda a operação, e qualquer um destes três papéis pode
+registá-lo. `app/security/catalog.py` e `app/migration/seed_dev.py`
+(via `ROLE_PERMISSIONS`) já refletem isto; as restrições de projeto
+mantêm-se apenas para reservar/consumir/libertar (`allocate_project`/
+`consume_project`/`release_project`), que continuam limitadas aos
+projetos que o PM gere.
 
 ## 5. Mapa operacional — desenho (Fatia 1: backend; frontend ver secção 10)
 
@@ -425,7 +425,7 @@ PR própria, mais pequena e mais fácil de rever isoladamente.
 
 | Decisão assumida | Porquê é a opção mais segura | Reversível? |
 |---|---|---|
-| PM não recebe `inventory.manage_central` (só `allocate/consume/release`) | O pedido é internamente contraditório entre secção 2 e secção 10; restringir o stock físico central a quem gere o armazém evita um PM afetar todos os projetos por engano | Sim, uma linha em `catalog.py` |
+| ~~PM não recebe `inventory.manage_central`~~ — **revertido**: PM recebe `inventory.manage_central` (decisão de negócio confirmada) | A leitura inicial (opção mais segura perante um pedido aparentemente contraditório) estava errada — o negócio confirmou explicitamente que Administrador, Chefe de Operações e PM gerem todos o inventário central | Já revertido em `catalog.py`/`seed_dev.py` |
 | Consumo exige reserva ativa suficiente no projeto | O pedido não define "consumo sem reserva"; exigir reserva prévia é o comportamento mais previsível e auditável | Sim, é uma verificação isolada em `services/inventory.py` |
 | Devolução volta ao stock físico central livre, não reabre a reserva do projeto de origem | Idem — o pedido não especifica; esta opção nunca inventa uma ligação implícita entre uma devolução e uma reserva específica | Sim |
 | Importadores (secção 9) ficam desenhados mas não implementados nesta PR | Maior risco de dados sensíveis/segurança de todo o pedido; melhor revisto isoladamente (ver secção 9.3) | N/A — trabalho pendente, não uma decisão de desenho a reverter |

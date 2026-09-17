@@ -21,8 +21,8 @@ partir de `inventory_movements` (`app/services/inventory.py`).
 
 | Operação | Efeito | Permissão |
 |---|---|---|
-| Entrada | ↑ físico | `inventory.manage_central` (Chefe/Admin) |
-| Ajuste (+/-) | ↑/↓ físico, nunca < 0 | `inventory.manage_central` |
+| Entrada | ↑ físico | `inventory.manage_central` (Admin/Chefe/PM) |
+| Ajuste (+/-) | ↑/↓ físico, nunca < 0 | `inventory.manage_central` (Admin/Chefe/PM) |
 | Reservar | ↓ disponível | `inventory.allocate_project` (+ âmbito de projeto) |
 | Libertar reserva | ↑ disponível | `inventory.release_project` (+ âmbito de projeto) |
 | Consumir | ↓ físico e ↓ reservado do projeto | `inventory.consume_project` (+ âmbito de projeto) |
@@ -31,12 +31,16 @@ partir de `inventory_movements` (`app/services/inventory.py`).
 "Âmbito de projeto" = `project.edit_all` (qualquer projeto) ou o ator ser o
 PM desse projeto (`project.edit_own_progress`) — a mesma regra já usada
 para editar a identidade do projeto, nunca uma segunda lógica de "próprio
-projeto" duplicada.
+projeto" duplicada. Aplica-se a reservar/consumir/libertar — **nunca** a
+entrada/ajuste, que não são um recurso por projeto.
 
-**PM não tem `inventory.manage_central`** — só Chefe/Administrador podem
-alterar o stock físico central (entrada/ajuste). Isto é uma decisão
-assumida (o pedido original era contraditório entre secções) — ver
-`docs/PLAN_OPERATIONS_MVP.md` secção 11 e `docs/OPEN_QUESTIONS.md`.
+**PM tem `inventory.manage_central`** — Administrador, Chefe de
+Operações e PM podem todos alterar o stock físico central
+(entrada/ajuste), sem distinção entre eles. Uma versão anterior deste
+documento assumia o contrário (o pedido original parecia contraditório
+entre secções); o negócio confirmou explicitamente que essa leitura
+estava errada — ver `docs/PLAN_OPERATIONS_MVP.md` secção 4 e
+`docs/OPEN_QUESTIONS.md` pergunta 28 (resolvida).
 
 ## Validações
 
