@@ -239,3 +239,11 @@ def can_view_performance(ctx: AuthContext) -> bool:
 
 def can_manage_goals(ctx: AuthContext) -> bool:
     return ctx.has_permission("performance.manage_goals")
+
+
+def can_import_notes(ctx: AuthContext) -> bool:
+    return ctx.has_permission("import.notes")
+
+
+def can_import_licensing(ctx: AuthContext) -> bool:
+    return ctx.has_permission("import.licensing")

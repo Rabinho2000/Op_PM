@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes_absences import router as absences_router
 from app.api.routes_dashboard import router as dashboard_router
 from app.api.routes_health import router as health_router
+from app.api.routes_imports import router as imports_router
 from app.api.routes_inventory import project_router as project_inventory_router
 from app.api.routes_inventory import router as inventory_router
 from app.api.routes_map import router as map_router
@@ -54,6 +55,7 @@ app.include_router(project_data_router)
 app.include_router(map_router)
 app.include_router(planning_router)
 app.include_router(performance_router)
+app.include_router(imports_router)
 
 
 @app.get("/")

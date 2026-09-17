@@ -81,6 +81,8 @@ PERMISSIONS: dict[str, str] = {
     "performance.view_all": "Ver metas e indicadores de toda a operação",
     "performance.view_own": "Ver metas e indicadores próprios (como PM)",
     "performance.manage_goals": "Criar/editar metas (GoalPeriod)",
+    "import.notes": "Importar notas iniciais (pré-visualizar, resolver conflitos, aplicar)",
+    "import.licensing": "Importar o Excel de licenciamento (dry-run/aplicar/reverter)",
 }
 
 # Matriz papel -> permissões concedidas por omissão.
@@ -129,6 +131,8 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "calendar.manage",
         "performance.view_all",
         "performance.manage_goals",
+        "import.notes",
+        "import.licensing",
     ],
     ROLE_PM: [
         "project.view_own",
@@ -187,6 +191,9 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "project_issue.view",
         "calendar.view",
         "performance.view_all",
+        # O formulário de notas iniciais é usado pelo Comercial/Sales
+        # Support (papel não modelado à parte — reaproveita Comercial).
+        "import.notes",
     ],
     ROLE_FINANCEIRO: [
         "project.view_all",

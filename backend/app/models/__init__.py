@@ -37,3 +37,4 @@ from app.models.project_data import (  # noqa: F401
 )
 from app.models.map_ops import PickupPoint, ProjectIssue  # noqa: F401
 from app.models.performance import GoalPeriod, GoalPeriodHistory  # noqa: F401
+from app.models.imports import FieldImportBatch, FieldImportConflict, FieldImportRecord  # noqa: F401
