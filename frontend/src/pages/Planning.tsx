@@ -28,7 +28,8 @@ type Scope = "all" | "mine" | "pm" | "project" | "responsible";
 
 const EVENT_STATUS_TONES: Record<string, Tone> = {
   rascunho: "neutral",
-  confirmado: "brand",
+  aprovado: "brand",
+  publicado: "success",
   cancelado: "danger",
 };
 

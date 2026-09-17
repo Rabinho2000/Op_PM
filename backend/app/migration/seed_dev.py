@@ -29,6 +29,7 @@ import app.models  # noqa: F401  — garante que todas as tabelas estão regista
 from app.config import HARDENED_ENVIRONMENTS, get_settings
 from app.db import Base, SessionLocal, engine
 from app.models.absence import TYPE_BAIXA_MEDICA, TYPE_FERIAS, Absence
+from app.models.calendar import CalendarEvent
 from app.models.identity import Permission, Role, RolePermission, User, UserRole
 from app.models.inventory import (
     CENTRAL_LOCATION_CODE,
@@ -759,6 +760,64 @@ def seed_map_and_inventory(db: Session) -> None:
     )
 
 
+def seed_calendar_events(db: Session) -> None:
+    """Eventos de calendário sintéticos, ligados a tarefas reais dos
+    projetos de demonstração (ver docs/MAP_AND_PLANNING.md) — para a
+    página /planning já mostrar dados ao abrir, tal como as outras áreas
+    do MVP de Operações."""
+    if db.query(CalendarEvent).count() > 0:
+        return
+    today = dt.date.today()
+    pm_um = db.query(Person).filter(Person.display_name == "PM Sintético Um").one()
+    chefe = db.query(Person).filter(Person.display_name == "Chefe Sintético").one()
+    demo = db.query(Project).filter(Project.name == "Instalação Sintética de Demonstração").one()
+    starting_soon = db.query(Project).filter(Project.name.like("%Início Próximo%")).first()
+
+    def _at(days_from_today: int, hour: int, minute: int = 0) -> dt.datetime:
+        return dt.datetime.combine(today + dt.timedelta(days=days_from_today), dt.time(hour, minute))
+
+    visita_demo = (
+        db.query(Task).filter(Task.project_id == demo.id, Task.task_type == TASK_TYPE_VISITA_TECNICA).first()
+    )
+    events = [
+        CalendarEvent(
+            project_id=demo.id,
+            task_id=visita_demo.id if visita_demo else None,
+            assigned_to_person_id=pm_um.id,
+            title="Visita técnica sintética — Instalação de Demonstração",
+            starts_at=_at(2, 9, 30),
+            ends_at=_at(2, 11, 0),
+            status="aprovado",
+        ),
+        CalendarEvent(
+            project_id=demo.id,
+            assigned_to_person_id=chefe.id,
+            title="Reunião sintética de acompanhamento de obra",
+            starts_at=_at(-1, 14, 0),
+            ends_at=_at(-1, 15, 0),
+            status="publicado",
+        ),
+    ]
+    if starting_soon is not None:
+        comissionamento = (
+            db.query(Task)
+            .filter(Task.project_id == starting_soon.id, Task.task_type == TASK_TYPE_COMISSIONAMENTO)
+            .first()
+        )
+        events.append(
+            CalendarEvent(
+                project_id=starting_soon.id,
+                task_id=comissionamento.id if comissionamento else None,
+                assigned_to_person_id=pm_um.id,
+                title="Comissionamento sintético agendado",
+                starts_at=_at(5, 10, 0),
+                ends_at=_at(5, 12, 0),
+                status="rascunho",
+            )
+        )
+    db.add_all(events)
+
+
 def seed_performance_goals(db: Session) -> None:
     if db.query(GoalPeriod).count() > 0:
         return
@@ -832,6 +891,7 @@ def run_seed() -> None:
         seed_sample_projects(db)
         seed_absences(db)
         seed_map_and_inventory(db)
+        seed_calendar_events(db)
         seed_performance_goals(db)
         db.commit()
     finally:

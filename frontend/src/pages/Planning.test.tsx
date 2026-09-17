@@ -36,7 +36,7 @@ function event(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
     title: "Visita técnica sintética",
     starts_at: `${TODAY}T09:00:00`,
     ends_at: `${TODAY}T10:00:00`,
-    status: "confirmado",
+    status: "rascunho",
     graph_event_id: null,
     created_at: `${TODAY}T08:00:00`,
     project_name: "Instalação Sintética de Teste",
@@ -138,7 +138,7 @@ describe("Planeamento", () => {
     fireEvent.click(await screen.findByText("Visita técnica sintética"));
 
     const detail = await screen.findByRole("dialog");
-    expect(within(detail).getByText("confirmado")).toBeInTheDocument();
+    expect(within(detail).getByText("rascunho")).toBeInTheDocument();
 
     api.cancelCalendarEvent.mockResolvedValue(event({ status: "cancelado" }));
     fireEvent.click(within(detail).getByRole("button", { name: /cancelar evento/i }));
