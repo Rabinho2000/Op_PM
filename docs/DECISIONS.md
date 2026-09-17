@@ -1733,3 +1733,153 @@ build "mesma origem" do `Dockerfile.demo` servido por um proxy local
 equivalente ao nginx. **Não validado localmente (sem Docker nesta
 máquina):** `docker build`/`docker compose` — ficam a cargo dos jobs
 `docker-build` e `demo-smoke` do CI.
+
+# Fase 2 — MVP de Operações
+
+As decisões D-052 a D-056 documentam a fatia 1 do MVP de Operações
+(inventário com reservas, dados satélite de projeto, mapa, calendário
+ligado a tarefas, permissões de tarefas revistas, metas e indicadores
+fundidos com o histórico) — ver `docs/PLAN_OPERATIONS_MVP.md` para o
+desenho completo, incluindo o que fica para uma fatia seguinte
+(importadores, UI de mapa/calendário/dados de projeto) e porquê. Nenhuma
+integração externa real foi ligada (Graph/ClickUp/Financial/Claude
+continuam mock/fallback); nenhum dado real entrou no repositório.
+
+## D-052 — Tarefas: visibilidade global do PM, escrita por identidade (criador/atribuído), nunca por ser o PM do projeto
+
+**Decisão:** `task.view_all` passa a ser concedida também ao papel PM
+(mantendo `task.edit_own`) — um PM vê tarefas de todos os projetos, não só
+os seus (`can_view_task`/`visible_tasks_query`). Em contrapartida,
+`can_edit_task`/`can_create_task` deixam de usar
+`task.project.pm_person_id == ctx.person_id` como critério de posse para
+quem só tem `task.edit_own`: passa a ser
+`task.created_by_person_id == ctx.person_id OR
+task.assigned_to_person_id == ctx.person_id`. `create_task` força
+`assigned_to_person_id = ctx.person_id` quando o ator só tem
+`task.edit_own` e rejeita (400) qualquer tentativa de indicar outra
+pessoa; `update_task` rejeita (400) por inteiro qualquer pedido que toque
+`assigned_to_person_id` vindo desse mesmo ator — nunca reatribuição,
+mesmo para si próprio.
+
+**Porquê:** pedido explícito da secção de tarefas do MVP de Operações —
+um PM deixa de estar limitado aos seus projetos para *ver* o que se
+passa na operação (coordenação entre equipas), mas continua sem poder
+alterar o trabalho de outra pessoa só por ser o PM do projeto onde essa
+tarefa vive. `task.edit_all` (Chefe/Administrador) não muda.
+
+**Testes:** `tests/test_tasks_api.py` — visibilidade global confirmada
+(`test_pm_sees_tasks_from_every_project`), edição só por
+criador/atribuído mesmo dentro do próprio projeto
+(`test_pm_cannot_edit_task_of_own_project_not_created_by_or_assigned_to_them`),
+nunca reatribuição (`test_pm_cannot_reassign_task_even_one_they_created`),
+criação só atribuída a si mesmo
+(`test_pm_can_only_create_task_assigned_to_self`), Chefe continua a
+reatribuir livremente (`test_chefe_can_reassign_any_task`).
+
+## D-053 — Inventário: reserva/consumo/libertação/devolução como operações distintas, PM sem acesso ao stock físico central
+
+**Decisão:** `app/services/inventory.py` implementa as quatro operações
+do pedido como funções distintas e transacionais sobre
+`InventoryMovement` — nunca um total editável. `InventoryItem.min_stock`,
+`InventoryMovement.quantity` e `MaterialRequestItem.quantity` passam de
+`Float` para `Numeric(14,3)` (pedido explícito desta fase, alargando a
+regra já aplicada a dinheiro desde D-018).
+`InventoryLocation` (novo) modela `central`/`project`/`vehicle`/
+`supplier`; o seed cria uma única localização central
+(`code="IDEALMINDE"`), nunca usada para decidir lógica de negócio por
+comparação de texto.
+
+`reserve_for_project` nunca deixa o disponível negativo;
+`consume_from_project` exige reserva ativa suficiente no projeto (decisão
+assumida — o pedido não define "consumo sem reserva", ver
+`docs/OPEN_QUESTIONS.md` pergunta 29); `return_to_stock` aumenta o físico
+central sem reabrir a reserva de origem (pergunta 30). Todas as operações
+aceitam `idempotency_key` opcional — repetir a mesma chave devolve o
+movimento já existente em vez de duplicar.
+
+**PM não recebe `inventory.manage_central`** (só
+`allocate_project`/`consume_project`/`release_project`, sempre compostas
+com o âmbito de projeto já existente via `can_edit_project`) — o pedido
+original contradiz-se entre secções sobre isto; a opção mais segura é
+não deixar um PM inflar/reduzir o stock físico partilhado por toda a
+operação (pergunta 28, reversível numa linha de `catalog.py`).
+
+**Testes:** `tests/test_inventory_ledger.py` (11, incluindo o exemplo
+exato do pedido — 100 km entram, reserva 20, consome 5, liberta 10 ⇒
+físico 95/disponível 90/reservado 5/consumido 5), `tests/test_inventory_api.py`
+(9, permissões por perfil e por âmbito de projeto).
+
+## D-054 — Dados satélite de projeto (instalação/licenciamento/comunicação): três tabelas 1:1, nunca campos novos em `Project`
+
+**Decisão:** `ProjectInstallationData`, `ProjectLicensingData`,
+`ProjectCommunicationData` (novas, 1:1 com `Project`) em vez de alargar
+`Project` — evita transformá-lo numa tabela com centenas de campos
+opcionais. Uma única tabela de histórico partilhada,
+`ProjectDataHistory` (`entity_type` distingue qual das três), em vez de
+três tabelas de histórico quase idênticas. `PATCH` cria o registo na
+primeira edição — nunca exige um passo de "criar" separado.
+
+Permissões por domínio (`project.view_installation_data`,
+`project.edit_communication_data`, etc.) compõem-se sempre com o âmbito
+de projeto já existente (`can_view_project`/`can_edit_project`) — nunca
+uma segunda lógica de "próprio projeto" duplicada por domínio.
+`ProjectCommunicationData` nunca tem campos para PIN/PUK/password/login/
+token — por desenho, não por validação de conteúdo (que não seria
+fiável).
+
+**Testes:** `tests/test_project_data_api.py` (9) — permissões por perfil
+e por âmbito de projeto, criação na primeira edição, histórico por campo
+alterado, nenhuma entrada duplicada quando o valor não muda.
+
+## D-055 — Mapa, calendário ligado a tarefas: backend completo, sem UI nesta fase
+
+**Decisão:** `GET /api/map/data` devolve um único payload já filtrado
+pela visibilidade do utilizador (projetos com/sem coordenadas,
+fornecedores, pontos de recolha, pendências) — nunca listas completas
+para o cliente filtrar. `ProjectIssue` pode ser convertida numa `Task`
+(`related_task_id` liga as duas, nunca duplica a entidade).
+`MAP_PROVIDER_ENABLED`/`MAP_TILE_URL`/`MAP_TILE_ATTRIBUTION` (novos,
+`app/config.py`) tornam o provider de tiles configurável e opcional — sem
+ele, o endpoint continua a funcionar, sem depender de um serviço externo.
+
+`CalendarEvent` ganha `task_id`/`assigned_to_person_id`; a camada de
+serviço valida sempre `task.project_id == event.project_id` antes de
+gravar, em criação e edição — nunca confiado ao cliente. Continua
+inteiramente local, sem Microsoft Graph (`graph_event_id` nunca
+preenchido — D-010 mantém-se).
+
+**Sem otimização automática de rotas**, por pedido explícito — só
+seleção/ordenação manual e link para rota externa ficam para a UI (não
+implementada nesta PR).
+
+**UI destas duas áreas, e das tabs de dados de projeto no detalhe do
+projeto, ficam para uma fatia seguinte** — o volume de frontend pedido
+(mapa interativo com camadas/filtros, calendário semanal/mensal/lista) é,
+sozinho, maior que todo o resto desta fatia combinado. Ver
+`docs/OPEN_QUESTIONS.md` pergunta 32.
+
+**Testes:** `tests/test_map_api.py` (7), `tests/test_planning_api.py` (9)
+— incluindo o bloqueio de uma tarefa de projeto diferente do evento.
+
+## D-056 — Metas e indicadores: página única, reaproveita a definição de "instalação concluída" do dashboard
+
+**Decisão:** `GoalPeriod` (+ `GoalPeriodHistory`) por trás de uma única
+página "Metas e indicadores" — nunca duas entradas de menu separadas
+("Metas"/"Dashboards"). Progresso (`realizado`/`percent`/`falta`/
+`ritmo_esperado`/`projeção`) sempre calculado no servidor (mesma regra já
+aplicada ao dashboard, D-041), nunca no frontend a partir de listas
+completas. `expected_pace`/`projection` são quantizados a 3 casas
+decimais — sem isto, divisão de `Decimal` produz dízimas com dezenas de
+casas.
+
+"Instalação concluída" reaproveita tal e qual a definição já usada pelo
+dashboard (`Task.task_type == "comissionamento"` e `status == "done"`,
+na data de `completed_at`) — nunca uma segunda definição divergente,
+conforme o próprio pedido instrui explicitamente ("se o código existente
+tiver fonte de verdade mais adequada, reutilizá-la e documentar").
+`installations`/`projects_completed` e `kwp`/`power_installed`/
+`power_delivered` produzem hoje o mesmo valor, por falta de dados para as
+distinguir de facto — ver `docs/OPEN_QUESTIONS.md` pergunta 31.
+
+**Testes:** `tests/test_performance_api.py` (8) — permissões, cálculo de
+progresso a partir de tarefas reais, âmbito por PM vs. empresa inteira.

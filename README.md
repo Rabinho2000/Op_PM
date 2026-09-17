@@ -105,9 +105,34 @@ servidor (`editable_fields`, `can_manage_tasks`, `can_edit`,
 `scripts/demo_local.py`; seed de demonstração só em `APP_ENV=local`
 (`python -m app.cli.demo setup|reset`). Ver [`docs/MVP_DEMO.md`](docs/MVP_DEMO.md).
 
+**MVP de Operações — fatia 1 (D-052 a D-056):** inventário da IdealMinde
+com reservas/consumo/libertação/devolução por projeto (`/inventory`,
+livro de movimentos — nunca um total editável, ver
+[`docs/INVENTORY_RULES.md`](docs/INVENTORY_RULES.md)); dados de
+instalação/licenciamento/comunicação por projeto
+(`/api/projects/{id}/installation-data` etc., com histórico por campo);
+mapa operacional e calendário ligado a tarefas — **backend completo e
+testado, endpoints prontos, sem UI ainda**, ver
+[`docs/MAP_AND_PLANNING.md`](docs/MAP_AND_PLANNING.md); permissões de
+tarefas revistas (PM vê tarefas de todos os projetos, mas só cria/edita
+as suas — nunca reatribui); "Metas e indicadores" como página única
+(`/performance`, nunca "Metas"/"Dashboards" separados), ver
+[`docs/PERFORMANCE_METRICS.md`](docs/PERFORMANCE_METRICS.md). A
+importação de notas iniciais e do Excel de licenciamento tem desenho
+completo mas não está implementada nesta fase — ver
+[`docs/DATA_IMPORTS.md`](docs/DATA_IMPORTS.md) e
+[`docs/PLAN_OPERATIONS_MVP.md`](docs/PLAN_OPERATIONS_MVP.md) para o
+porquê. 348 testes de backend (+2 skipped) e 63 testes Vitest no
+frontend.
+
 Documentação:
 
 - [`docs/MVP_DEMO.md`](docs/MVP_DEMO.md) — **como levantar e apresentar a demonstração** (Docker ou manual, utilizadores sintéticos, limitações).
+- [`docs/PLAN_OPERATIONS_MVP.md`](docs/PLAN_OPERATIONS_MVP.md) — arquitetura completa do MVP de Operações (inventário, dados de projeto, mapa, calendário, metas), o que ficou nesta fatia e o que fica para a seguinte.
+- [`docs/INVENTORY_RULES.md`](docs/INVENTORY_RULES.md) — contrato exato de reserva/consumo/libertação/devolução de inventário.
+- [`docs/MAP_AND_PLANNING.md`](docs/MAP_AND_PLANNING.md) — endpoints do mapa e do calendário de planeamento.
+- [`docs/PERFORMANCE_METRICS.md`](docs/PERFORMANCE_METRICS.md) — cálculo de metas/progresso/indicadores históricos.
+- [`docs/DATA_IMPORTS.md`](docs/DATA_IMPORTS.md) — desenho dos importadores de notas iniciais e Excel de licenciamento (não implementados ainda).
 - [`docs/PRODUCT_SCOPE.md`](docs/PRODUCT_SCOPE.md) — escopo inicial do produto.
 - [`docs/ARCHITECTURE_PROPOSAL.md`](docs/ARCHITECTURE_PROPOSAL.md) — arquitetura, modelo de dados, integrações.
 - [`docs/PLAN.md`](docs/PLAN.md) — roadmap por fases, plano de migração, testes, segurança.
@@ -164,6 +189,17 @@ Endpoints principais da Fase 1.5 (ver `docs/PLAN.md`):
 visibilidade do utilizador), `/api/tasks` (CRUD + histórico), `/api/absences`
 (férias/ausências).
 
+Endpoints do MVP de Operações (ver `docs/PLAN_OPERATIONS_MVP.md`):
+`/api/inventory/*` e `/api/projects/{id}/inventory/*` (livro de
+movimentos, reservas/consumo/libertação/devolução, necessidades de
+material — [`docs/INVENTORY_RULES.md`](docs/INVENTORY_RULES.md)),
+`/api/projects/{id}/installation-data|licensing-data|communication-data`
+(+ `/data-history`), `/api/map/data`, `/api/suppliers`,
+`/api/pickup-points`, `/api/projects/{id}/issues`, `/api/planning/*`
+(calendário ligado a tarefas — [`docs/MAP_AND_PLANNING.md`](docs/MAP_AND_PLANNING.md)),
+`/api/performance/summary` e `/api/performance/goals`
+([`docs/PERFORMANCE_METRICS.md`](docs/PERFORMANCE_METRICS.md)).
+
 Por omissão (`AUTH_ENABLED=false`), `/me` e outros endpoints autenticados exigem o
 cabeçalho de desenvolvimento `X-Dev-User-Email` (ver `app/security/current_user.py`) —
 por exemplo `chefe.sintetico@example.invalid`, criado pelo seed. Isto é um mecanismo de
@@ -217,15 +253,25 @@ omissão) — depois:
   histórico, cliente) com edição limitada aos campos que o servidor permite.
 - **Tarefas** (`/tasks`): vista de lista e Kanban, filtros por projeto/
   responsável/prioridade/atraso/estado, criação e transição de estado com
-  confirmação visual.
+  confirmação visual. PM vê tarefas de todos os projetos, mas só cria/edita
+  as suas (nunca reatribui) — ver `docs/DECISIONS.md` D-052.
+- **Inventário** (`/inventory`, novo): stock central da IdealMinde
+  (físico/reservado/disponível/mínimo), alertas de stock baixo, registo de
+  entradas/ajustes (`inventory.manage_central`) — ver `docs/INVENTORY_RULES.md`.
+- **Metas e indicadores** (`/performance`, novo): metas por período/PM com
+  progresso calculado no servidor, portefólio por estado, indicadores
+  anuais — ver `docs/PERFORMANCE_METRICS.md`.
 - **Férias e aniversários** (`/vacations`): calendário mensal, ausentes hoje,
   próximas ausências, aniversários, registo e cancelamento conforme permissões.
 - **Reconciliação de PM** (`/reconciliation`): fila de reconciliação da migração.
 - **Estado do sistema** (`/status`): diagnóstico técnico (saúde do backend,
   integrações ativas, utilizador atual) — antiga página inicial da Fase 1.
 
-Validado manualmente ponta-a-ponta nesta fase — ver `docs/DECISIONS.md` D-027/D-031
-e D-039 a D-047 (Fase 1.5).
+Validado manualmente ponta-a-ponta nesta fase — ver `docs/DECISIONS.md` D-027/D-031,
+D-039 a D-047 (Fase 1.5), e D-052 a D-056 (MVP de Operações). Mapa
+operacional, calendário de planeamento, e as tabs de dados de instalação/
+licenciamento/comunicação no detalhe do projeto têm backend pronto e
+testado mas **sem UI ainda** nesta fase — ver `docs/OPEN_QUESTIONS.md`.
 
 Login Microsoft real requer uma app registration SPA (Authorization Code + PKCE, sem
 client secret) e uma app registration de API expondo o âmbito `access_as_user` — ver

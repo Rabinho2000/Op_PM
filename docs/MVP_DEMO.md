@@ -31,9 +31,17 @@
 |---|---|
 | **Painel** | Projetos ativos, a começar em 30 dias, tarefas atrasadas, tarefas desta semana, tarefas urgentes, visitas técnicas e comissionamentos pendentes, projetos sem PM, projetos com dados incompletos, aviso de fotografias por colocar, resumo visual da semana, férias atuais/próximas e aniversários. Todos os números vêm do servidor (`GET /api/dashboard/summary`). |
 | **Projetos** | Pesquisa por projeto/cliente, filtros por estado, PM, datas e situação; estado, progresso, próxima tarefa, prazo, tarefas atrasadas, avisos de dados em falta e de fotografias. Detalhe com resumo, tarefas, histórico e dados do cliente; edição só dos campos que o perfil pode alterar. |
-| **Tarefas** | Vista de lista e vista Kanban (arrastar cartões ou usar o seletor), filtros por projeto, responsável, prioridade e atraso, criação de tarefas, destaque de urgentes/atrasadas e confirmação visual ao concluir. |
+| **Tarefas** | Vista de lista e vista Kanban (arrastar cartões ou usar o seletor), filtros por projeto, responsável, prioridade e atraso, criação de tarefas, destaque de urgentes/atrasadas e confirmação visual ao concluir. PM vê tarefas de todos os projetos, mas só cria/edita as suas — ver `docs/DECISIONS.md` D-052. |
+| **Inventário** (novo) | Stock central da IdealMinde por item (físico/reservado/disponível/mínimo), alerta de stock baixo, registo de entrada/ajuste (só Chefe/Admin). O seed reproduz o exemplo exato do pedido: 100 km de cabo entram, 20 reservados, 5 consumidos, 10 libertados, mais 10 reservados de novo ⇒ físico 95 km, disponível 80 km, reservado 15 km, consumido 5 km — ver `docs/INVENTORY_RULES.md`. |
+| **Metas e indicadores** (novo) | Página única com metas por período/PM (progresso, ritmo esperado, projeção — tudo calculado no servidor), portefólio por estado, e instalações/kWp por ano — ver `docs/PERFORMANCE_METRICS.md`. |
 | **Férias e aniversários** | Calendário mensal, quem está ausente hoje, próximas ausências, aniversários, registo e cancelamento — sempre dentro das permissões do perfil. |
-| **Permissões** | Entrar com perfis diferentes mostra vistas diferentes (o PM só vê os seus projetos; o Comercial só consulta). |
+| **Permissões** | Entrar com perfis diferentes mostra vistas diferentes (o PM só vê os seus projetos; o Comercial só consulta; Inventário/Metas só aparecem no menu a quem tem a permissão correspondente). |
+
+**Sem UI ainda nesta fase** (backend completo, testado, acessível via
+`/docs`): mapa operacional, calendário de planeamento, dados de
+instalação/licenciamento/comunicação do projeto, importação de notas
+iniciais e do Excel de licenciamento — ver `docs/OPEN_QUESTIONS.md` e
+`docs/PLAN_OPERATIONS_MVP.md`.
 
 ## 2. Pré-requisitos
 

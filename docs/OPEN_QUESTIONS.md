@@ -436,6 +436,91 @@ para o provisionamento manual ser um fardo, e a ligação automática
 remove a barreira humana que confirma que o `entra_object_id` certo foi
 associado à pessoa certa.
 
+## MVP de Operações
+
+Perguntas levantadas ao implementar inventário/dados de projeto/mapa/
+calendário/metas (ver `docs/PLAN_OPERATIONS_MVP.md`). Nenhuma bloqueou o
+desenvolvimento — todas resolvidas pela opção mais segura, reversível,
+documentada aqui e no código.
+
+### 28. PM deve ter `inventory.manage_central`?
+
+**Impacto:** o pedido original contradiz-se entre a secção 2 ("Podem
+alterar o inventário central: Administrador; Chefe de Operações; Project
+Managers") e a secção de permissões ("PM: pode alterar stock central e
+operar os seus próprios projetos") vs. o resto do pedido, que trata o
+stock central como um recurso partilhado por toda a operação, não por
+projeto.
+
+**Decisão necessária:** confirmar se um PM deve poder registar
+entradas/ajustes no stock físico central (afeta todos os projetos), ou só
+reservar/consumir/libertar material nos seus próprios projetos.
+
+**Decisão assumida (opção mais segura):** PM não recebe
+`inventory.manage_central` nesta versão — só `allocate_project`/
+`consume_project`/`release_project`. Reversível numa linha em
+`app/security/catalog.py` se o negócio confirmar a primeira leitura.
+
+### 29. Consumo de inventário sem reserva prévia
+
+**Impacto:** o pedido não define o que acontece ao tentar consumir
+material que não foi reservado antes.
+
+**Decisão assumida:** `consume_from_project` exige reserva ativa
+suficiente no projeto — rejeita com erro caso contrário. Reversível em
+`app/services/inventory.py:consume_from_project` se o negócio preferir
+permitir consumo direto (com ou sem criar a reserva implicitamente).
+
+### 30. Devolução de material: reabre a reserva de origem?
+
+**Decisão assumida:** não — `return_to_stock` aumenta o stock físico
+central "livre para reservar de novo", nunca reabre automaticamente a
+reserva do projeto que consumiu. Documentado em
+`docs/INVENTORY_RULES.md`.
+
+### 31. Distinção entre métricas de "Metas e indicadores"
+
+**Impacto:** o pedido lista `installations`, `projects_completed`, `kwp`,
+`power_installed` e `power_delivered` como métricas distintas, mas o
+modelo de dados atual não tem dados para as distinguir de facto (ex.
+produção real vs. potência nominal instalada).
+
+**Decisão necessária:** confirmar se/quando estas métricas devem divergir
+(ex. `power_delivered` vir de `ProjectLicensingData.annual_production_kwh`
+em vez de `Project.power_kwp`).
+
+**Decisão assumida:** todas usam hoje o mesmo cálculo (potência nominal
+dos projetos com comissionamento concluído no período) — ver
+`docs/PERFORMANCE_METRICS.md`. Revisível numa função isolada
+(`app/services/performance.py:_realized_value`) quando confirmado.
+
+### 32. UI do mapa, calendário, e das tabs de dados de projeto
+
+**Impacto:** esta PR entrega backend completo e testado para o mapa
+(`/api/map/data`), calendário (`/api/planning/*`), e os três modelos
+satélite de projeto (`/api/projects/{id}/installation-data` etc.), mas
+sem páginas/tabs novas no frontend — ver
+`docs/PLAN_OPERATIONS_MVP.md` secção 10 para a razão de priorização
+(o volume de frontend pedido — mapa interativo com camadas/filtros,
+calendário semanal/mensal/lista — é maior, sozinho, que todo o resto da
+Fatia 1 combinado).
+
+**Decisão necessária:** confirmar prioridade desta UI face aos
+importadores (secção 33) para a próxima fatia.
+
+### 33. Importadores de notas iniciais e Excel de licenciamento
+
+**Impacto:** desenho completo em `docs/DATA_IMPORTS.md`, não
+implementado nesta PR — é a parte de maior risco de segurança/qualidade
+de dados de todo o pedido (parsing de ficheiros de terceiros com dados
+pessoais). Ver `docs/PLAN_OPERATIONS_MVP.md` secção 9.3 para a
+justificação completa de a deixar para uma PR própria, mais pequena e
+mais fácil de rever isoladamente.
+
+**Decisão necessária:** nenhuma — é trabalho pendente, não uma decisão de
+desenho por confirmar. Prioridade relativa à pergunta 32 fica ao critério
+do negócio.
+
 ## Podem ser decididas mais tarde
 
 - **Atualização major de `react-router-dom` (6→7) e `vitest`/
