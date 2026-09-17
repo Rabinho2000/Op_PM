@@ -881,3 +881,72 @@ export const applyNotesImport = (batchId: string, targetProjectId?: string) =>
     target_project_id: targetProjectId,
     confirm: true,
   });
+
+// --- Dados satélite do projeto: instalação, licenciamento, comunicação ---
+
+export interface ProjectInstallationData {
+  project_id: string;
+  client_nif: string | null;
+  contact_person_name: string | null;
+  contact_person_role: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  address: string | null;
+  district: string | null;
+  municipality: string | null;
+  power_kwp: number | null;
+  panel_count: number | null;
+  panel_power_wp: number | null;
+  inverters: string | null;
+  batteries: string | null;
+  has_backup: boolean | null;
+  ev_chargers: string | null;
+  installation_type: string | null;
+  injection_type: string | null;
+  om_notes: string | null;
+  notes: string;
+  updated_at: string | null;
+}
+
+export interface ProjectLicensingData {
+  project_id: string;
+  upac_number: string | null;
+  dgeg_number: string | null;
+  cadastro_number: string | null;
+  licensing_status: string | null;
+  registration_date: string | null;
+  certification_request_date: string | null;
+  inspecting_entity: string | null;
+  inspection_date: string | null;
+  certificate_date: string | null;
+  installer: string | null;
+  commercializer: string | null;
+  annual_production_kwh: number | null;
+  comments: string;
+  updated_at: string | null;
+}
+
+export interface ProjectCommunicationData {
+  project_id: string;
+  operator: string | null;
+  gsm_m2m_number: string | null;
+  card_identifier: string | null;
+  communication_status: string | null;
+  notes: string;
+  updated_at: string | null;
+}
+
+export const getProjectInstallationData = (projectId: string) =>
+  apiGet<ProjectInstallationData>(`/api/projects/${projectId}/installation-data`);
+export const updateProjectInstallationData = (projectId: string, changes: Partial<ProjectInstallationData>) =>
+  apiPatch<ProjectInstallationData>(`/api/projects/${projectId}/installation-data`, changes);
+
+export const getProjectLicensingData = (projectId: string) =>
+  apiGet<ProjectLicensingData>(`/api/projects/${projectId}/licensing-data`);
+export const updateProjectLicensingData = (projectId: string, changes: Partial<ProjectLicensingData>) =>
+  apiPatch<ProjectLicensingData>(`/api/projects/${projectId}/licensing-data`, changes);
+
+export const getProjectCommunicationData = (projectId: string) =>
+  apiGet<ProjectCommunicationData>(`/api/projects/${projectId}/communication-data`);
+export const updateProjectCommunicationData = (projectId: string, changes: Partial<ProjectCommunicationData>) =>
+  apiPatch<ProjectCommunicationData>(`/api/projects/${projectId}/communication-data`, changes);

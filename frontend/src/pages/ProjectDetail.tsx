@@ -4,18 +4,27 @@ import {
   ApiError,
   DEFAULT_TASK_TYPE_LABELS,
   getProject,
+  getProjectCommunicationData,
   getProjectHistory,
+  getProjectInstallationData,
+  getProjectLicensingData,
   listPeople,
   listTasks,
   Person,
   Project,
+  ProjectCommunicationData,
   PROJECT_STATUS_LABELS,
   ProjectHistoryEntry,
+  ProjectInstallationData,
+  ProjectLicensingData,
   Task,
   TASK_ALLOWED_NEXT_STATUSES,
   TASK_PRIORITY_LABELS,
   TaskStatus,
   updateProject,
+  updateProjectCommunicationData,
+  updateProjectInstallationData,
+  updateProjectLicensingData,
   updateTask,
 } from "../api/client";
 import Icon from "../components/Icon";
@@ -23,6 +32,7 @@ import TaskFormModal from "../components/TaskForm";
 import TaskStatusControl, { useTaskStatusChange } from "../components/TaskStatusControl";
 import { useToast } from "../components/Toast";
 import { Alert, Avatar, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, ProgressBar } from "../components/ui";
+import { useSession } from "../session/SessionContext";
 import { formatDatePt, formatDateTimePt, relativeDayLabel, todayIsoLisbon } from "../utils/dates";
 import {
   PROJECT_FIELD_LABELS,
@@ -31,7 +41,7 @@ import {
   TASK_TYPE_ICONS,
 } from "../utils/labels";
 
-type TabKey = "resumo" | "tarefas" | "historico" | "cliente";
+type TabKey = "resumo" | "instalacao" | "licenciamento" | "tarefas" | "historico" | "cliente";
 
 // Campos de texto oferecidos no formulário de edição, por ordem. Só são
 // mostrados os que o servidor indica em `project.editable_fields` (D-028).
@@ -158,18 +168,260 @@ function EditProjectModal({
   );
 }
 
+// --- Dados satélite do projeto (instalação/licenciamento/comunicação) ---
+// Um único componente genérico: cada secção só difere na lista de campos
+// e na função de gravação — evita repetir três vezes o mesmo padrão de
+// "ver -> editar -> guardar" já usado por EditProjectModal acima.
+
+interface DataFieldConfig<T> {
+  key: keyof T & string;
+  label: string;
+  type?: "text" | "email" | "number" | "date" | "checkbox";
+  multiline?: boolean;
+}
+
+function DataFieldRow({ label, value, type }: { label: string; value: unknown; type?: DataFieldConfig<object>["type"] }) {
+  let display: React.ReactNode;
+  if (value === null || value === undefined || value === "") {
+    display = <span className="muted">—</span>;
+  } else if (type === "checkbox") {
+    display = value ? "Sim" : "Não";
+  } else if (type === "date") {
+    display = formatDatePt(String(value));
+  } else if (typeof value === "string" && value.includes("\n")) {
+    display = <span style={{ whiteSpace: "pre-wrap" }}>{value}</span>;
+  } else {
+    display = String(value);
+  }
+  return (
+    <>
+      <dt>{label}</dt>
+      <dd>{display}</dd>
+    </>
+  );
+}
+
+function DataSectionCard<T extends object>({
+  title,
+  icon,
+  tone,
+  fields,
+  data,
+  canView,
+  canEdit,
+  onSave,
+}: {
+  title: string;
+  icon: Parameters<typeof Icon>[0]["name"];
+  tone?: "brand" | "success" | "warning" | "danger" | "info" | "violet" | "neutral";
+  fields: DataFieldConfig<T>[];
+  data: T | null;
+  canView: boolean;
+  canEdit: boolean;
+  onSave: (changes: Partial<T>) => Promise<T>;
+}) {
+  const { notify } = useToast();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Record<string, string | boolean>>({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!canView) {
+    return (
+      <Card title={title} icon={icon} tone={tone}>
+        <EmptyState compact icon="lock" title="Sem permissão para ver estes dados." />
+      </Card>
+    );
+  }
+
+  if (data === null) {
+    return (
+      <Card title={title} icon={icon} tone={tone}>
+        <LoadingState rows={4} />
+      </Card>
+    );
+  }
+
+  function startEditing() {
+    const initial: Record<string, string | boolean> = {};
+    for (const f of fields) {
+      const value = data![f.key];
+      initial[f.key] = f.type === "checkbox" ? Boolean(value) : value === null || value === undefined ? "" : String(value);
+    }
+    setDraft(initial);
+    setError(null);
+    setEditing(true);
+  }
+
+  async function handleSave() {
+    const changes: Record<string, unknown> = {};
+    for (const f of fields) {
+      const current = data![f.key];
+      const draftValue = draft[f.key];
+      let normalized: unknown;
+      if (f.type === "checkbox") normalized = Boolean(draftValue);
+      else if (f.type === "number") normalized = draftValue === "" ? null : Number(draftValue);
+      else normalized = draftValue === "" ? null : draftValue;
+      const currentComparable = current ?? (f.type === "checkbox" ? false : null);
+      if (String(normalized) !== String(currentComparable)) {
+        changes[f.key] = normalized;
+      }
+    }
+    if (Object.keys(changes).length === 0) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(changes as Partial<T>);
+      setEditing(false);
+      notify("Dados atualizados.", "success");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : "Não foi possível guardar as alterações.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card
+      title={title}
+      icon={icon}
+      tone={tone}
+      actions={
+        canEdit && !editing ? (
+          <button type="button" className="btn btn--sm" onClick={startEditing}>
+            <Icon name="wrench" size={14} /> Editar
+          </button>
+        ) : undefined
+      }
+    >
+      {error && (
+        <div style={{ marginBottom: 12 }}>
+          <Alert tone="danger">{error}</Alert>
+        </div>
+      )}
+      {!editing ? (
+        <dl className="kv">
+          {fields.map((f) => (
+            <DataFieldRow key={f.key} label={f.label} value={data[f.key]} type={f.type} />
+          ))}
+        </dl>
+      ) : (
+        <div className="form-grid">
+          {fields.map((f) => (
+            <div key={f.key} className={`field ${f.multiline ? "span-2" : ""}`}>
+              <label htmlFor={`f-${f.key}`}>{f.label}</label>
+              {f.type === "checkbox" ? (
+                <input
+                  id={`f-${f.key}`}
+                  type="checkbox"
+                  checked={Boolean(draft[f.key])}
+                  onChange={(e) => setDraft({ ...draft, [f.key]: e.target.checked })}
+                />
+              ) : f.multiline ? (
+                <textarea
+                  id={`f-${f.key}`}
+                  className="textarea"
+                  rows={3}
+                  value={(draft[f.key] as string) ?? ""}
+                  onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
+                />
+              ) : (
+                <input
+                  id={`f-${f.key}`}
+                  className="input"
+                  type={f.type === "number" ? "number" : f.type === "date" ? "date" : f.type === "email" ? "email" : "text"}
+                  value={(draft[f.key] as string) ?? ""}
+                  onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
+                />
+              )}
+            </div>
+          ))}
+          <div className="span-2" style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button type="button" className="btn" onClick={() => setEditing(false)} disabled={saving}>
+              Cancelar
+            </button>
+            <button type="button" className="btn btn--primary" onClick={handleSave} disabled={saving}>
+              {saving ? "A guardar…" : "Guardar"}
+            </button>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+const INSTALLATION_FIELDS: DataFieldConfig<ProjectInstallationData>[] = [
+  { key: "client_nif", label: "NIF" },
+  { key: "contact_person_name", label: "Pessoa de contacto" },
+  { key: "contact_person_role", label: "Função" },
+  { key: "contact_email", label: "Email de contacto", type: "email" },
+  { key: "contact_phone", label: "Telefone" },
+  { key: "address", label: "Morada" },
+  { key: "district", label: "Distrito" },
+  { key: "municipality", label: "Concelho" },
+  { key: "power_kwp", label: "Potência (kWp)", type: "number" },
+  { key: "panel_count", label: "Nº de painéis", type: "number" },
+  { key: "panel_power_wp", label: "Potência dos painéis (Wp)", type: "number" },
+  { key: "inverters", label: "Inversores" },
+  { key: "batteries", label: "Baterias" },
+  { key: "has_backup", label: "Backup", type: "checkbox" },
+  { key: "ev_chargers", label: "Carregadores VE" },
+  { key: "installation_type", label: "Tipo de instalação" },
+  { key: "injection_type", label: "Injeção" },
+  { key: "om_notes", label: "O&M", multiline: true },
+  { key: "notes", label: "Notas", multiline: true },
+];
+
+const LICENSING_FIELDS: DataFieldConfig<ProjectLicensingData>[] = [
+  { key: "upac_number", label: "Nº UPAC" },
+  { key: "dgeg_number", label: "Nº DGEG" },
+  { key: "cadastro_number", label: "Nº de cadastro" },
+  { key: "licensing_status", label: "Estado do licenciamento" },
+  { key: "registration_date", label: "Data de registo", type: "date" },
+  { key: "certification_request_date", label: "Data de pedido de certificação", type: "date" },
+  { key: "inspecting_entity", label: "Entidade inspetora" },
+  { key: "inspection_date", label: "Data de inspeção", type: "date" },
+  { key: "certificate_date", label: "Data de certificado", type: "date" },
+  { key: "installer", label: "Instalador" },
+  { key: "commercializer", label: "Comercializador" },
+  { key: "annual_production_kwh", label: "Produção anual (kWh)", type: "number" },
+  { key: "comments", label: "Comentários", multiline: true },
+];
+
+const COMMUNICATION_FIELDS: DataFieldConfig<ProjectCommunicationData>[] = [
+  { key: "operator", label: "Operador" },
+  { key: "gsm_m2m_number", label: "Número GSM/M2M" },
+  { key: "card_identifier", label: "Identificador do cartão" },
+  { key: "communication_status", label: "Estado da comunicação" },
+  { key: "notes", label: "Notas", multiline: true },
+];
+
 export default function ProjectDetail() {
   const { projectId } = useParams<{ projectId: string }>();
   const { notify } = useToast();
+  const { can } = useSession();
   const [project, setProject] = useState<Project | null>(null);
   const [history, setHistory] = useState<ProjectHistoryEntry[] | null>(null);
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
+  const [installationData, setInstallationData] = useState<ProjectInstallationData | null>(null);
+  const [licensingData, setLicensingData] = useState<ProjectLicensingData | null>(null);
+  const [communicationData, setCommunicationData] = useState<ProjectCommunicationData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("resumo");
   const [editing, setEditing] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
   const [justDone, setJustDone] = useState<string | null>(null);
+
+  const canViewInstallation = can("project.view_installation_data");
+  const canEditInstallation = can("project.edit_installation_data");
+  const canViewLicensing = can("project.view_licensing_data");
+  const canEditLicensing = can("project.edit_licensing_data");
+  const canViewCommunication = can("project.view_communication_data");
+  const canEditCommunication = can("project.edit_communication_data");
 
   const load = useCallback(() => {
     if (!projectId) return;
@@ -183,7 +435,22 @@ export default function ProjectDetail() {
     listTasks({ project_id: projectId })
       .then(setTasks)
       .catch(() => setTasks([]));
-  }, [projectId]);
+    if (canViewInstallation) {
+      getProjectInstallationData(projectId)
+        .then(setInstallationData)
+        .catch(() => setInstallationData(null));
+    }
+    if (canViewLicensing) {
+      getProjectLicensingData(projectId)
+        .then(setLicensingData)
+        .catch(() => setLicensingData(null));
+    }
+    if (canViewCommunication) {
+      getProjectCommunicationData(projectId)
+        .then(setCommunicationData)
+        .catch(() => setCommunicationData(null));
+    }
+  }, [projectId, canViewInstallation, canViewLicensing, canViewCommunication]);
 
   useEffect(load, [load]);
   useEffect(() => {
@@ -249,6 +516,8 @@ export default function ProjectDetail() {
 
   const tabs: { key: TabKey; label: string; count?: number }[] = [
     { key: "resumo", label: "Resumo" },
+    ...(canViewInstallation ? [{ key: "instalacao" as TabKey, label: "Dados da instalação" }] : []),
+    ...(canViewLicensing || canViewCommunication ? [{ key: "licenciamento" as TabKey, label: "Licenciamento" }] : []),
     { key: "tarefas", label: "Tarefas", count: tasks?.length },
     { key: "historico", label: "Histórico", count: history?.length },
     { key: "cliente", label: "Cliente" },
@@ -434,6 +703,54 @@ export default function ProjectDetail() {
                 </button>
               </Card>
             </div>
+          </div>
+        )}
+
+        {tab === "instalacao" && (
+          <DataSectionCard
+            title="Dados da instalação"
+            icon="wrench"
+            fields={INSTALLATION_FIELDS}
+            data={installationData}
+            canView={canViewInstallation}
+            canEdit={canEditInstallation}
+            onSave={async (changes) => {
+              const updated = await updateProjectInstallationData(project.id, changes);
+              setInstallationData(updated);
+              return updated;
+            }}
+          />
+        )}
+
+        {tab === "licenciamento" && (
+          <div className="grid grid--main-side">
+            <DataSectionCard
+              title="Licenciamento"
+              icon="checkCircle"
+              fields={LICENSING_FIELDS}
+              data={licensingData}
+              canView={canViewLicensing}
+              canEdit={canEditLicensing}
+              onSave={async (changes) => {
+                const updated = await updateProjectLicensingData(project.id, changes);
+                setLicensingData(updated);
+                return updated;
+              }}
+            />
+            <DataSectionCard
+              title="Comunicação / M2M"
+              icon="lock"
+              tone="violet"
+              fields={COMMUNICATION_FIELDS}
+              data={communicationData}
+              canView={canViewCommunication}
+              canEdit={canEditCommunication}
+              onSave={async (changes) => {
+                const updated = await updateProjectCommunicationData(project.id, changes);
+                setCommunicationData(updated);
+                return updated;
+              }}
+            />
           </div>
         )}
 
