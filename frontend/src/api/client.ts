@@ -798,12 +798,34 @@ export interface PerformanceSummary {
   yearly: YearlyIndicator[];
 }
 
-export function getPerformanceSummary(filters: { year?: number; pm_person_id?: string } = {}): Promise<PerformanceSummary> {
+export interface PerformanceFilters {
+  year?: number;
+  pm_person_id?: string;
+  period_type?: "year" | "quarter" | "semester" | "month";
+  quarter?: number;
+  semester?: number;
+  month?: number;
+}
+
+function performanceFiltersToParams(filters: PerformanceFilters): string {
   const params = new URLSearchParams();
   if (filters.year) params.set("year", String(filters.year));
   if (filters.pm_person_id) params.set("pm_person_id", filters.pm_person_id);
-  const qs = params.toString();
+  if (filters.period_type) params.set("period_type", filters.period_type);
+  if (filters.quarter) params.set("quarter", String(filters.quarter));
+  if (filters.semester) params.set("semester", String(filters.semester));
+  if (filters.month) params.set("month", String(filters.month));
+  return params.toString();
+}
+
+export function getPerformanceSummary(filters: PerformanceFilters = {}): Promise<PerformanceSummary> {
+  const qs = performanceFiltersToParams(filters);
   return apiGet<PerformanceSummary>(`/api/performance/summary${qs ? `?${qs}` : ""}`);
+}
+
+export function listGoals(filters: PerformanceFilters = {}): Promise<GoalPeriod[]> {
+  const qs = performanceFiltersToParams(filters);
+  return apiGet<GoalPeriod[]>(`/api/performance/goals${qs ? `?${qs}` : ""}`);
 }
 
 export const createGoal = (payload: {

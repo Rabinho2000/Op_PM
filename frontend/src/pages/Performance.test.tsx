@@ -1,7 +1,7 @@
 // Metas e indicadores: página única (nunca "Metas"/"Dashboards"
 // separados), progresso sempre calculado no servidor, "Nova meta" só a
 // quem tem performance.manage_goals.
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GoalPeriod, PerformanceSummary } from "../api/client";
 import { makeMe } from "../test/fixtures";
@@ -11,6 +11,8 @@ import Performance from "./Performance";
 const api = vi.hoisted(() => ({
   getPerformanceSummary: vi.fn(),
   createGoal: vi.fn(),
+  updateGoal: vi.fn(),
+  listPeople: vi.fn(),
 }));
 
 vi.mock("../api/client", async () => {
@@ -63,6 +65,7 @@ function summary(overrides: Partial<PerformanceSummary> = {}): PerformanceSummar
 beforeEach(() => {
   Object.values(api).forEach((fn) => fn.mockReset());
   api.getPerformanceSummary.mockResolvedValue(summary());
+  api.listPeople.mockResolvedValue([]);
 });
 
 describe("Metas e indicadores", () => {
@@ -96,5 +99,44 @@ describe("Metas e indicadores", () => {
   it("PM só com performance.view_own continua a ver a página", async () => {
     renderWithProviders(<Performance />, { me: makeMe({ permissions: ["performance.view_own"] }) });
     expect((await screen.findAllByText(/Instalações concluídas/)).length).toBeGreaterThan(0);
+  });
+
+  it("muda de período (trimestre) e volta a pedir o resumo com esse filtro", async () => {
+    renderWithProviders(<Performance />, { me: makeMe({ permissions: ["performance.view_all"] }) });
+    await screen.findAllByText(/Instalações concluídas/);
+    api.getPerformanceSummary.mockClear();
+
+    fireEvent.change(screen.getByLabelText("Período"), { target: { value: "quarter" } });
+    await waitFor(() => expect(screen.getByLabelText("Trimestre")).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText("Trimestre"), { target: { value: "2" } });
+
+    await waitFor(() =>
+      expect(api.getPerformanceSummary).toHaveBeenLastCalledWith(
+        expect.objectContaining({ period_type: "quarter", quarter: 2 })
+      )
+    );
+  });
+
+  it("permite editar uma meta existente com performance.manage_goals", async () => {
+    renderWithProviders(<Performance />, {
+      me: makeMe({ permissions: ["performance.view_all", "performance.manage_goals"] }),
+    });
+    await screen.findAllByText(/Instalações concluídas/);
+
+    fireEvent.click(screen.getByRole("button", { name: /editar/i }));
+    const targetInput = await screen.findByLabelText("Valor do objetivo");
+    fireEvent.change(targetInput, { target: { value: "60" } });
+
+    api.updateGoal.mockResolvedValue(goal({ target_value: "60.000" }));
+    fireEvent.click(screen.getByRole("button", { name: /^guardar$/i }));
+
+    await waitFor(() => expect(api.updateGoal).toHaveBeenCalledWith("goal-1", { target_value: "60", notes: "" }));
+  });
+
+  it("esconde o botão 'Editar' de cada meta sem performance.manage_goals", async () => {
+    renderWithProviders(<Performance />, { me: makeMe({ permissions: ["performance.view_all"] }) });
+    await screen.findAllByText(/Instalações concluídas/);
+    expect(screen.queryByRole("button", { name: /editar/i })).not.toBeInTheDocument();
   });
 });
