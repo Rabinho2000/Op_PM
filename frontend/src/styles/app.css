@@ -1934,3 +1934,123 @@ a.cell-title:hover {
 .login__brand .solcor-logo {
   max-width: 220px;
 }
+
+/* Planeamento (calendário) */
+
+.planning-week {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+  background: var(--border);
+}
+
+.planning-week__day {
+  background: var(--surface);
+  min-height: 160px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.planning-week__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-subtle);
+  text-transform: capitalize;
+}
+
+.planning-week__add {
+  border: none;
+  background: none;
+  color: var(--text-subtle);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.planning-week__add:hover {
+  background: var(--surface-2);
+  color: var(--brand);
+}
+
+.planning-week__events {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.planning-month {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+  background: var(--border);
+}
+
+.planning-month__day {
+  background: var(--surface);
+  min-height: 96px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.planning-month__day--muted {
+  background: var(--surface-2);
+  opacity: 0.6;
+}
+
+.planning-month__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-subtle);
+}
+
+.planning-month__more {
+  font-size: 0.72rem;
+  color: var(--text-subtle);
+  padding-left: 2px;
+}
+
+.planning-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+  font-size: 0.74rem;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  overflow: hidden;
+}
+
+.planning-chip__time {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.planning-chip__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .planning-week,
+  .planning-month {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

@@ -25,6 +25,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: "/tasks", label: "Tarefas", icon: "tasks" },
   { to: "/inventory", label: "Inventário", icon: "database", permission: "inventory.view" },
   { to: "/map", label: "Mapa", icon: "mapPin", permission: "map.view" },
+  { to: "/planning", label: "Planeamento", icon: "calendar", permission: "calendar.view" },
   {
     to: "/performance",
     label: "Metas e indicadores",
@@ -45,6 +46,7 @@ const PAGE_TITLES: [string, string][] = [
   ["/tasks", "Tarefas"],
   ["/inventory", "Inventário"],
   ["/map", "Mapa"],
+  ["/planning", "Planeamento"],
   ["/performance", "Metas e indicadores"],
   ["/vacations", "Férias e aniversários"],
   ["/reconciliation", "Reconciliação de PM"],

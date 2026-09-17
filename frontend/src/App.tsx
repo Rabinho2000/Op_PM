@@ -11,6 +11,7 @@ import Inventory from "./pages/Inventory";
 import Login from "./pages/Login";
 import MapPage from "./pages/Map";
 import Performance from "./pages/Performance";
+import Planning from "./pages/Planning";
 import ProjectDetail from "./pages/ProjectDetail";
 import ProjectsList from "./pages/ProjectsList";
 import ReconciliationQueue from "./pages/ReconciliationQueue";
@@ -114,6 +115,7 @@ export default function App() {
           <Route path="/inventory" element={<Inventory />} />
           <Route path="/map" element={<MapPage />} />
           <Route path="/performance" element={<Performance />} />
+          <Route path="/planning" element={<Planning />} />
           <Route path="/vacations" element={<Vacations />} />
           <Route path="/reconciliation" element={<ReconciliationQueue />} />
           <Route path="/status" element={<SystemStatus />} />

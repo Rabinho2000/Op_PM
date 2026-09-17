@@ -1069,3 +1069,74 @@ export const updateProjectIssue = (projectId: string, issueId: string, changes: 
   apiPatch<ProjectIssue>(`/api/projects/${projectId}/issues/${issueId}`, changes);
 export const convertIssueToTask = (projectId: string, issueId: string, title: string) =>
   apiPost<Task>(`/api/projects/${projectId}/issues/${issueId}/convert-to-task`, { title });
+
+// --- Planeamento (calendário) ---
+
+export interface CalendarEvent {
+  id: string;
+  visit_id: string | null;
+  project_id: string | null;
+  task_id: string | null;
+  assigned_to_person_id: string | null;
+  title: string;
+  starts_at: string;
+  ends_at: string;
+  status: string;
+  graph_event_id: string | null;
+  created_at: string;
+  project_name: string | null;
+  task_title: string | null;
+  assigned_to_display_name: string | null;
+  can_manage: boolean;
+}
+
+export interface CalendarEventFilters {
+  project_id?: string;
+  assigned_to_person_id?: string;
+  mine_only?: boolean;
+  starts_from?: string;
+  starts_to?: string;
+}
+
+function calendarFiltersToParams(filters: CalendarEventFilters): URLSearchParams {
+  const params = new URLSearchParams();
+  if (filters.project_id) params.set("project_id", filters.project_id);
+  if (filters.assigned_to_person_id) params.set("assigned_to_person_id", filters.assigned_to_person_id);
+  if (filters.mine_only) params.set("mine_only", "true");
+  if (filters.starts_from) params.set("starts_from", filters.starts_from);
+  if (filters.starts_to) params.set("starts_to", filters.starts_to);
+  return params;
+}
+
+export function listCalendarEvents(filters: CalendarEventFilters = {}): Promise<CalendarEvent[]> {
+  const qs = calendarFiltersToParams(filters).toString();
+  return apiGet<CalendarEvent[]>(`/api/planning/events${qs ? `?${qs}` : ""}`);
+}
+
+export interface CalendarEventCreatePayload {
+  title: string;
+  starts_at: string;
+  ends_at: string;
+  project_id?: string | null;
+  task_id?: string | null;
+  assigned_to_person_id?: string | null;
+}
+
+export const createCalendarEvent = (payload: CalendarEventCreatePayload) =>
+  apiPost<CalendarEvent>("/api/planning/events", payload);
+
+export interface CalendarEventUpdatePayload {
+  title?: string;
+  starts_at?: string;
+  ends_at?: string;
+  project_id?: string | null;
+  task_id?: string | null;
+  assigned_to_person_id?: string | null;
+  status?: string;
+}
+
+export const updateCalendarEvent = (id: string, changes: CalendarEventUpdatePayload) =>
+  apiPatch<CalendarEvent>(`/api/planning/events/${id}`, changes);
+
+export const cancelCalendarEvent = (id: string) =>
+  apiPost<CalendarEvent>(`/api/planning/events/${id}/cancel`, {});
