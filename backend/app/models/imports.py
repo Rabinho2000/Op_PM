@@ -119,4 +119,27 @@ class FieldImportConflict(UUIDPk, TimestampMixin, Base):
     record: Mapped["FieldImportRecord"] = relationship(back_populates="conflicts")
 
 
-__all__ = ["FieldImportBatch", "FieldImportRecord", "FieldImportConflict"]
+class SurplusContract(UUIDPk, TimestampMixin, Base):
+    """Venda do excedente — vem do Excel de licenciamento, folha "Venda do
+    excedente". `project_id` fica `None` quando o vínculo ao projeto não
+    é inequívoco (fila de conflitos manual, ver docs/DATA_IMPORTS.md)."""
+
+    __tablename__ = "surplus_contracts"
+
+    project_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("projects.id"), nullable=True)
+    internal_reference_raw: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    commercializer: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    contract_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sent_date: Mapped[dt.date | None] = mapped_column(nullable=True)
+    signed_date: Mapped[dt.date | None] = mapped_column(nullable=True)
+    duration: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    start_date: Mapped[dt.date | None] = mapped_column(nullable=True)
+    end_date: Mapped[dt.date | None] = mapped_column(nullable=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    import_batch_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("field_import_batches.id"), nullable=True
+    )
+
+
+__all__ = ["FieldImportBatch", "FieldImportRecord", "FieldImportConflict", "SurplusContract"]

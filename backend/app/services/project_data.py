@@ -58,6 +58,7 @@ def _upsert(
     changes: dict,
     changed_by_person_id: uuid.UUID | None,
     source: str = "ui",
+    note: str = "",
 ) -> _ModelT:
     entity_type = _ENTITY_TYPE_BY_MODEL[model_cls]
     instance = db.query(model_cls).filter(model_cls.project_id == project_id).one_or_none()
@@ -78,6 +79,7 @@ def _upsert(
                 new_value=str(new_value) if new_value is not None else None,
                 changed_by_person_id=changed_by_person_id,
                 source=source,
+                note=note,
             )
         )
         setattr(instance, field_name, new_value)
@@ -88,7 +90,13 @@ def _upsert(
 
 
 def upsert_installation_data(
-    db: Session, *, project_id: uuid.UUID, changes: dict, changed_by_person_id: uuid.UUID | None, source: str = "ui"
+    db: Session,
+    *,
+    project_id: uuid.UUID,
+    changes: dict,
+    changed_by_person_id: uuid.UUID | None,
+    source: str = "ui",
+    note: str = "",
 ) -> ProjectInstallationData:
     return _upsert(
         db,
@@ -97,11 +105,18 @@ def upsert_installation_data(
         changes=changes,
         changed_by_person_id=changed_by_person_id,
         source=source,
+        note=note,
     )
 
 
 def upsert_licensing_data(
-    db: Session, *, project_id: uuid.UUID, changes: dict, changed_by_person_id: uuid.UUID | None, source: str = "ui"
+    db: Session,
+    *,
+    project_id: uuid.UUID,
+    changes: dict,
+    changed_by_person_id: uuid.UUID | None,
+    source: str = "ui",
+    note: str = "",
 ) -> ProjectLicensingData:
     return _upsert(
         db,
@@ -110,11 +125,18 @@ def upsert_licensing_data(
         changes=changes,
         changed_by_person_id=changed_by_person_id,
         source=source,
+        note=note,
     )
 
 
 def upsert_communication_data(
-    db: Session, *, project_id: uuid.UUID, changes: dict, changed_by_person_id: uuid.UUID | None, source: str = "ui"
+    db: Session,
+    *,
+    project_id: uuid.UUID,
+    changes: dict,
+    changed_by_person_id: uuid.UUID | None,
+    source: str = "ui",
+    note: str = "",
 ) -> ProjectCommunicationData:
     return _upsert(
         db,
@@ -123,6 +145,7 @@ def upsert_communication_data(
         changes=changes,
         changed_by_person_id=changed_by_person_id,
         source=source,
+        note=note,
     )
 
 
