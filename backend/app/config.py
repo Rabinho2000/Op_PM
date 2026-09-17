@@ -138,6 +138,15 @@ class Settings(BaseSettings):
     claude_api_key: str = Field(default="", alias="CLAUDE_API_KEY")
     claude_model: str = Field(default="claude-sonnet-5", alias="CLAUDE_MODEL")
 
+    # --- Mapa operacional (ver docs/MAP_AND_PLANNING.md) ---
+    # Sem provider configurado, GET /api/map/data continua a devolver os
+    # dados (projetos/fornecedores/recolhas/pendências) — o frontend mostra
+    # um aviso claro em vez de tiles, e a lista de locais como alternativa;
+    # nunca dependemos de um serviço externo para o resto da app funcionar.
+    map_provider_enabled: bool = Field(default=False, alias="MAP_PROVIDER_ENABLED")
+    map_tile_url: str = Field(default="", alias="MAP_TILE_URL")
+    map_tile_attribution: str = Field(default="", alias="MAP_TILE_ATTRIBUTION")
+
     # --- CORS (frontend a falar com esta API) ---
     # Em 'local'/'test', o servidor liberta sempre localhost em qualquer
     # porta (conveniência de desenvolvimento — `npm run dev` muda de porta

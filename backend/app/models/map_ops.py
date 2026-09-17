@@ -8,7 +8,7 @@ import datetime as dt
 import uuid
 
 from sqlalchemy import Boolean, Float, ForeignKey, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
@@ -58,3 +58,5 @@ class ProjectIssue(UUIDPk, TimestampMixin, Base):
     created_by_person_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("people.id"), nullable=True
     )
+
+    project: Mapped["Project"] = relationship()
