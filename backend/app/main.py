@@ -6,6 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes_absences import router as absences_router
 from app.api.routes_dashboard import router as dashboard_router
 from app.api.routes_health import router as health_router
+from app.api.routes_inventory import project_router as project_inventory_router
+from app.api.routes_inventory import router as inventory_router
 from app.api.routes_me import router as me_router
 from app.api.routes_migration import router as migration_router
 from app.api.routes_people import router as people_router
@@ -42,6 +44,8 @@ app.include_router(people_router)
 app.include_router(tasks_router)
 app.include_router(absences_router)
 app.include_router(dashboard_router)
+app.include_router(inventory_router)
+app.include_router(project_inventory_router)
 
 
 @app.get("/")

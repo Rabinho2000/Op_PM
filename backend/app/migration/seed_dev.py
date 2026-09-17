@@ -30,9 +30,23 @@ from app.config import HARDENED_ENVIRONMENTS, get_settings
 from app.db import Base, SessionLocal, engine
 from app.models.absence import TYPE_BAIXA_MEDICA, TYPE_FERIAS, Absence
 from app.models.identity import Permission, Role, RolePermission, User, UserRole
-from app.models.inventory import InventoryItem
+from app.models.inventory import (
+    CENTRAL_LOCATION_CODE,
+    LOCATION_TYPE_CENTRAL,
+    MOVEMENT_CONSUMO,
+    MOVEMENT_ENTRADA,
+    MOVEMENT_LIBERTA_RESERVA,
+    MOVEMENT_RESERVA,
+    InventoryItem,
+    InventoryLocation,
+    InventoryMovement,
+    ProjectMaterialRequirement,
+)
+from app.models.map_ops import PickupPoint, ProjectIssue
 from app.models.people import Person
+from app.models.performance import GoalPeriod
 from app.models.project import Project
+from app.models.project_data import ProjectCommunicationData, ProjectInstallationData, ProjectLicensingData
 from app.models.supplier import Supplier
 from app.models.task import (
     STATUS_BLOCKED,
@@ -510,11 +524,282 @@ def seed_absences(db: Session) -> None:
     )
 
 
-def seed_supplier_and_inventory(db: Session) -> None:
-    if db.query(Supplier).count() == 0:
-        db.add(Supplier(name="Fornecedor Sintético Lda.", category="material_eletrico", is_preferred=True, lead_time_days=10))
-    if db.query(InventoryItem).count() == 0:
-        db.add(InventoryItem(sku="SYNTH-INV-001", name="Item de inventário sintético", unit="un", min_stock=5))
+def seed_map_and_inventory(db: Session) -> None:
+    """Localização central IdealMinde, fornecedores, ponto de recolha,
+    pendências de obra, e o cenário exato de inventário pedido para a
+    demonstração (ver docs/PLAN_OPERATIONS_MVP.md secção 10):
+
+        Stock físico central: 95 km
+        Stock disponível:     80 km
+        Reservado (Projeto A - demo): 15 km
+        Consumido (Projeto A - demo): 5 km
+
+    Alcançado com: 100 km entram -> reserva 20 -> consome 5 -> liberta 10
+    -> reserva mais 10. Escrito diretamente como `InventoryMovement`
+    (mesmo resultado que chamar app/services/inventory.py, sem os commits
+    intermédios que o serviço faz a cada operação — aqui só há um commit
+    no fim de run_seed())."""
+    if db.query(Supplier).count() > 0:
+        return
+
+    pm_um = db.query(Person).filter(Person.display_name == "PM Sintético Um").one()
+    chefe = db.query(Person).filter(Person.display_name == "Chefe Sintético").one()
+    demo = db.query(Project).filter(Project.name == "Instalação Sintética de Demonstração").one()
+    starting_soon = db.query(Project).filter(Project.name.like("%Início Próximo%")).first()
+
+    supplier_a = Supplier(
+        name="Fornecedor Sintético de Material Elétrico Lda.",
+        category="material_eletrico",
+        contact="Contacto Sintético do Fornecedor A",
+        email="fornecedor.a.sintetico@example.invalid",
+        address="Morada sintética do Fornecedor A",
+        lat=41.15,
+        lon=-8.61,
+        is_preferred=True,
+        lead_time_days=10,
+        materials="Cabo DC, conectores MC4, quadros elétricos",
+        is_active=True,
+    )
+    supplier_b = Supplier(
+        name="Fornecedor Sintético de Estruturas Lda.",
+        category="estruturas",
+        contact="Contacto Sintético do Fornecedor B",
+        email="fornecedor.b.sintetico@example.invalid",
+        address="Morada sintética do Fornecedor B",
+        lat=40.98,
+        lon=-8.42,
+        is_preferred=False,
+        lead_time_days=15,
+        materials="Estruturas de fixação, parafusaria",
+        is_active=True,
+    )
+    db.add_all([supplier_a, supplier_b])
+    db.flush()
+
+    db.add(
+        PickupPoint(
+            name="Ponto de Recolha Sintético Central",
+            supplier_id=supplier_a.id,
+            address="Morada sintética do ponto de recolha",
+            lat=41.10,
+            lon=-8.55,
+            schedule="Dias úteis, 9h-18h",
+            contact="Contacto Sintético do Armazém",
+            materials="Cabo DC, conectores MC4",
+            is_active=True,
+        )
+    )
+
+    central = InventoryLocation(
+        code=CENTRAL_LOCATION_CODE, name="Armazém IdealMinde", location_type=LOCATION_TYPE_CENTRAL
+    )
+    db.add(central)
+
+    cable = InventoryItem(
+        sku="CABO-DC-6MM", name="Cabo solar DC 6mm²", unit="km", min_stock="10.000", preferred_supplier_id=supplier_a.id
+    )
+    connectors = InventoryItem(sku="MC4-PAR", name="Par de conectores MC4", unit="un", min_stock="50.000")
+    breaker = InventoryItem(sku="DISJ-DC-16A", name="Disjuntor DC 16A", unit="un", min_stock="5.000")
+    rail = InventoryItem(
+        sku="TRILHO-AL-4M", name="Trilho de alumínio 4m", unit="un", min_stock="20.000", preferred_supplier_id=supplier_b.id
+    )
+    clamp = InventoryItem(sku="GRAMPO-MEIO", name="Grampo intermédio", unit="un", min_stock="100.000")
+    db.add_all([cable, connectors, breaker, rail, clamp])
+    db.flush()
+
+    db.add_all(
+        [
+            InventoryMovement(
+                item_id=cable.id,
+                movement_type=MOVEMENT_ENTRADA,
+                quantity="100.000",
+                location_id=central.id,
+                reference="Entrada sintética inicial de cabo DC.",
+                created_by_person_id=chefe.id,
+            ),
+            InventoryMovement(
+                item_id=cable.id,
+                movement_type=MOVEMENT_RESERVA,
+                quantity="20.000",
+                project_id=demo.id,
+                reference="Reserva sintética para a instalação de demonstração.",
+                created_by_person_id=pm_um.id,
+            ),
+            InventoryMovement(
+                item_id=cable.id,
+                movement_type=MOVEMENT_CONSUMO,
+                quantity="5.000",
+                project_id=demo.id,
+                reference="Consumo sintético durante a instalação.",
+                created_by_person_id=pm_um.id,
+            ),
+            InventoryMovement(
+                item_id=cable.id,
+                movement_type=MOVEMENT_LIBERTA_RESERVA,
+                quantity="10.000",
+                project_id=demo.id,
+                reference="Libertação sintética de reserva sobrante.",
+                created_by_person_id=pm_um.id,
+            ),
+            InventoryMovement(
+                item_id=cable.id,
+                movement_type=MOVEMENT_RESERVA,
+                quantity="10.000",
+                project_id=demo.id,
+                reference="Segunda reserva sintética — fase seguinte da instalação.",
+                created_by_person_id=pm_um.id,
+            ),
+            InventoryMovement(
+                item_id=connectors.id,
+                movement_type=MOVEMENT_ENTRADA,
+                quantity="200.000",
+                location_id=central.id,
+                created_by_person_id=chefe.id,
+            ),
+            InventoryMovement(
+                item_id=breaker.id,
+                movement_type=MOVEMENT_ENTRADA,
+                quantity="2.000",
+                location_id=central.id,
+                created_by_person_id=chefe.id,
+            ),
+        ]
+    )
+
+    db.add(
+        ProjectMaterialRequirement(
+            project_id=demo.id,
+            item_id=cable.id,
+            quantity_required="30.000",
+            notes="Necessidade sintética de cabo DC para a instalação de demonstração.",
+            created_by_person_id=pm_um.id,
+        )
+    )
+    # Item propositadamente sem stock nenhum, para demonstrar "material em
+    # falta" com o stock central insuficiente para cobrir a necessidade.
+    db.add(
+        ProjectMaterialRequirement(
+            project_id=demo.id,
+            item_id=breaker.id,
+            quantity_required="10.000",
+            notes="Necessidade sintética acima do stock disponível — demonstra material em falta.",
+            created_by_person_id=pm_um.id,
+        )
+    )
+
+    db.add(
+        ProjectIssue(
+            project_id=demo.id,
+            description="Painéis ainda em obra — falta concluir a fixação da última fileira.",
+            category="obra",
+            priority="high",
+            status="aberta",
+            assigned_to_person_id=pm_um.id,
+            lat=demo.lat,
+            lon=demo.lon,
+            created_by_person_id=chefe.id,
+        )
+    )
+    if starting_soon is not None:
+        db.add(
+            ProjectIssue(
+                project_id=starting_soon.id,
+                description="Documentação de licenciamento em falta antes do início da obra.",
+                category="documentacao",
+                priority="medium",
+                status="aberta",
+                lat=starting_soon.lat,
+                lon=starting_soon.lon,
+                created_by_person_id=chefe.id,
+            )
+        )
+
+    db.add(
+        ProjectInstallationData(
+            project_id=demo.id,
+            client_nif="123456789",
+            contact_person_name="Contacto Sintético da Instalação",
+            contact_person_role="Proprietário",
+            contact_email="contacto.instalacao.sintetico@example.invalid",
+            contact_phone="912345678",
+            address=demo.address,
+            district="Porto",
+            municipality="Porto",
+            power_kwp=demo.power_kwp,
+            panel_count=24,
+            panel_power_wp=450,
+            inverters="1x inversor híbrido sintético 10kW",
+            batteries="1x bateria sintética 10kWh",
+            has_backup=True,
+            installation_type="Autoconsumo com armazenamento",
+            injection_type="Injeção parcial na rede",
+            notes="Dados de instalação sintéticos para demonstração.",
+        )
+    )
+    db.add(
+        ProjectLicensingData(
+            project_id=demo.id,
+            upac_number="UPAC-SINT-0001",
+            dgeg_number="DGEG-SINT-0001",
+            licensing_status="registado",
+            registration_date=dt.date.today() - dt.timedelta(days=60),
+            installer="Instalador Sintético Lda.",
+            annual_production_kwh=14500.0,
+            comments="Licenciamento sintético para demonstração.",
+        )
+    )
+    db.add(
+        ProjectCommunicationData(
+            project_id=demo.id,
+            operator="Operador Sintético",
+            gsm_m2m_number="912000000",
+            communication_status="ativo",
+            notes="Dados de comunicação/M2M sintéticos — nunca contêm credenciais.",
+        )
+    )
+
+
+def seed_performance_goals(db: Session) -> None:
+    if db.query(GoalPeriod).count() > 0:
+        return
+    chefe = db.query(Person).filter(Person.display_name == "Chefe Sintético").one()
+    pm_um = db.query(Person).filter(Person.display_name == "PM Sintético Um").one()
+    year = dt.date.today().year
+    quarter = (dt.date.today().month - 1) // 3 + 1
+
+    db.add_all(
+        [
+            GoalPeriod(
+                period_type="year",
+                year=year,
+                metric="installations",
+                target_value="40.000",
+                scope="company",
+                created_by_person_id=chefe.id,
+                notes="Meta anual sintética de instalações concluídas.",
+            ),
+            GoalPeriod(
+                period_type="year",
+                year=year,
+                metric="kwp",
+                target_value="500.000",
+                scope="company",
+                created_by_person_id=chefe.id,
+                notes="Meta anual sintética de potência instalada (kWp).",
+            ),
+            GoalPeriod(
+                period_type="quarter",
+                year=year,
+                quarter=quarter,
+                metric="installations",
+                target_value="10.000",
+                scope="pm",
+                pm_person_id=pm_um.id,
+                created_by_person_id=chefe.id,
+                notes="Meta trimestral sintética individual do PM Um.",
+            ),
+        ]
+    )
 
 
 class SeedNotAllowedError(RuntimeError):
@@ -546,7 +831,8 @@ def run_seed() -> None:
         seed_people_and_users(db, role_objs)
         seed_sample_projects(db)
         seed_absences(db)
-        seed_supplier_and_inventory(db)
+        seed_map_and_inventory(db)
+        seed_performance_goals(db)
         db.commit()
     finally:
         db.close()
