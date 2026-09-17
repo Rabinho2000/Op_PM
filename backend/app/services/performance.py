@@ -169,13 +169,29 @@ def visible_goals_query(db: Session, ctx: AuthContext):
 
 
 def list_goals(
-    db: Session, ctx: AuthContext, *, year: int | None = None, pm_person_id: uuid.UUID | None = None
+    db: Session,
+    ctx: AuthContext,
+    *,
+    year: int | None = None,
+    pm_person_id: uuid.UUID | None = None,
+    period_type: str | None = None,
+    quarter: int | None = None,
+    semester: int | None = None,
+    month: int | None = None,
 ) -> list[GoalPeriod]:
     query = visible_goals_query(db, ctx)
     if year is not None:
         query = query.filter(GoalPeriod.year == year)
     if pm_person_id is not None:
         query = query.filter(GoalPeriod.pm_person_id == pm_person_id)
+    if period_type is not None:
+        query = query.filter(GoalPeriod.period_type == period_type)
+    if quarter is not None:
+        query = query.filter(GoalPeriod.quarter == quarter)
+    if semester is not None:
+        query = query.filter(GoalPeriod.semester == semester)
+    if month is not None:
+        query = query.filter(GoalPeriod.month == month)
     return query.order_by(GoalPeriod.year.desc(), GoalPeriod.metric.asc()).all()
 
 

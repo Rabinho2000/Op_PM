@@ -145,3 +145,76 @@ def test_pm_sees_own_goals_and_company_wide_goals(db_session, api_client):
     )
     assert resp.status_code == 200
     assert len(resp.json()) == 1
+
+
+def test_filter_goals_by_period_type_quarter_and_pm(api_client, db_session):
+    pm = db_session.query(Person).filter(Person.display_name == "PM Sintético Um").one()
+    headers = _headers("chefe.sintetico@example.invalid")
+    api_client.post(
+        "/api/performance/goals",
+        json={"period_type": "year", "year": 2031, "metric": "kwp", "target_value": "100"},
+        headers=headers,
+    )
+    api_client.post(
+        "/api/performance/goals",
+        json={"period_type": "quarter", "year": 2031, "quarter": 2, "metric": "installations", "target_value": "5"},
+        headers=headers,
+    )
+    api_client.post(
+        "/api/performance/goals",
+        json={
+            "period_type": "quarter",
+            "year": 2031,
+            "quarter": 2,
+            "metric": "installations",
+            "target_value": "2",
+            "scope": "pm",
+            "pm_person_id": str(pm.id),
+        },
+        headers=headers,
+    )
+
+    resp_quarter = api_client.get("/api/performance/goals?year=2031&period_type=quarter&quarter=2", headers=headers)
+    assert resp_quarter.status_code == 200
+    assert len(resp_quarter.json()) == 2
+
+    resp_pm = api_client.get(f"/api/performance/goals?year=2031&pm_person_id={pm.id}", headers=headers)
+    assert resp_pm.status_code == 200
+    assert len(resp_pm.json()) == 1
+    assert resp_pm.json()[0]["pm_person_id"] == str(pm.id)
+
+
+def test_update_goal_target_value_and_notes(api_client):
+    headers = _headers("chefe.sintetico@example.invalid")
+    resp_create = api_client.post(
+        "/api/performance/goals",
+        json={"period_type": "year", "year": 2032, "metric": "kwp", "target_value": "50", "notes": "inicial"},
+        headers=headers,
+    )
+    goal_id = resp_create.json()["id"]
+
+    resp_update = api_client.patch(
+        f"/api/performance/goals/{goal_id}",
+        json={"target_value": "75", "notes": "revista"},
+        headers=headers,
+    )
+    assert resp_update.status_code == 200
+    assert resp_update.json()["target_value"] == "75.000"
+    assert resp_update.json()["notes"] == "revista"
+
+
+def test_pm_cannot_update_goal(api_client):
+    headers_chefe = _headers("chefe.sintetico@example.invalid")
+    resp_create = api_client.post(
+        "/api/performance/goals",
+        json={"period_type": "year", "year": 2033, "metric": "kwp", "target_value": "50"},
+        headers=headers_chefe,
+    )
+    goal_id = resp_create.json()["id"]
+
+    resp_update = api_client.patch(
+        f"/api/performance/goals/{goal_id}",
+        json={"target_value": "10"},
+        headers=_headers("pm.um.sintetico@example.invalid"),
+    )
+    assert resp_update.status_code == 403
