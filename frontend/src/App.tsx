@@ -9,6 +9,7 @@ import Home from "./pages/Home";
 import ImportNotes from "./pages/ImportNotes";
 import Inventory from "./pages/Inventory";
 import Login from "./pages/Login";
+import MapPage from "./pages/Map";
 import Performance from "./pages/Performance";
 import ProjectDetail from "./pages/ProjectDetail";
 import ProjectsList from "./pages/ProjectsList";
@@ -111,6 +112,7 @@ export default function App() {
           <Route path="/projects/:projectId" element={<ProjectDetail />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/inventory" element={<Inventory />} />
+          <Route path="/map" element={<MapPage />} />
           <Route path="/performance" element={<Performance />} />
           <Route path="/vacations" element={<Vacations />} />
           <Route path="/reconciliation" element={<ReconciliationQueue />} />

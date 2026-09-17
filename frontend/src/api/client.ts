@@ -972,3 +972,100 @@ export const getProjectCommunicationData = (projectId: string) =>
   apiGet<ProjectCommunicationData>(`/api/projects/${projectId}/communication-data`);
 export const updateProjectCommunicationData = (projectId: string, changes: Partial<ProjectCommunicationData>) =>
   apiPatch<ProjectCommunicationData>(`/api/projects/${projectId}/communication-data`, changes);
+
+// --- Mapa operacional ---
+
+export interface MapProject {
+  id: string;
+  name: string;
+  client_name: string | null;
+  pm_display_name: string | null;
+  status: string;
+  lat: number | null;
+  lon: number | null;
+  power_kwp: number | null;
+  open_tasks_count: number;
+  issues_count: number;
+}
+
+export interface MapSupplier {
+  id: string;
+  name: string;
+  category: string | null;
+  contact: string | null;
+  email: string | null;
+  address: string | null;
+  lat: number | null;
+  lon: number | null;
+  is_preferred: boolean;
+  lead_time_days: number | null;
+  materials: string;
+  is_active: boolean;
+}
+
+export interface MapPickupPoint {
+  id: string;
+  name: string;
+  supplier_id: string | null;
+  address: string | null;
+  lat: number | null;
+  lon: number | null;
+  schedule: string | null;
+  contact: string | null;
+  materials: string;
+  notes: string;
+  is_active: boolean;
+}
+
+export interface ProjectIssue {
+  id: string;
+  project_id: string;
+  description: string;
+  category: string;
+  priority: string;
+  status: string;
+  assigned_to_person_id: string | null;
+  due_date: string | null;
+  lat: number | null;
+  lon: number | null;
+  related_task_id: string | null;
+  notes: string;
+  visible_on_map: boolean;
+  created_by_person_id: string | null;
+  created_at: string;
+  project_name: string | null;
+}
+
+export interface MapData {
+  config: { provider_enabled: boolean; tile_url: string; tile_attribution: string };
+  projects: MapProject[];
+  projects_without_coordinates: MapProject[];
+  suppliers: MapSupplier[];
+  pickup_points: MapPickupPoint[];
+  issues: ProjectIssue[];
+}
+
+export const getMapData = () => apiGet<MapData>("/api/map/data");
+
+export const listSuppliers = () => apiGet<MapSupplier[]>("/api/suppliers");
+export const createSupplier = (payload: Partial<MapSupplier> & { name: string }) =>
+  apiPost<MapSupplier>("/api/suppliers", payload);
+export const updateSupplier = (id: string, changes: Partial<MapSupplier>) =>
+  apiPatch<MapSupplier>(`/api/suppliers/${id}`, changes);
+
+export const listPickupPoints = () => apiGet<MapPickupPoint[]>("/api/pickup-points");
+export const createPickupPoint = (payload: Partial<MapPickupPoint> & { name: string }) =>
+  apiPost<MapPickupPoint>("/api/pickup-points", payload);
+export const updatePickupPoint = (id: string, changes: Partial<MapPickupPoint>) =>
+  apiPatch<MapPickupPoint>(`/api/pickup-points/${id}`, changes);
+
+export const listProjectIssues = (projectId: string) =>
+  apiGet<ProjectIssue[]>(`/api/projects/${projectId}/issues`);
+export const createProjectIssue = (
+  projectId: string,
+  payload: { description: string; category?: string; priority?: string; lat?: number; lon?: number; notes?: string }
+) => apiPost<ProjectIssue>(`/api/projects/${projectId}/issues`, payload);
+export const updateProjectIssue = (projectId: string, issueId: string, changes: Partial<ProjectIssue>) =>
+  apiPatch<ProjectIssue>(`/api/projects/${projectId}/issues/${issueId}`, changes);
+export const convertIssueToTask = (projectId: string, issueId: string, title: string) =>
+  apiPost<Task>(`/api/projects/${projectId}/issues/${issueId}/convert-to-task`, { title });
