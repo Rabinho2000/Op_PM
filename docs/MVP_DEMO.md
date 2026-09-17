@@ -32,16 +32,15 @@
 | **Painel** | Projetos ativos, a começar em 30 dias, tarefas atrasadas, tarefas desta semana, tarefas urgentes, visitas técnicas e comissionamentos pendentes, projetos sem PM, projetos com dados incompletos, aviso de fotografias por colocar, resumo visual da semana, férias atuais/próximas e aniversários. Todos os números vêm do servidor (`GET /api/dashboard/summary`). |
 | **Projetos** | Pesquisa por projeto/cliente, filtros por estado, PM, datas e situação; estado, progresso, próxima tarefa, prazo, tarefas atrasadas, avisos de dados em falta e de fotografias. Detalhe com resumo, tarefas, histórico e dados do cliente; edição só dos campos que o perfil pode alterar. |
 | **Tarefas** | Vista de lista e vista Kanban (arrastar cartões ou usar o seletor), filtros por projeto, responsável, prioridade e atraso, criação de tarefas, destaque de urgentes/atrasadas e confirmação visual ao concluir. PM vê tarefas de todos os projetos, mas só cria/edita as suas — ver `docs/DECISIONS.md` D-052. |
-| **Inventário** (novo) | Stock central da IdealMinde por item (físico/reservado/disponível/mínimo), alerta de stock baixo, registo de entrada/ajuste (só Chefe/Admin). O seed reproduz o exemplo exato do pedido: 100 km de cabo entram, 20 reservados, 5 consumidos, 10 libertados, mais 10 reservados de novo ⇒ físico 95 km, disponível 80 km, reservado 15 km, consumido 5 km — ver `docs/INVENTORY_RULES.md`. |
-| **Metas e indicadores** (novo) | Página única com metas por período/PM (progresso, ritmo esperado, projeção — tudo calculado no servidor), portefólio por estado, e instalações/kWp por ano — ver `docs/PERFORMANCE_METRICS.md`. |
+| **Inventário** | Stock central da IdealMinde por item (físico/reservado/disponível/mínimo), alerta de stock baixo, registo de entrada/ajuste/reserva/consumo/libertação (Admin, Chefe **e PM** — decisão de negócio confirmada, ver `docs/OPEN_QUESTIONS.md` pergunta 28). O seed reproduz o exemplo exato do pedido: 100 km de cabo entram, 20 reservados, 5 consumidos, 10 libertados, mais 10 reservados de novo ⇒ físico 95 km, disponível 80 km, reservado 15 km, consumido 5 km — ver `docs/INVENTORY_RULES.md`. |
+| **Mapa** (novo) | Instalações, fornecedores, pontos de recolha e pendências — mapa visual (Leaflet) quando há um provider de tiles configurado, ou lista funcional sempre que não há. Filtros, painel "sem coordenadas" com edição manual, seleção múltipla + link de rota externa, criação de fornecedor/ponto de recolha, pendências com conversão em tarefa — ver `docs/MAP_AND_PLANNING.md`. |
+| **Planeamento** (novo) | Calendário de visitas/comissionamentos — vistas de semana, mês e lista; filtros todos/meus/por PM/por projeto/por responsável; criar e reagendar; aviso (não bloqueante) de sobreposição de horário para o mesmo responsável. Continua inteiramente local, sem Outlook/Graph — ver `docs/MAP_AND_PLANNING.md`. |
+| **Importação de notas iniciais** (novo) | Carregar o HTML/JSON exportado do formulário de notas, pré-visualizar, resolver conflitos campo a campo, e aplicar — cria ou atualiza o projeto com auditoria completa. Botão "Importar notas" em Projetos, atrás de `import.notes` — ver `docs/DATA_IMPORTS.md`. |
+| **Importação de licenciamento (Excel)** | Via linha de comandos (`--dry-run`/`--apply`), nunca a UI — ficheiro real nunca commitado, credenciais (PIN/PUK/login) sempre ignoradas — ver `docs/DATA_IMPORTS.md`. |
+| **Detalhe do projeto** | Tabs de Resumo, Dados da instalação, Licenciamento, Tarefas, Planeamento, Inventário, Documentos e Histórico — dados de instalação/licenciamento/comunicação atrás das permissões `project.view_installation_data`/`view_licensing_data`/`view_communication_data`. |
+| **Metas e indicadores** | Página única com metas por período/PM (progresso, ritmo esperado, projeção — tudo calculado no servidor), portefólio por estado, e instalações/kWp por ano — ver `docs/PERFORMANCE_METRICS.md`. |
 | **Férias e aniversários** | Calendário mensal, quem está ausente hoje, próximas ausências, aniversários, registo e cancelamento — sempre dentro das permissões do perfil. |
-| **Permissões** | Entrar com perfis diferentes mostra vistas diferentes (o PM só vê os seus projetos; o Comercial só consulta; Inventário/Metas só aparecem no menu a quem tem a permissão correspondente). |
-
-**Sem UI ainda nesta fase** (backend completo, testado, acessível via
-`/docs`): mapa operacional, calendário de planeamento, dados de
-instalação/licenciamento/comunicação do projeto, importação de notas
-iniciais e do Excel de licenciamento — ver `docs/OPEN_QUESTIONS.md` e
-`docs/PLAN_OPERATIONS_MVP.md`.
+| **Permissões** | Entrar com perfis diferentes mostra vistas diferentes (o PM só vê os seus projetos e só gere o calendário/mapa desses; o Comercial só consulta; Inventário/Mapa/Planeamento/Metas só aparecem no menu a quem tem a permissão correspondente). |
 
 ## 2. Pré-requisitos
 
@@ -180,6 +179,8 @@ demonstração.
 
 ## 7. Guião sugerido para a demonstração
 
+### Percurso rápido
+
 1. Entrar como **Chefe de Operações** → Painel: indicadores, aviso de
    fotografias, resumo da semana, férias e aniversários.
 2. Clicar num projeto do aviso de fotografias → detalhe → **Marcar como
@@ -193,6 +194,34 @@ demonstração.
 6. Sair e entrar como **Project Manager**: o painel e as listas mostram só
    os seus projetos; ao editar um projeto só aparecem notas.
 7. Entrar como **Comercial**: sem botões de edição nem de criação.
+
+### Percurso completo (ponta-a-ponta pelo novo trabalho)
+
+Ainda como **Chefe de Operações**:
+
+1. **Projetos** → **Novo projeto — importar notas** → carregar
+   `backend/fixtures/synthetic_notas_iniciais.html` (ou o `.json`
+   equivalente) → pré-visualizar → resolver qualquer conflito assinalado
+   → **Aplicar**: cria (ou atualiza) um projeto sintético com auditoria
+   completa.
+2. Abrir esse projeto → tab **Dados da instalação**: confirmar que os
+   campos vieram do ficheiro importado (nunca de nomes de ficheiro).
+3. **Mapa** → procurar o projeto na lista; se estiver em "Sem
+   coordenadas", **Definir coordenadas** manualmente — passa a aparecer
+   entre as instalações.
+4. Ainda no Mapa, no projeto, criar uma **pendência** (ex. "acesso
+   bloqueado") e depois **converter em tarefa**.
+5. **Tarefas** → confirmar que a tarefa criada a partir da pendência
+   aparece na lista do projeto.
+6. **Planeamento** → **Novo evento** para esse projeto (ex. uma visita
+   técnica), escolher um responsável e horário — se sobrepor outro evento
+   do mesmo responsável, a app avisa e pede confirmação explícita antes
+   de gravar.
+7. **Inventário** → reservar e depois consumir cabo solar (`CABO-DC-6MM`)
+   para o projeto; confirmar que o disponível/reservado/consumido do
+   stock central atualiza de imediato.
+8. **Metas e indicadores** → confirmar que o portefólio e as metas
+   trimestrais/anuais refletem o novo projeto e o novo consumo.
 
 ## 8. Reiniciar os dados
 
@@ -288,8 +317,15 @@ Barreiras que impedem o modo demo fora de `local` (independentes entre si):
   próprio).
 - Os campos de data usam o formato do browser (ex.: `mm/dd/aaaa` num
   browser em inglês).
-- Sem notificações por email, sem mapa, inventário, pedidos de material,
-  biblioteca documental ou custos na interface.
+- Sem notificações por email, sem pedidos de material, biblioteca
+  documental ou custos na interface.
+- Mapa: sem provider de tiles configurado por omissão (`MAP_TILE_URL`
+  vazio) — mostra sempre a lista funcional em vez do mapa visual; a
+  seleção de rota é manual, sem otimização automática.
+- Planeamento: deteção de conflitos de horário é só um aviso no
+  cliente (não bloqueia, e só considera os eventos do período
+  visível) — ver `docs/OPEN_QUESTIONS.md` pergunta 34.
+- Importação de licenciamento (Excel) só por linha de comandos, sem UI.
 - SQLite na demonstração (um processo, poucos utilizadores); staging e
   produção exigem PostgreSQL.
 - Login Microsoft real implementado mas não configurado (sem tenant) —

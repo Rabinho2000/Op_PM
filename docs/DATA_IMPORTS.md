@@ -1,12 +1,13 @@
 # Importação de dados — notas iniciais e Excel de licenciamento
 
-> **Estado: desenho completo, não implementado nesta PR.** Ver
-> `docs/PLAN_OPERATIONS_MVP.md` secção 9 para a justificação de
-> prioridade (é, de longe, a parte de maior risco de segurança/qualidade
-> de dados de todo o pedido — parsing de ficheiros de terceiros com
-> dados pessoais, melhor isolada numa PR própria e mais fácil de rever).
-> Este documento é o desenho de referência para essa PR, para não ter de
-> ser redesenhado do zero.
+> **Estado: implementado e testado.** Notas iniciais:
+> `app/services/imports_notes.py` +
+> `frontend/src/pages/ImportNotes.tsx` (`tests/test_imports_notes.py`,
+> `frontend/src/pages/ImportNotes.test.tsx`). Licenciamento (Excel):
+> `app/services/imports_licensing.py` +
+> `app/cli/import_licensing.py` (`tests/test_import_licensing_cli.py`).
+> Este documento continua a ser a referência de desenho — o texto abaixo
+> já descreve o comportamento real, não uma proposta.
 
 ## Princípios (aplicam-se aos dois importadores)
 

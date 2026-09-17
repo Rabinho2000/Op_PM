@@ -1,9 +1,10 @@
 # Mapa operacional e calendário de planeamento
 
 > Ver `docs/PLAN_OPERATIONS_MVP.md` secções 5 e 6 para o desenho completo.
-> **Estado nesta PR: backend completo e testado, sem UI ainda** (ver
-> `docs/OPEN_QUESTIONS.md`) — os endpoints abaixo já podem ser usados por
-> um cliente HTTP (Swagger em `/docs`) ou por uma UI futura sem alterações.
+> **Estado: backend e UI completos e testados** — `/map`
+> (`frontend/src/pages/Map.tsx`) e `/planning`
+> (`frontend/src/pages/Planning.tsx`), ambos atrás de `map.view` e
+> `calendar.view` no menu lateral (`app/components/Layout.tsx`).
 
 ## Mapa (`GET /api/map/data`)
 
@@ -37,9 +38,27 @@ lista completa enviada para o cliente filtrar):
   `Task` e liga `related_task_id`, nunca duplica a entidade.
 
 **Fora de âmbito, por pedido explícito:** otimização automática de rotas.
-O endpoint só devolve dados; seleção/ordenação manual de vários locais e
-o link para uma rota externa (Google/Apple Maps) são trabalho de UI, não
-implementados nesta PR.
+Na UI, a seleção é manual (caixas de verificação na lista) e o botão
+"Abrir rota" apenas monta um link do Google Maps com os locais na ordem
+escolhida — nenhuma otimização, nenhum pedido a um serviço de routing.
+
+### UI (`frontend/src/pages/Map.tsx`)
+
+- Mapa visual com Leaflet quando `config.provider_enabled` é verdadeiro
+  (`MAP_TILE_URL`); caso contrário, mostra sempre a lista funcional dos
+  locais — a aplicação nunca fica "quebrada" por falta de um provider de
+  tiles. Marcadores por camada (instalações/fornecedores/recolhas/
+  pendências), com um `divIcon` colorido por tipo (sem depender dos
+  ícones por omissão do Leaflet, que partem em bundlers como o Vite).
+- Filtros: pesquisa por projeto/cliente, PM, estado, e checkboxes por
+  camada.
+- Painel "Sem coordenadas": edição manual de `lat`/`lon` por projeto.
+- Clicar num marcador ou item da lista abre um painel de detalhe
+  (`Modal`) com link para o projeto quando aplicável.
+- Formulários de fornecedor/ponto de recolha atrás de
+  `supplier.manage`/`pickup_point.manage`; pendências criam-se a partir
+  do detalhe do projeto e podem converter-se em tarefa
+  (`convertIssueToTask`).
 
 ## Calendário de planeamento (`/api/planning/*`)
 
@@ -56,6 +75,24 @@ implementados nesta PR.
 - Continua **inteiramente local** — nenhuma chamada a Microsoft Graph,
   `graph_event_id` nunca é preenchido (D-010 mantém-se). Isso fica para a
   Fase 6 do roadmap geral (`docs/PLAN.md`).
+
+### UI (`frontend/src/pages/Planning.tsx`)
+
+- Três vistas: semana (colunas por dia), mês (grelha 6×7) e lista
+  (agrupada por dia) — seletor "Vista".
+- Filtro "Ver": todos / meus (`mine_only`) / por PM (filtro no cliente,
+  cruzando `CalendarEvent.project_id` com `Project.pm_person_id`, porque
+  o endpoint não tem esse parâmetro) / por projeto / por responsável.
+- Criar e reagendar usam o mesmo formulário (`EventModal`); reagendar é
+  um `PATCH` a partir do painel de detalhe, sem arrastar-e-largar.
+- **Deteção de conflitos é só no cliente**: ao escolher um responsável e
+  um horário, compara com os eventos já carregados para esse período e
+  avisa sobreposições para a mesma pessoa. Não bloqueia — exige uma
+  confirmação explícita ("Guardar mesmo assim") porque o backend não tem
+  nenhuma restrição de sobreposição (ver `docs/OPEN_QUESTIONS.md`).
+- `can_manage` (calculado no servidor a partir de
+  `can_manage_calendar_event`) decide se aparecem os botões "Reagendar"/
+  "Cancelar evento" no painel de detalhe — nunca calculado no cliente.
 
 ## Permissões novas
 
