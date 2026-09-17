@@ -6,6 +6,7 @@ import Layout from "./components/Layout";
 import { ToastProvider } from "./components/Toast";
 import { ErrorState, LoadingState } from "./components/ui";
 import Home from "./pages/Home";
+import ImportNotes from "./pages/ImportNotes";
 import Inventory from "./pages/Inventory";
 import Login from "./pages/Login";
 import Performance from "./pages/Performance";
@@ -106,6 +107,7 @@ export default function App() {
         <Route element={<AuthedShell />}>
           <Route path="/" element={<Home />} />
           <Route path="/projects" element={<ProjectsList />} />
+          <Route path="/projects/import" element={<ImportNotes />} />
           <Route path="/projects/:projectId" element={<ProjectDetail />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/inventory" element={<Inventory />} />

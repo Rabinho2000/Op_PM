@@ -12,6 +12,7 @@ import {
 } from "../api/client";
 import Icon from "../components/Icon";
 import { Avatar, Badge, EmptyState, ErrorState, LoadingState, PageHeader, ProgressBar } from "../components/ui";
+import { useSession } from "../session/SessionContext";
 import { formatDatePt, relativeDayLabel, todayIsoLisbon } from "../utils/dates";
 import { PROJECT_STATUS_TONES } from "../utils/labels";
 
@@ -51,6 +52,7 @@ function missingLabels(p: Project): string[] {
 }
 
 export default function ProjectsList() {
+  const { can } = useSession();
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [projects, setProjects] = useState<Project[] | null>(null);
@@ -91,6 +93,13 @@ export default function ProjectsList() {
       <PageHeader
         title="Projetos"
         subtitle="Estado, progresso e próximos passos de cada instalação."
+        actions={
+          can("import.notes") && (
+            <Link to="/projects/import" className="btn btn--primary">
+              <Icon name="database" size={16} /> Novo projeto — importar notas
+            </Link>
+          )
+        }
       />
 
       <form className="toolbar" role="search" aria-label="Filtros de projetos" onSubmit={(e) => e.preventDefault()}>

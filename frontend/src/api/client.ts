@@ -99,12 +99,8 @@ class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(init?.headers as Record<string, string> | undefined),
-  };
-
+async function authHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {};
   const usingMsal = getActiveMsalAccount() !== null;
   if (usingMsal) {
     let token: string | null;
@@ -124,10 +120,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const devUser = getDevUser();
     if (devUser) headers["X-Dev-User-Email"] = devUser;
   }
+  return headers;
+}
 
-  const res = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
-
-  if (res.status === 401 && usingMsal) {
+async function handleResponse<T>(res: Response): Promise<T> {
+  if (res.status === 401 && getActiveMsalAccount() !== null) {
     // O backend recusou o token (ex. revogado, ou utilizador nunca
     // provisionado) mesmo depois de uma renovação silenciosa bem-sucedida
     // — trata como sessão expirada em vez de repetir o pedido às cegas.
@@ -148,11 +145,30 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(await authHeaders()),
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+  const res = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
+  return handleResponse<T>(res);
+}
+
+// Upload multipart — nunca define Content-Type manualmente, o browser
+// tem de gerar o boundary do multipart/form-data sozinho.
+async function requestUpload<T>(path: string, formData: FormData): Promise<T> {
+  const headers = await authHeaders();
+  const res = await fetch(`${API_BASE_URL}${path}`, { method: "POST", body: formData, headers });
+  return handleResponse<T>(res);
+}
+
 const apiGet = <T>(path: string) => request<T>(path);
 const apiPatch = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
 const apiPost = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "POST", body: body !== undefined ? JSON.stringify(body) : undefined });
+const apiUpload = <T>(path: string, formData: FormData) => requestUpload<T>(path, formData);
 
 export { ApiError };
 
@@ -805,3 +821,63 @@ export const createGoal = (payload: {
 
 export const updateGoal = (id: string, payload: { target_value?: string; notes?: string }) =>
   apiPatch<GoalPeriod>(`/api/performance/goals/${id}`, payload);
+
+// --- Importação de notas iniciais ---
+
+export interface FieldImportConflict {
+  id: string;
+  target_entity: string;
+  field_name: string;
+  old_value: string | null;
+  new_value: string | null;
+  resolution: "pending" | "use_new" | "keep_old";
+  resolved_by_person_id: string | null;
+  resolved_at: string | null;
+}
+
+export interface FieldImportRecord {
+  id: string;
+  target_project_id: string | null;
+  is_new_project: boolean;
+  match_strategy: string;
+  status: string;
+  promoted_project_id: string | null;
+  candidate_projects: { id: string }[];
+  mapped_fields: {
+    project?: Record<string, unknown>;
+    installation?: Record<string, unknown>;
+    licensing?: Record<string, unknown>;
+  };
+  conflicts: FieldImportConflict[];
+}
+
+export interface FieldImportBatch {
+  id: string;
+  source_type: string;
+  source_filename: string;
+  form_version: string | null;
+  status: "pending_confirmation" | "applied" | "rejected";
+  started_by_person_id: string | null;
+  started_at: string;
+  applied_by_person_id: string | null;
+  applied_at: string | null;
+  records: FieldImportRecord[];
+}
+
+export const previewNotesImport = (file: File) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiUpload<FieldImportBatch>("/api/imports/notes/preview", formData);
+};
+
+export const getImportBatch = (batchId: string) => apiGet<FieldImportBatch>(`/api/imports/${batchId}`);
+
+export const resolveImportConflict = (conflictId: string, resolution: "use_new" | "keep_old") =>
+  apiPost<FieldImportConflict>(`/api/imports/conflicts/${conflictId}/resolve`, { resolution });
+
+export const applyNotesImport = (batchId: string, targetProjectId?: string) =>
+  apiPost<{ project_id: string; project_name: string; created_new_project: boolean }>("/api/imports/notes/apply", {
+    batch_id: batchId,
+    target_project_id: targetProjectId,
+    confirm: true,
+  });
