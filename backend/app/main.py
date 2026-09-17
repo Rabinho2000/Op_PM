@@ -12,6 +12,7 @@ from app.api.routes_map import router as map_router
 from app.api.routes_me import router as me_router
 from app.api.routes_migration import router as migration_router
 from app.api.routes_people import router as people_router
+from app.api.routes_performance import router as performance_router
 from app.api.routes_planning import router as planning_router
 from app.api.routes_project_data import router as project_data_router
 from app.api.routes_projects import router as projects_router
@@ -52,6 +53,7 @@ app.include_router(project_inventory_router)
 app.include_router(project_data_router)
 app.include_router(map_router)
 app.include_router(planning_router)
+app.include_router(performance_router)
 
 
 @app.get("/")
