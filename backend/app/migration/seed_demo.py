@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from app.audit.log import record_project_change, record_task_change
 from app.models.absence import TYPE_FERIAS, TYPE_OUTRO, Absence
 from app.models.people import Person
-from app.models.project import Project
+from app.models.project import Project, ProjectStageProgress, ProjectSubtaskProgress
 from app.models.task import (
     PRIORITY_HIGH,
     PRIORITY_LOW,
@@ -41,6 +41,7 @@ from app.models.task import (
     TASK_TYPE_VISITA_TECNICA,
     Task,
 )
+from app.models.workflow import WorkflowStage, WorkflowSubtask
 from app.services.tasks import ensure_default_tasks_for_project
 from app.utils.timezones import today_lisbon
 
@@ -445,6 +446,81 @@ def _seed_absences(db: Session, today: dt.date) -> None:
         )
 
 
+def _business_days_elapsed(start: dt.date, today: dt.date) -> int:
+    """Número do dia útil de hoje no calendário do projeto (0 se ainda não
+    começou) — mesma contagem de app/services/workflow.py."""
+    if today < start:
+        return 0
+    days = 0
+    current = start
+    while current <= today:
+        if current.weekday() < 5:
+            days += 1
+        current += dt.timedelta(days=1)
+    return days
+
+
+def _seed_workflow_progress(db: Session, today: dt.date) -> None:
+    """Progresso sintético no percurso de obra (D-052), coerente com a data
+    de início de cada projeto: etapas cujo prazo já passou ficam feitas, a
+    etapa em curso fica a meio — e um em cada três projetos fica com uma
+    etapa em atraso e um contacto por fazer, para a demonstração mostrar
+    alertas."""
+    stages = db.query(WorkflowStage).order_by(WorkflowStage.sort_order).all()
+    subs_by_stage: dict = {}
+    for sub in db.query(WorkflowSubtask).order_by(WorkflowSubtask.sort_order).all():
+        subs_by_stage.setdefault(sub.stage_id, []).append(sub)
+    people = _people_by_name(db)
+    names = [spec.name for spec in DEMO_PROJECTS]
+    projects = db.query(Project).filter(Project.name.in_(names)).all()
+    for project in sorted(projects, key=lambda p: names.index(p.name)):
+        if project.start_date is None:
+            continue
+        elapsed = _business_days_elapsed(project.start_date, today)
+        if elapsed == 0:
+            continue
+        index = names.index(project.name)
+        finished = all(t.status == STATUS_DONE for t in db.query(Task).filter(Task.project_id == project.id, Task.task_type != "custom"))
+        lagging = not finished and index % 3 == 1
+        author = project.pm_person_id or people[CHEFE].id
+        done_at = dt.datetime.combine(today, dt.time(9, 0), tzinfo=dt.timezone.utc)
+        lag_stage = None
+        if lagging:
+            overdue = [s for s in stages if (s.planned_end_offset_days or 0) < elapsed]
+            lag_stage = overdue[-1].id if overdue else None
+        for stage in stages:
+            subs = subs_by_stage.get(stage.id, [])
+            start_day = stage.planned_start_offset_days or 0
+            end_day = stage.planned_end_offset_days or 0
+            if finished or end_day < elapsed:
+                count = len(subs)
+            elif start_day <= elapsed:
+                count = len(subs) // 2
+            else:
+                count = 0
+            if stage.id == lag_stage:
+                count = max(0, len(subs) - 1)
+            for sub in subs[:count]:
+                db.add(
+                    ProjectSubtaskProgress(
+                        project_id=project.id, subtask_id=sub.id, done=True, done_at=done_at, done_by_person_id=author
+                    )
+                )
+            if stage.has_contact_checkpoint and stage.contact_day and (finished or stage.contact_day < elapsed):
+                if stage.id == lag_stage:
+                    continue
+                db.add(
+                    ProjectStageProgress(
+                        project_id=project.id,
+                        stage_id=stage.id,
+                        contact_done=True,
+                        contact_done_at=done_at,
+                        contact_done_by_person_id=author,
+                    )
+                )
+    db.flush()
+
+
 def seed_demo_data(db: Session, today: dt.date | None = None) -> bool:
     """Acrescenta os dados de demonstração. Idempotente: devolve False (e
     não escreve nada) se já tiverem sido aplicados. Não faz commit."""
@@ -454,5 +530,6 @@ def seed_demo_data(db: Session, today: dt.date | None = None) -> bool:
     _seed_technicians(db, today)
     _seed_projects(db, today)
     _seed_absences(db, today)
+    _seed_workflow_progress(db, today)
     db.flush()
     return True

@@ -449,6 +449,12 @@ visibilidade ainda em aberto.
 
 ## Fase 3 — Workflow de projetos
 
+**Atualização 2026-09-17 (D-052): percurso de obra implementado** —
+endpoints de leitura/marcação, separador "Percurso de obra" no projeto,
+CLI de carregamento do processo oficial (fora do Git), datas em dias
+úteis e estados por etapa. Ver `docs/WORKFLOW.md`. Continua em aberto:
+regra de avanço de fase, reagendamento/Gantt e a relação com `Task`.
+
 **Estado: parcialmente coberto pela Fase 1.5, ver nota abaixo.** A Fase
 1.5 deu a cada projeto uma checklist de tarefas (`Task`, D-039/D-040) com
 responsável, prazo e máquina de estados — cobre a necessidade operacional

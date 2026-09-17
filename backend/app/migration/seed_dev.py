@@ -46,7 +46,8 @@ from app.models.task import (
     TASK_TYPE_VISITA_TECNICA,
     Task,
 )
-from app.models.workflow import Phase, WorkflowStage, WorkflowSubtask
+from app.models.workflow import WorkflowStage
+from app.workflow.definition import EXAMPLE_DEFINITION_PATH, apply_definition, load_definition
 from app.security.catalog import PERMISSIONS, ROLE_PERMISSIONS, ROLES
 from app.services.tasks import ensure_default_tasks_for_project
 
@@ -66,88 +67,21 @@ def _relative_birth_date(days_from_today: int) -> dt.date:
         # 29 de fevereiro num ano de nascimento sintético não bissexto.
         return dt.date(birth_year, target.month, 28)
 
-# Fases/etapas genéricas — mesma forma do processo legado (6 fases), mas com
-# títulos e subtarefas de exemplo, não o texto proprietário do processo real.
-GENERIC_WORKFLOW = [
+# Percurso de obra: o seed usa o processo de EXEMPLO de 18 etapas
+# (app/workflow/processo_exemplo.json) — o processo oficial carrega-se de
+# um ficheiro local fora do Git (D-052). Códigos do seed genérico antigo
+# (6 etapas, antes da D-052), substituídos automaticamente se ainda
+# existirem sem progresso.
+LEGACY_GENERIC_STAGE_CODES = frozenset(
     {
-        "code": "handover",
-        "name": "Handover e arranque",
-        "color": "#2E75B6",
-        "stages": [
-            {
-                "code": "handover.entrega",
-                "title": "Obra entregue às Operações (exemplo)",
-                "role": "chefe_operacoes",
-                "subtasks": ["Confirmar receção do processo"],
-            },
-        ],
-    },
-    {
-        "code": "licenc",
-        "name": "Licenciamento e legalização",
-        "color": "#C0392B",
-        "stages": [
-            {
-                "code": "licenc.registos",
-                "title": "Registos legais (exemplo)",
-                "role": "chefe_operacoes",
-                "subtasks": ["Registo de exemplo A", "Registo de exemplo B"],
-            },
-        ],
-    },
-    {
-        "code": "visita",
-        "name": "Visita técnica e subempreiteiro",
-        "color": "#E07B39",
-        "stages": [
-            {
-                "code": "visita.tecnica",
-                "title": "Visita técnica (exemplo)",
-                "role": "project_manager",
-                "subtasks": ["Preencher formulário", "Registo fotográfico"],
-            },
-        ],
-    },
-    {
-        "code": "prep",
-        "name": "Preparação e procurement",
-        "color": "#7C58B8",
-        "stages": [
-            {
-                "code": "prep.procurement",
-                "title": "Procurement (exemplo)",
-                "role": "project_manager",
-                "subtasks": ["Material principal", "Transporte e entrega"],
-            },
-        ],
-    },
-    {
-        "code": "obra",
-        "name": "Obra",
-        "color": "#4F8A3B",
-        "stages": [
-            {
-                "code": "obra.execucao",
-                "title": "Execução de obra (exemplo)",
-                "role": "project_manager",
-                "subtasks": ["Início de obra", "Acompanhamento"],
-            },
-        ],
-    },
-    {
-        "code": "fecho",
-        "name": "Fecho e comissionamento",
-        "color": "#0E93B8",
-        "stages": [
-            {
-                "code": "fecho.comissionamento",
-                "title": "Comissionamento (exemplo)",
-                "role": "project_manager",
-                "subtasks": ["Registo fotográfico obrigatório", "Relatório de comissionamento"],
-            },
-        ],
-    },
-]
+        "handover.entrega",
+        "licenc.registos",
+        "visita.tecnica",
+        "prep.procurement",
+        "obra.execucao",
+        "fecho.comissionamento",
+    }
+)
 
 # 5 utilizadores ativos (um por papel) + 3 PMs "legados" sem conta de login.
 # O 4º elemento é o desvio (em dias, a partir de hoje) da data de
@@ -202,33 +136,13 @@ def seed_catalog(db: Session) -> dict[str, Role]:
 
 
 def seed_workflow(db: Session) -> None:
-    if db.query(Phase).count() > 0:
+    """Carrega o processo de exemplo numa base sem percurso, ou em vez do
+    seed genérico antigo. Nunca toca num percurso já carregado de outra
+    forma (ex. o processo oficial via `app.cli.workflow`)."""
+    stage_codes = {code for (code,) in db.query(WorkflowStage.code).all()}
+    if stage_codes and not stage_codes <= LEGACY_GENERIC_STAGE_CODES:
         return
-    for phase_order, phase_def in enumerate(GENERIC_WORKFLOW):
-        phase = Phase(
-            code=phase_def["code"], name=phase_def["name"], color_hex=phase_def["color"], sort_order=phase_order
-        )
-        db.add(phase)
-        db.flush()
-        for stage_order, stage_def in enumerate(phase_def["stages"]):
-            stage = WorkflowStage(
-                phase_id=phase.id,
-                code=stage_def["code"],
-                title=stage_def["title"],
-                responsible_role_code=stage_def["role"],
-                sort_order=stage_order,
-            )
-            db.add(stage)
-            db.flush()
-            for sub_order, sub_title in enumerate(stage_def["subtasks"]):
-                db.add(
-                    WorkflowSubtask(
-                        stage_id=stage.id,
-                        code=f"{stage_def['code']}.{sub_order}",
-                        title=sub_title,
-                        sort_order=sub_order,
-                    )
-                )
+    apply_definition(db, load_definition(EXAMPLE_DEFINITION_PATH))
 
 
 def seed_people_and_users(db: Session, role_objs: dict[str, Role]) -> None:

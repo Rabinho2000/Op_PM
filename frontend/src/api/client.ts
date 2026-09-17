@@ -151,6 +151,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const apiGet = <T>(path: string) => request<T>(path);
 const apiPatch = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
+const apiPut = <T>(path: string, body: unknown) =>
+  request<T>(path, { method: "PUT", body: JSON.stringify(body) });
 const apiPost = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "POST", body: body !== undefined ? JSON.stringify(body) : undefined });
 
@@ -286,6 +288,75 @@ export const getProject = (id: string) => apiGet<Project>(`/api/projects/${id}`)
 export const updateProject = (id: string, changes: Partial<Project>) =>
   apiPatch<Project>(`/api/projects/${id}`, changes);
 export const getProjectHistory = (id: string) => apiGet<ProjectHistoryEntry[]>(`/api/projects/${id}/history`);
+
+// --- Percurso de obra (D-052) ---
+
+export type WorkflowStageStatus = "concluida" | "em_curso" | "atrasada" | "a_aguardar" | "por_iniciar";
+
+export interface WorkflowSubtask {
+  code: string;
+  title: string;
+  is_client_contact: boolean;
+  done: boolean;
+  done_at: string | null;
+}
+
+export interface WorkflowStage {
+  code: string;
+  number: number;
+  title: string;
+  phase_code: string;
+  responsible_label: string;
+  responsible_role_code: string | null;
+  note: string;
+  depends_on_number: number | null;
+  start_day: number | null;
+  end_day: number | null;
+  planned_start: string | null;
+  planned_end: string | null;
+  status: WorkflowStageStatus;
+  done_count: number;
+  total_count: number;
+  subtasks: WorkflowSubtask[];
+  contact_type: "contacto" | "update" | null;
+  contact_note: string;
+  contact_date: string | null;
+  contact_done: boolean;
+  contact_overdue: boolean;
+}
+
+export interface WorkflowPhase {
+  code: string;
+  name: string;
+  color: string;
+  done_count: number;
+  total_count: number;
+}
+
+export interface ProjectWorkflow {
+  project_id: string;
+  start_date: string | null;
+  planned_end: string | null;
+  total_days: number;
+  progress_percent: number;
+  done_count: number;
+  total_count: number;
+  current_stage_number: number | null;
+  current_phase_code: string | null;
+  overdue_stages_count: number;
+  pending_contacts_count: number;
+  can_edit: boolean;
+  phases: WorkflowPhase[];
+  stages: WorkflowStage[];
+}
+
+export const getProjectWorkflow = (id: string) => apiGet<ProjectWorkflow>(`/api/projects/${id}/workflow`);
+export const setWorkflowSubtaskDone = (projectId: string, code: string, done: boolean) =>
+  apiPut<ProjectWorkflow>(`/api/projects/${projectId}/workflow/subtasks/${encodeURIComponent(code)}`, { done });
+export const setWorkflowContactDone = (projectId: string, stageCode: string, done: boolean) =>
+  apiPut<ProjectWorkflow>(`/api/projects/${projectId}/workflow/stages/${encodeURIComponent(stageCode)}/contact`, {
+    done,
+  });
 
 // --- /api/migration ---
 

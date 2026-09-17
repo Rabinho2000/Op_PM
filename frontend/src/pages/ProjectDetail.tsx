@@ -5,12 +5,14 @@ import {
   DEFAULT_TASK_TYPE_LABELS,
   getProject,
   getProjectHistory,
+  getProjectWorkflow,
   listPeople,
   listTasks,
   Person,
   Project,
   PROJECT_STATUS_LABELS,
   ProjectHistoryEntry,
+  ProjectWorkflow as Workflow,
   Task,
   TASK_ALLOWED_NEXT_STATUSES,
   TASK_PRIORITY_LABELS,
@@ -19,6 +21,7 @@ import {
   updateTask,
 } from "../api/client";
 import Icon from "../components/Icon";
+import ProjectWorkflow from "../components/ProjectWorkflow";
 import TaskFormModal from "../components/TaskForm";
 import TaskStatusControl, { useTaskStatusChange } from "../components/TaskStatusControl";
 import { useToast } from "../components/Toast";
@@ -31,7 +34,7 @@ import {
   TASK_TYPE_ICONS,
 } from "../utils/labels";
 
-type TabKey = "resumo" | "tarefas" | "historico" | "cliente";
+type TabKey = "percurso" | "resumo" | "tarefas" | "historico" | "cliente";
 
 // Campos de texto oferecidos no formulário de edição, por ordem. Só são
 // mostrados os que o servidor indica em `project.editable_fields` (D-028).
@@ -50,6 +53,15 @@ const TEXT_FIELDS: { key: keyof Project; multiline?: boolean; type?: string }[] 
 ];
 
 const STANDARD_ORDER = ["visita_tecnica", "preparacao_instalacao", "instalacao", "comissionamento", "fotos_drive"];
+
+// Alterações ao percurso de obra ficam no histórico como
+// `percurso.etapa.NN.M` (subtarefa) ou `percurso.etapa.NN.contacto`, com o
+// texto da subtarefa na nota (app/services/workflow.py).
+function historyFieldLabel(h: ProjectHistoryEntry): string {
+  const match = /^percurso\.etapa\.(\d+)/.exec(h.field_name);
+  if (match) return `Percurso · etapa ${Number(match[1])}${h.note ? ` — ${h.note}` : ""}`;
+  return PROJECT_FIELD_LABELS[h.field_name] ?? h.field_name;
+}
 
 function stepClass(task: Task | undefined): string {
   if (!task) return "step";
@@ -164,9 +176,11 @@ export default function ProjectDetail() {
   const [project, setProject] = useState<Project | null>(null);
   const [history, setHistory] = useState<ProjectHistoryEntry[] | null>(null);
   const [tasks, setTasks] = useState<Task[] | null>(null);
+  const [workflow, setWorkflow] = useState<Workflow | null>(null);
+  const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<TabKey>("resumo");
+  const [tab, setTab] = useState<TabKey>("percurso");
   const [editing, setEditing] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
   const [justDone, setJustDone] = useState<string | null>(null);
@@ -183,6 +197,10 @@ export default function ProjectDetail() {
     listTasks({ project_id: projectId })
       .then(setTasks)
       .catch(() => setTasks([]));
+    setWorkflowError(null);
+    getProjectWorkflow(projectId)
+      .then(setWorkflow)
+      .catch((e) => setWorkflowError(e instanceof ApiError ? e.detail : "Não foi possível carregar o percurso de obra."));
   }, [projectId]);
 
   useEffect(load, [load]);
@@ -248,6 +266,7 @@ export default function ProjectDetail() {
   const openTasks = (tasks ?? []).filter((t) => t.status !== "done" && t.status !== "cancelled");
 
   const tabs: { key: TabKey; label: string; count?: number }[] = [
+    { key: "percurso", label: "Percurso de obra" },
     { key: "resumo", label: "Resumo" },
     { key: "tarefas", label: "Tarefas", count: tasks?.length },
     { key: "historico", label: "Histórico", count: history?.length },
@@ -308,9 +327,14 @@ export default function ProjectDetail() {
         </div>
         <div className="hero__progress">
           <div className="small muted" style={{ marginBottom: 6 }}>
-            Progresso do workflow
+            Percurso de obra
+            {workflow?.current_stage_number != null && <> · etapa {workflow.current_stage_number} de {workflow.stages.length}</>}
           </div>
-          <ProgressBar value={project.workflow_progress_percent} large label="Progresso do workflow" />
+          <ProgressBar
+            value={workflow ? workflow.progress_percent : project.workflow_progress_percent}
+            large
+            label="Progresso do percurso de obra"
+          />
           {canEdit && (
             <button type="button" className="btn btn--block" style={{ marginTop: 14 }} onClick={() => setEditing(true)}>
               <Icon name="wrench" size={16} /> Editar projeto
@@ -368,6 +392,27 @@ export default function ProjectDetail() {
       </div>
 
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
+        {tab === "percurso" &&
+          (workflowError ? (
+            <div className="card">
+              <ErrorState message={workflowError} onRetry={load} />
+            </div>
+          ) : workflow ? (
+            <ProjectWorkflow
+              projectId={project.id}
+              workflow={workflow}
+              onChange={(updated) => {
+                setWorkflow(updated);
+                getProjectHistory(project.id)
+                  .then(setHistory)
+                  .catch(() => undefined);
+              }}
+            />
+          ) : (
+            <div className="card">
+              <LoadingState label="A carregar o percurso de obra…" rows={6} />
+            </div>
+          ))}
         {tab === "resumo" && (
           <div className="grid grid--main-side">
             <Card title="Dados do projeto" icon="folder">
@@ -530,7 +575,7 @@ export default function ProjectDetail() {
                 {history.map((h) => (
                   <li key={h.id}>
                     <div>
-                      <strong>{PROJECT_FIELD_LABELS[h.field_name] ?? h.field_name}</strong>:{" "}
+                      <strong>{historyFieldLabel(h)}</strong>:{" "}
                       <span className="muted">{h.old_value || "(vazio)"}</span> → {h.new_value || "(vazio)"}
                     </div>
                     <div className="small muted">

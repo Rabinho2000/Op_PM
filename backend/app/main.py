@@ -11,6 +11,7 @@ from app.api.routes_migration import router as migration_router
 from app.api.routes_people import router as people_router
 from app.api.routes_projects import router as projects_router
 from app.api.routes_tasks import router as tasks_router
+from app.api.routes_workflow import router as workflow_router
 from app.config import get_settings
 
 settings = get_settings()
@@ -42,6 +43,7 @@ app.include_router(people_router)
 app.include_router(tasks_router)
 app.include_router(absences_router)
 app.include_router(dashboard_router)
+app.include_router(workflow_router)
 
 
 @app.get("/")

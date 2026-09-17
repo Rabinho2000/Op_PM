@@ -288,6 +288,13 @@ real de 6 fases da Solcor.
 (ou inventar requisitos de avanço de fase) pode travar trabalho real por
 engano; ver `docs/PLAN.md` Fase 3 para o detalhe de cada pendência.
 
+**Atualização (D-052, 2026-09-17):** o motor do percurso está feito (API,
+UI, CLI). O processo oficial de 18 etapas é carregado de um ficheiro
+local fora do Git (`docs/WORKFLOW.md`); os responsáveis são funções. Em
+aberto: (a) quem valida o texto oficial antes de staging; (b) regra de
+avanço de fase — hoje as dependências só informam; (c) se o estado do
+projeto (lista/painel) passa a vir do percurso em vez das tarefas.
+
 ### 20. Férias/ausências: registo direto ou fluxo de pedido → aprovação?
 
 **Impacto:** `Absence` (Fase 1.5 — MVP dashboard/workflow) marca qualquer

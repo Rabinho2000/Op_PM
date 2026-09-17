@@ -180,6 +180,11 @@ jobs:
           python3 -c "import json; h=json.load(open('/tmp/health.json')); assert h['app_env']=='local' and h['demo_mode'] and h['dev_login_available'], h"
           curl -fsS -H 'X-Dev-User-Email: chefe.sintetico@example.invalid'             http://127.0.0.1:8080/api/dashboard/summary > /tmp/summary.json
           python3 -c "import json; s=json.load(open('/tmp/summary.json')); assert s['active_projects_count'] >= 20, s['active_projects_count']; assert s['projects_photos_pending'] and len(s['week_overview']) == 7; print('projetos ativos:', s['active_projects_count'])"
+          # Percurso de obra (D-052): 18 etapas com progresso sintético.
+          PID=$(curl -fsS -H 'X-Dev-User-Email: chefe.sintetico@example.invalid' http://127.0.0.1:8080/api/projects | python3 -c "import json,sys; print(next(p['id'] for p in json.load(sys.stdin) if p['name'].startswith('Escola Sintética')))")
+          curl -fsS -H 'X-Dev-User-Email: chefe.sintetico@example.invalid' "http://127.0.0.1:8080/api/projects/$PID/workflow" > /tmp/workflow.json
+          python3 -c "import json; w=json.load(open('/tmp/workflow.json')); assert len(w['stages'])==18 and len(w['phases'])==6 and w['done_count']>0, (len(w['stages']), w['done_count']); print('percurso:', w['progress_percent'], '%')"
+          test "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080/api/projects/$PID/workflow")" = "401"
           # Sem cabeçalho de desenvolvimento, a API recusa.
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/dashboard/summary)" = "401"
       - name: Idempotência — reiniciar não duplica dados

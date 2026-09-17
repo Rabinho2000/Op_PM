@@ -13,6 +13,7 @@ import Vacations from "./Vacations";
 const api = vi.hoisted(() => ({
   getProject: vi.fn(),
   getProjectHistory: vi.fn(),
+  getProjectWorkflow: vi.fn(),
   listTasks: vi.fn(),
   listPeople: vi.fn(),
   updateTask: vi.fn(),
@@ -49,6 +50,48 @@ function absence(overrides: Partial<Absence> = {}): Absence {
 beforeEach(() => {
   Object.values(api).forEach((fn) => fn.mockReset());
   api.getProjectHistory.mockResolvedValue([]);
+  api.getProjectWorkflow.mockResolvedValue({
+    project_id: "proj-1",
+    start_date: null,
+    planned_end: null,
+    total_days: 1,
+    progress_percent: 0,
+    done_count: 0,
+    total_count: 1,
+    current_stage_number: 1,
+    current_phase_code: "handover",
+    overdue_stages_count: 0,
+    pending_contacts_count: 0,
+    can_edit: false,
+    phases: [{ code: "handover", name: "Handover e arranque", color: "#2E75B6", done_count: 0, total_count: 1 }],
+    stages: [
+      {
+        code: "etapa.01",
+        number: 1,
+        title: "Projeto entregue às Operações",
+        phase_code: "handover",
+        responsible_label: "Comercial",
+        responsible_role_code: "comercial",
+        note: "",
+        depends_on_number: null,
+        start_day: 1,
+        end_day: 1,
+        planned_start: null,
+        planned_end: null,
+        status: "por_iniciar",
+        done_count: 0,
+        total_count: 1,
+        subtasks: [
+          { code: "etapa.01.1", title: "Apresentar as Operações", is_client_contact: false, done: false, done_at: null },
+        ],
+        contact_type: null,
+        contact_note: "",
+        contact_date: null,
+        contact_done: false,
+        contact_overdue: false,
+      },
+    ],
+  });
   api.listPeople.mockResolvedValue([]);
   api.listTasks.mockResolvedValue([makeTask()]);
   api.getDashboardSummary.mockResolvedValue(makeSummary());
@@ -67,6 +110,15 @@ describe("Detalhe do projeto — permissões", () => {
     await screen.findByRole("table");
     expect(screen.queryByRole("button", { name: /Nova tarefa/ })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Estado da tarefa Visita técnica")).not.toBeInTheDocument();
+  });
+
+  it("abre no percurso de obra, só de leitura sem permissão", async () => {
+    api.getProject.mockResolvedValue(makeProject({ editable_fields: [] }));
+    renderWithProviders(<ProjectDetail />, { me: COMERCIAL_ME, route: "/projects/proj-1", path: "/projects/:projectId" });
+
+    expect(await screen.findByRole("tab", { name: "Percurso de obra", selected: true })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Apresentar as Operações")).toBeDisabled();
+    expect(screen.getByText("Só leitura")).toBeInTheDocument();
   });
 
   it("PM só pode editar os campos de acompanhamento indicados pelo servidor", async () => {

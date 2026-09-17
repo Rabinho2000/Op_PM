@@ -1733,3 +1733,59 @@ build "mesma origem" do `Dockerfile.demo` servido por um proxy local
 equivalente ao nginx. **Não validado localmente (sem Docker nesta
 máquina):** `docker build`/`docker compose` — ficam a cargo dos jobs
 `docker-build` e `demo-smoke` do CI.
+
+## D-052 — Percurso de obra (18 etapas): motor completo, processo oficial fora do repositório
+
+**Contexto:** a ferramenta original (`solcor-gestao.html`) gira à volta do
+percurso de obra — 6 fases, 18 etapas, subtarefas, pontos de contacto com
+o cliente e prazos em dias úteis. O modelo de dados existia desde a Fase 0
+(D-00x), mas sem API, sem UI e com um seed genérico de 6 etapas; o
+processo real ficou de fora de propósito (OPEN_QUESTIONS #19). O
+repositório é **público** e o texto do processo inclui procedimentos
+internos, o nome do subempreiteiro e nomes de pessoas.
+
+**Decisão:**
+1. **Definição em ficheiro JSON, aplicada por código estável.**
+   `app/workflow/definition.py` valida (fases, números únicos, dependências
+   existentes, papéis conhecidos, dias por ordem) e aplica de forma
+   idempotente: etapa `etapa.NN`, subtarefa `etapa.NN.M` (ou `code`
+   explícito). Nunca apaga itens com progresso — recusa e diz quais.
+2. **Processo oficial fora do Git.** O repositório só tem
+   `processo_exemplo.json` (mesma forma, texto genérico). O oficial é
+   carregado com `python -m app.cli.workflow load --file … --apply`
+   (simulação por omissão) a partir de um ficheiro local ignorado
+   (`backend/data/processo_obra_solcor.json`). Escolha confirmada pelo
+   utilizador em 2026-09-17.
+3. **Responsáveis são funções, não pessoas.** `responsible_label` (texto
+   mostrado) + `responsible_role_code` opcional. Na extração do processo
+   oficial, os nomes próprios foram substituídos por funções.
+4. **Regras iguais ao original, sem inventar bloqueios:** prazos em dias
+   úteis desde `start_date` (feriados não descontados); etapa concluída =
+   todas as subtarefas feitas; dependências só informam ("a aguardar");
+   nenhuma regra de avanço de fase (continua pergunta #19).
+5. **Permissões e auditoria reutilizadas:** ver = `can_view_project`;
+   marcar = `can_edit_project` (PM do projeto ou `project.edit_all`);
+   cada alteração vai para `project_history` (`percurso.…`).
+6. **Migração aditiva** `5c2d1e7a9b40`: `responsible_label`, `note`,
+   `contact_type`, `contact_day` em `workflow_stages`;
+   `is_client_contact` em `workflow_subtasks`. O seed substitui o seed
+   genérico antigo só se não tiver progresso e nunca toca num percurso
+   carregado pelo CLI.
+7. **UI:** separador "Percurso de obra" (o primeiro) no detalhe do
+   projeto — resumo, fases com cores, cronograma por etapa, checklist e
+   contactos; a barra de progresso do topo passa a mostrar o percurso.
+
+**Consequências / pendente:**
+- `Task` (Fase 1.5) e o percurso coexistem — qual é a fonte de verdade do
+  "estado do projeto" (lista de projetos, painel) continua por decidir
+  (OPEN_QUESTIONS #19, #22, #24). A lista de projetos continua a usar as
+  tarefas.
+- Reagendamento (shifts PM/Chefe), Gantt de todas as obras e duração
+  automática pela potência ficam para a próxima iteração.
+- Importar o progresso legado (`done['12.3']`, índice a partir de 0 →
+  `etapa.12.4`) faz parte da migração (Fase 4).
+
+**Validado:** backend (25 testes novos em `tests/test_workflow.py`),
+migração round-trip, seed demo, CLI contra a base local com o processo
+oficial (18 etapas, 77 subtarefas), frontend (6 testes novos) e
+interface percorrida no browser (desktop e telemóvel).

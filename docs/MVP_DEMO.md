@@ -174,17 +174,21 @@ demonstração.
 
 1. Entrar como **Chefe de Operações** → Painel: indicadores, aviso de
    fotografias, resumo da semana, férias e aniversários.
-2. Clicar num projeto do aviso de fotografias → detalhe → **Marcar como
+2. Abrir um projeto → separador **Percurso de obra**: fases, cronograma
+   das 18 etapas, marcar uma subtarefa ou um contacto com o cliente e ver
+   a alteração no **Histórico** (processo de exemplo; o oficial carrega-se
+   à parte — `docs/WORKFLOW.md`).
+3. Clicar num projeto do aviso de fotografias → detalhe → **Marcar como
    colocadas**: o aviso desaparece e o progresso sobe.
-3. **Projetos** → filtrar por estado "Em curso" e por PM; pesquisar
+4. **Projetos** → filtrar por estado "Em curso" e por PM; pesquisar
    "Escola".
-4. **Tarefas** → vista **Kanban** → arrastar uma tarefa para "Concluída"
+5. **Tarefas** → vista **Kanban** → arrastar uma tarefa para "Concluída"
    (confirmação visual); criar uma **Nova tarefa**.
-5. **Férias e aniversários** → navegar no calendário; **Registar
+6. **Férias e aniversários** → navegar no calendário; **Registar
    ausência**.
-6. Sair e entrar como **Project Manager**: o painel e as listas mostram só
+7. Sair e entrar como **Project Manager**: o painel e as listas mostram só
    os seus projetos; ao editar um projeto só aparecem notas.
-7. Entrar como **Comercial**: sem botões de edição nem de criação.
+8. Entrar como **Comercial**: sem botões de edição nem de criação.
 
 ## 8. Reiniciar os dados
 

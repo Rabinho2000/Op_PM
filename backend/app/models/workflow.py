@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, GUID
@@ -39,14 +39,25 @@ class WorkflowStage(UUIDPk, TimestampMixin, Base):
     # Papel responsável, referenciado por código (ver roles.code) — nunca o
     # nome de uma pessoa concreta hardcoded na definição do processo.
     responsible_role_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Rótulo mostrado na UI ("PM", "Licenciamento", "Subempreiteiro"…) —
+    # uma função, nunca o nome de uma pessoa (D-052).
+    responsible_label: Mapped[str] = mapped_column(String(128), default="", nullable=False)
     depends_on_stage_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("workflow_stages.id"), nullable=True
     )
+    # Número da etapa no percurso (1..N), global a todas as fases — as
+    # etapas de fases diferentes intercalam-se (ex. licenciamento).
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Dias úteis contados a partir da data de início do projeto (dia 1 =
+    # data de início) — ver app/services/workflow.py.
     planned_start_offset_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     planned_end_offset_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     has_contact_checkpoint: Mapped[bool] = mapped_column(default=False, nullable=False)
     contact_note: Mapped[str] = mapped_column(Text, default="")
+    # contacto (com o cliente) | update (atualização ao cliente)
+    contact_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    contact_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    note: Mapped[str] = mapped_column(Text, default="", nullable=False)
 
     phase: Mapped["Phase"] = relationship(back_populates="stages")
     subtasks: Mapped[list["WorkflowSubtask"]] = relationship(back_populates="stage")
@@ -61,5 +72,7 @@ class WorkflowSubtask(UUIDPk, TimestampMixin, Base):
     code: Mapped[str] = mapped_column(String(96), unique=True, nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Subtarefa que é um contacto com o cliente (☎ no processo legado).
+    is_client_contact: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     stage: Mapped["WorkflowStage"] = relationship(back_populates="subtasks")
