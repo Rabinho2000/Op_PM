@@ -136,3 +136,103 @@ def can_create_absence_for(ctx: AuthContext, person_id: UUID) -> bool:
     if ctx.has_permission("absence.manage_own"):
         return person_id == ctx.person_id
     return False
+
+
+# --- MVP de Operações (ver docs/PLAN_OPERATIONS_MVP.md) ---
+#
+# Padrão comum: uma permissão de domínio (`project.edit_installation_data`,
+# `calendar.manage`, `project_issue.manage`, ...) só produz efeito dentro do
+# âmbito de projeto que `can_view_project`/`can_edit_project` já define —
+# nunca uma segunda lógica de "próprio projeto" duplicada por domínio.
+
+
+def can_view_project_installation_data(ctx: AuthContext, project: Project) -> bool:
+    return ctx.has_permission("project.view_installation_data") and can_view_project(ctx, project)
+
+
+def can_edit_project_installation_data(ctx: AuthContext, project: Project) -> bool:
+    return ctx.has_permission("project.edit_installation_data") and can_edit_project(ctx, project)
+
+
+def can_view_project_licensing_data(ctx: AuthContext, project: Project) -> bool:
+    return ctx.has_permission("project.view_licensing_data") and can_view_project(ctx, project)
+
+
+def can_edit_project_licensing_data(ctx: AuthContext, project: Project) -> bool:
+    return ctx.has_permission("project.edit_licensing_data") and can_edit_project(ctx, project)
+
+
+def can_view_project_communication_data(ctx: AuthContext, project: Project) -> bool:
+    return ctx.has_permission("project.view_communication_data") and can_view_project(ctx, project)
+
+
+def can_edit_project_communication_data(ctx: AuthContext, project: Project) -> bool:
+    return ctx.has_permission("project.edit_communication_data") and can_edit_project(ctx, project)
+
+
+def can_manage_central_inventory(ctx: AuthContext) -> bool:
+    """Entrada/ajuste no stock físico central — nunca por projeto (ver
+    docs/PLAN_OPERATIONS_MVP.md secção 11: PM não recebe esta permissão)."""
+    return ctx.has_permission("inventory.manage_central")
+
+
+def can_allocate_inventory_for_project(ctx: AuthContext, project: Project) -> bool:
+    return ctx.has_permission("inventory.allocate_project") and can_edit_project(ctx, project)
+
+
+def can_consume_inventory_for_project(ctx: AuthContext, project: Project) -> bool:
+    return ctx.has_permission("inventory.consume_project") and can_edit_project(ctx, project)
+
+
+def can_release_inventory_for_project(ctx: AuthContext, project: Project) -> bool:
+    return ctx.has_permission("inventory.release_project") and can_edit_project(ctx, project)
+
+
+def can_manage_material_requirements(ctx: AuthContext, project: Project) -> bool:
+    return ctx.has_permission("inventory.manage_requirements") and can_edit_project(ctx, project)
+
+
+def can_view_map(ctx: AuthContext) -> bool:
+    return ctx.has_permission("map.view")
+
+
+def can_manage_suppliers(ctx: AuthContext) -> bool:
+    return ctx.has_permission("supplier.manage")
+
+
+def can_manage_pickup_points(ctx: AuthContext) -> bool:
+    return ctx.has_permission("pickup_point.manage")
+
+
+def can_view_project_issue(ctx: AuthContext, project: Project) -> bool:
+    return ctx.has_permission("project_issue.view") and can_view_project(ctx, project)
+
+
+def can_manage_project_issue(ctx: AuthContext, project: Project) -> bool:
+    return ctx.has_permission("project_issue.manage") and can_edit_project(ctx, project)
+
+
+def can_view_calendar_event(ctx: AuthContext, project: Project | None) -> bool:
+    if not ctx.has_permission("calendar.view"):
+        return False
+    if project is None:
+        # Evento sem projeto associado (ex. reunião interna) — visível a
+        # quem tiver a permissão de calendário, sem âmbito de projeto.
+        return True
+    return can_view_project(ctx, project)
+
+
+def can_manage_calendar_event(ctx: AuthContext, project: Project | None) -> bool:
+    if not ctx.has_permission("calendar.manage"):
+        return False
+    if project is None:
+        return True
+    return can_edit_project(ctx, project)
+
+
+def can_view_performance(ctx: AuthContext) -> bool:
+    return ctx.has_permission("performance.view_all") or ctx.has_permission("performance.view_own")
+
+
+def can_manage_goals(ctx: AuthContext) -> bool:
+    return ctx.has_permission("performance.manage_goals")
