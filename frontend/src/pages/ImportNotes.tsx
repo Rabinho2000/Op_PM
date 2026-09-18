@@ -28,6 +28,7 @@ const FIELD_LABELS: Record<string, string> = {
   client_nif: "NIF",
   contact_person_name: "Pessoa de contacto",
   contact_person_role: "Função",
+  contact_email: "Email de contacto",
   contact_phone: "Telefone",
   district: "Distrito",
   municipality: "Concelho",

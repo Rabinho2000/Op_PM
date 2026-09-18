@@ -17,6 +17,7 @@ from app.schemas.imports import (
     ApplyImportResult,
     FieldImportBatchRead,
     FieldImportConflictRead,
+    FieldImportDocumentRead,
     FieldImportRecordRead,
     ResolveImportConflictRequest,
 )
@@ -80,6 +81,20 @@ def get_batch_endpoint(
     if batch is None:
         raise HTTPException(status_code=404, detail="Lote de importação não encontrado.")
     return _batch_to_read(batch)
+
+
+@router.get("/{batch_id}/document", response_model=FieldImportDocumentRead)
+def get_batch_document_endpoint(
+    batch_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+) -> FieldImportDocumentRead:
+    """Devolve o documento original submetido (HTML/JSON), tal como foi
+    carregado — nunca só o payload já extraído. Auditoria/rastreabilidade:
+    quem reve uma importação consegue sempre confirmar contra a fonte."""
+    _require_import_notes(ctx)
+    batch = db.get(FieldImportBatch, batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="Lote de importação não encontrado.")
+    return FieldImportDocumentRead(filename=batch.source_filename, content=batch.raw_document_text)
 
 
 @router.get("/{batch_id}/conflicts", response_model=list[FieldImportConflictRead])

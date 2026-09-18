@@ -74,6 +74,31 @@ def test_preview_html_with_embedded_json_works(api_client):
     assert body["records"][0]["mapped_fields"]["project"]["client_name"] == "Cliente Sintético do HTML de Notas"
 
 
+def test_original_document_is_preserved_and_retrievable(db_session, api_client):
+    """O documento original submetido (não só o JSON já extraído) tem de
+    ficar guardado e recuperável tal como foi carregado — auditoria exige
+    conseguir voltar à fonte, não só ao resultado normalizado."""
+    headers = _headers("comercial.sintetico@example.invalid")
+    html_bytes = _html_fixture_bytes()
+    resp_preview = api_client.post(
+        "/api/imports/notes/preview",
+        files={"file": ("notas-iniciais-v11.html", html_bytes, "text/html")},
+        headers=headers,
+    )
+    assert resp_preview.status_code == 201, resp_preview.text
+    batch_id = resp_preview.json()["id"]
+
+    batch = db_session.get(FieldImportBatch, batch_id)
+    assert batch.raw_document_text == html_bytes.decode("utf-8")
+
+    resp_document = api_client.get(f"/api/imports/{batch_id}/document", headers=headers)
+    assert resp_document.status_code == 200, resp_document.text
+    document = resp_document.json()
+    assert document["filename"] == "notas-iniciais-v11.html"
+    assert document["content"] == html_bytes.decode("utf-8")
+    assert "<script" in document["content"] and "notas-iniciais-data" in document["content"]
+
+
 def test_html_without_embedded_script_is_rejected(api_client):
     html = b"<html><body><h1>Sem dados estruturados</h1></body></html>"
     resp = api_client.post(

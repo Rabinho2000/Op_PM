@@ -284,6 +284,11 @@ def preview_notes_import(
     mapped = map_payload_to_fields(payload)
     candidates, strategy = find_matching_projects(db, mapped)
 
+    try:
+        raw_document_text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise NotesImportError("Ficheiro com encoding inválido (esperado UTF-8).") from exc
+
     source_type = SOURCE_TYPE_NOTES_JSON if lower_name.endswith(".json") else SOURCE_TYPE_NOTES_HTML
     batch = FieldImportBatch(
         source_type=source_type,
@@ -291,6 +296,7 @@ def preview_notes_import(
         source_file_hash=file_hash,
         form_version=form_version,
         raw_payload_json=json.dumps(payload, ensure_ascii=False),
+        raw_document_text=raw_document_text,
         status=BATCH_STATUS_PENDING_CONFIRMATION,
         started_by_person_id=uploaded_by_person_id,
     )

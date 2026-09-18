@@ -56,10 +56,13 @@ class FieldImportBatch(UUIDPk, TimestampMixin, Base):
     source_filename: Mapped[str] = mapped_column(String(512), nullable=False)
     source_file_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     form_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    # Payload extraído (nunca o HTML/Excel original em si — só o JSON/dados
-    # normalizados) — preservado tal como veio, mesmo que a normalização
-    # de campos falhe parcialmente.
+    # Payload extraído (o JSON/dados normalizados) — preservado tal como
+    # veio, mesmo que a normalização de campos falhe parcialmente.
     raw_payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    # O documento original submetido (HTML/JSON), tal como foi carregado —
+    # nunca só o payload já extraído. Texto (não binário): os únicos tipos
+    # aceites (.html/.htm/.json) são sempre texto UTF-8.
+    raw_document_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     status: Mapped[str] = mapped_column(String(32), default=BATCH_STATUS_PENDING_CONFIRMATION, nullable=False)
     started_by_person_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("people.id"), nullable=True

@@ -34,6 +34,11 @@ class FieldImportRecordRead(BaseModel):
     conflicts: list[FieldImportConflictRead] = []
 
 
+class FieldImportDocumentRead(BaseModel):
+    filename: str
+    content: str
+
+
 class FieldImportBatchRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
