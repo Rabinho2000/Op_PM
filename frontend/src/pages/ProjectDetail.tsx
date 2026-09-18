@@ -2,12 +2,16 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   ApiError,
+  consumeProjectMaterial,
   DEFAULT_TASK_TYPE_LABELS,
   getProject,
   getProjectCommunicationData,
   getProjectHistory,
   getProjectInstallationData,
+  getProjectInventory,
   getProjectLicensingData,
+  InventoryItem,
+  listInventoryItems,
   listPeople,
   listTasks,
   Person,
@@ -16,7 +20,11 @@ import {
   PROJECT_STATUS_LABELS,
   ProjectHistoryEntry,
   ProjectInstallationData,
+  ProjectInventorySummary,
   ProjectLicensingData,
+  releaseProjectMaterial,
+  reserveProjectMaterial,
+  returnProjectMaterial,
   Task,
   TASK_ALLOWED_NEXT_STATUSES,
   TASK_PRIORITY_LABELS,
@@ -41,7 +49,7 @@ import {
   TASK_TYPE_ICONS,
 } from "../utils/labels";
 
-type TabKey = "resumo" | "instalacao" | "licenciamento" | "tarefas" | "historico" | "cliente";
+type TabKey = "resumo" | "instalacao" | "licenciamento" | "tarefas" | "inventario" | "historico" | "cliente";
 
 // Campos de texto oferecidos no formulário de edição, por ordem. Só são
 // mostrados os que o servidor indica em `project.editable_fields` (D-028).
@@ -399,6 +407,119 @@ const COMMUNICATION_FIELDS: DataFieldConfig<ProjectCommunicationData>[] = [
   { key: "notes", label: "Notas", multiline: true },
 ];
 
+type InventoryAction = "reserve" | "consume" | "release" | "return";
+
+const INVENTORY_ACTION_LABELS: Record<InventoryAction, string> = {
+  reserve: "Reservar",
+  consume: "Consumir",
+  release: "Libertar reserva",
+  return: "Devolver ao stock",
+};
+
+function ProjectInventoryOperationModal({
+  projectId,
+  items,
+  onClose,
+  onDone,
+}: {
+  projectId: string;
+  items: InventoryItem[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [form, setForm] = useState({ action: "reserve" as InventoryAction, item_id: "", quantity: "", reference: "" });
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (!form.item_id || !form.quantity) {
+      setError("Escolha o item e indique a quantidade.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = { item_id: form.item_id, quantity: form.quantity, reference: form.reference || undefined };
+      const operation = {
+        reserve: reserveProjectMaterial,
+        consume: consumeProjectMaterial,
+        release: releaseProjectMaterial,
+        return: returnProjectMaterial,
+      }[form.action];
+      await operation(projectId, payload);
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : "Não foi possível registar o movimento.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      title="Movimento de inventário do projeto"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose}>
+            Cancelar
+          </button>
+          <button type="submit" form="project-inventory-form" className="btn btn--primary" disabled={saving}>
+            {saving ? "A guardar…" : "Aplicar"}
+          </button>
+        </>
+      }
+    >
+      {error && <Alert tone="danger">{error}</Alert>}
+      <form id="project-inventory-form" className="form-grid" onSubmit={handleSubmit}>
+        <div className="field">
+          <label htmlFor="inv-action">Ação</label>
+          <select
+            id="inv-action"
+            className="select"
+            value={form.action}
+            onChange={(e) => setForm({ ...form, action: e.target.value as InventoryAction })}
+          >
+            {Object.entries(INVENTORY_ACTION_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="inv-item">Item *</label>
+          <select id="inv-item" className="select" value={form.item_id} onChange={(e) => setForm({ ...form, item_id: e.target.value })}>
+            <option value="">— escolha —</option>
+            {items.map((i) => (
+              <option key={i.id} value={i.id}>
+                {i.name} ({i.unit})
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="inv-quantity">Quantidade *</label>
+          <input
+            id="inv-quantity"
+            className="input"
+            type="number"
+            step="0.001"
+            min="0"
+            value={form.quantity}
+            onChange={(e) => setForm({ ...form, quantity: e.target.value })}
+          />
+        </div>
+        <div className="field span-2">
+          <label htmlFor="inv-reference">Referência</label>
+          <input id="inv-reference" className="input" value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} />
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 export default function ProjectDetail() {
   const { projectId } = useParams<{ projectId: string }>();
   const { notify } = useToast();
@@ -410,11 +531,14 @@ export default function ProjectDetail() {
   const [installationData, setInstallationData] = useState<ProjectInstallationData | null>(null);
   const [licensingData, setLicensingData] = useState<ProjectLicensingData | null>(null);
   const [communicationData, setCommunicationData] = useState<ProjectCommunicationData | null>(null);
+  const [inventory, setInventory] = useState<ProjectInventorySummary | null>(null);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("resumo");
   const [editing, setEditing] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
   const [justDone, setJustDone] = useState<string | null>(null);
+  const [operatingInventory, setOperatingInventory] = useState(false);
 
   const canViewInstallation = can("project.view_installation_data");
   const canEditInstallation = can("project.edit_installation_data");
@@ -422,6 +546,9 @@ export default function ProjectDetail() {
   const canEditLicensing = can("project.edit_licensing_data");
   const canViewCommunication = can("project.view_communication_data");
   const canEditCommunication = can("project.edit_communication_data");
+  const canViewInventory = can("inventory.view");
+  const canOperateInventory =
+    can("inventory.allocate_project") || can("inventory.consume_project") || can("inventory.release_project");
 
   const load = useCallback(() => {
     if (!projectId) return;
@@ -450,14 +577,24 @@ export default function ProjectDetail() {
         .then(setCommunicationData)
         .catch(() => setCommunicationData(null));
     }
-  }, [projectId, canViewInstallation, canViewLicensing, canViewCommunication]);
+    if (canViewInventory) {
+      getProjectInventory(projectId)
+        .then(setInventory)
+        .catch(() => setInventory(null));
+    }
+  }, [projectId, canViewInstallation, canViewLicensing, canViewCommunication, canViewInventory]);
 
   useEffect(load, [load]);
   useEffect(() => {
     listPeople()
       .then(setPeople)
       .catch(() => setPeople([]));
-  }, []);
+    if (canViewInventory) {
+      listInventoryItems()
+        .then(setInventoryItems)
+        .catch(() => setInventoryItems([]));
+    }
+  }, [canViewInventory]);
 
   const { change: changeStatus, busyId } = useTaskStatusChange(
     useCallback(
@@ -519,6 +656,7 @@ export default function ProjectDetail() {
     ...(canViewInstallation ? [{ key: "instalacao" as TabKey, label: "Dados da instalação" }] : []),
     ...(canViewLicensing || canViewCommunication ? [{ key: "licenciamento" as TabKey, label: "Licenciamento" }] : []),
     { key: "tarefas", label: "Tarefas", count: tasks?.length },
+    ...(canViewInventory ? [{ key: "inventario" as TabKey, label: "Inventário", count: inventory?.reservations.length }] : []),
     { key: "historico", label: "Histórico", count: history?.length },
     { key: "cliente", label: "Cliente" },
   ];
@@ -838,6 +976,89 @@ export default function ProjectDetail() {
           </Card>
         )}
 
+        {tab === "inventario" && (
+          <div className="grid grid--main-side">
+            <Card
+              title="Necessidades de material"
+              icon="database"
+              actions={
+                canOperateInventory && (
+                  <button type="button" className="btn btn--sm" onClick={() => setOperatingInventory(true)}>
+                    <Icon name="plus" size={14} /> Movimento
+                  </button>
+                )
+              }
+            >
+              {inventory === null ? (
+                <LoadingState rows={3} />
+              ) : inventory.requirements.length === 0 ? (
+                <EmptyState compact icon="database" title="Sem necessidades de material registadas." />
+              ) : (
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Item</th>
+                      <th>Necessário</th>
+                      <th>Reservado</th>
+                      <th>Consumido</th>
+                      <th>Em falta</th>
+                      <th>Stock</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {inventory.requirements.map((r) => (
+                      <tr key={r.id}>
+                        <td>{r.item_name ?? "—"}</td>
+                        <td>
+                          {r.quantity_required} {r.item_unit}
+                        </td>
+                        <td>
+                          {r.reserved} {r.item_unit}
+                        </td>
+                        <td>
+                          {r.consumed} {r.item_unit}
+                        </td>
+                        <td>
+                          {r.missing} {r.item_unit}
+                        </td>
+                        <td>
+                          <Badge tone={r.available_stock_sufficient ? "success" : "danger"}>
+                            {r.available_stock_sufficient ? "suficiente" : "insuficiente"}
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </Card>
+
+            <Card title="Movimentos deste projeto" icon="history">
+              {inventory === null ? (
+                <LoadingState rows={3} />
+              ) : inventory.reservations.length === 0 ? (
+                <EmptyState compact icon="history" title="Sem movimentos de inventário neste projeto." />
+              ) : (
+                <ul className="list">
+                  {inventory.reservations.map((m) => (
+                    <li key={m.id} className="list__item">
+                      <div className="list__main">
+                        <span className="list__title">
+                          {m.item_name ?? "—"} · {m.quantity}
+                        </span>
+                        <div className="list__meta">
+                          {m.movement_type} · {formatDateTimePt(m.created_at)}
+                          {m.reference ? ` · ${m.reference}` : ""}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Card>
+          </div>
+        )}
+
         {tab === "historico" && (
           <Card title="Histórico de alterações" icon="history">
             {history === null && <LoadingState />}
@@ -913,6 +1134,18 @@ export default function ProjectDetail() {
             setCreatingTask(false);
             notify("Tarefa criada.", "success");
             setTab("tarefas");
+            load();
+          }}
+        />
+      )}
+      {operatingInventory && (
+        <ProjectInventoryOperationModal
+          projectId={project.id}
+          items={inventoryItems}
+          onClose={() => setOperatingInventory(false)}
+          onDone={() => {
+            setOperatingInventory(false);
+            notify("Movimento de inventário registado.", "success");
             load();
           }}
         />
