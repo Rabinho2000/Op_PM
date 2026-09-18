@@ -1740,10 +1740,11 @@ As decisões D-052 a D-056 documentam a fatia 1 do MVP de Operações
 (inventário com reservas, dados satélite de projeto, mapa, calendário
 ligado a tarefas, permissões de tarefas revistas, metas e indicadores
 fundidos com o histórico) — ver `docs/PLAN_OPERATIONS_MVP.md` para o
-desenho completo, incluindo o que fica para uma fatia seguinte
-(importadores, UI de mapa/calendário/dados de projeto) e porquê. Nenhuma
-integração externa real foi ligada (Graph/ClickUp/Financial/Claude
-continuam mock/fallback); nenhum dado real entrou no repositório.
+desenho completo. D-057 documenta a fatia 2, que fecha o que tinha
+ficado para depois: importadores implementados (não só desenhados), UI
+de mapa/planeamento/dados de projeto, e a tab de inventário por projeto.
+Nenhuma integração externa real foi ligada (Graph/ClickUp/Financial/
+Claude continuam mock/fallback); nenhum dado real entrou no repositório.
 
 ## D-052 — Tarefas: visibilidade global do PM, escrita por identidade (criador/atribuído), nunca por ser o PM do projeto
 
@@ -1776,7 +1777,7 @@ criação só atribuída a si mesmo
 (`test_pm_can_only_create_task_assigned_to_self`), Chefe continua a
 reatribuir livremente (`test_chefe_can_reassign_any_task`).
 
-## D-053 — Inventário: reserva/consumo/libertação/devolução como operações distintas, PM sem acesso ao stock físico central
+## D-053 — Inventário: reserva/consumo/libertação/devolução como operações distintas; Admin, Chefe e PM partilham o stock físico central
 
 **Decisão:** `app/services/inventory.py` implementa as quatro operações
 do pedido como funções distintas e transacionais sobre
@@ -1838,7 +1839,7 @@ fiável).
 e por âmbito de projeto, criação na primeira edição, histórico por campo
 alterado, nenhuma entrada duplicada quando o valor não muda.
 
-## D-055 — Mapa, calendário ligado a tarefas: backend completo, sem UI nesta fase
+## D-055 — Mapa, calendário ligado a tarefas: backend completo (UI implementada depois, ver D-057)
 
 **Decisão:** `GET /api/map/data` devolve um único payload já filtrado
 pela visibilidade do utilizador (projetos com/sem coordenadas,
@@ -1855,15 +1856,12 @@ gravar, em criação e edição — nunca confiado ao cliente. Continua
 inteiramente local, sem Microsoft Graph (`graph_event_id` nunca
 preenchido — D-010 mantém-se).
 
-**Sem otimização automática de rotas**, por pedido explícito — só
-seleção/ordenação manual e link para rota externa ficam para a UI (não
-implementada nesta PR).
+**Sem otimização automática de rotas**, por pedido explícito — a UI
+implementada em D-057 só oferece seleção/ordenação manual e um link para
+rota externa (Google Maps), nunca um cálculo de rota próprio.
 
 **UI destas duas áreas, e das tabs de dados de projeto no detalhe do
-projeto, ficam para uma fatia seguinte** — o volume de frontend pedido
-(mapa interativo com camadas/filtros, calendário semanal/mensal/lista) é,
-sozinho, maior que todo o resto desta fatia combinado. Ver
-`docs/OPEN_QUESTIONS.md` pergunta 32.
+projeto, implementadas numa fatia seguinte — ver D-057.**
 
 **Testes:** `tests/test_map_api.py` (7), `tests/test_planning_api.py` (9)
 — incluindo o bloqueio de uma tarefa de projeto diferente do evento.
@@ -1890,3 +1888,89 @@ distinguir de facto — ver `docs/OPEN_QUESTIONS.md` pergunta 31.
 
 **Testes:** `tests/test_performance_api.py` (8) — permissões, cálculo de
 progresso a partir de tarefas reais, âmbito por PM vs. empresa inteira.
+
+## D-057 — MVP de Operações, fatia 2: UI do mapa/planeamento, importadores implementados, tab de inventário por projeto
+
+**Contexto:** uma auditoria contra o pedido original, feita depois do
+relatório da fatia 1, apontou que várias peças descritas como "desenho
+completo" ou "backend completo, sem UI" ainda não tinham interface nem
+estavam realmente implementadas — nomeadamente o importador de notas
+iniciais (documentado, não codificado), o mapa e o calendário de
+planeamento (só API), e a ausência de qualquer forma de reservar/consumir
+material por projeto a partir do browser. Esta decisão fecha essas
+lacunas.
+
+**Importador de notas iniciais — implementado (não só desenhado):**
+`app/services/imports_notes.py` (extração de `<script type="application/
+json" id="notas-iniciais-data">` de HTML via `html.parser`, nunca
+`eval`/motor de JS; versão lida de `payload.formVersion`, nunca do nome
+do ficheiro — testado explicitamente com um ficheiro chamado
+`notas-iniciais-v11.html` cujo conteúdo é v12), `app/models/imports.py`
+(`FieldImportBatch`/`Record`/`Conflict`), 4 endpoints
+(`app/api/routes_imports.py`): preview (idempotente por hash),
+`GET /{batch_id}`, listar/resolver conflitos, `apply` (exige confirmação
+explícita e todos os conflitos resolvidos). UI em
+`frontend/src/pages/ImportNotes.tsx` (arrastar ficheiro, preview,
+resolução de conflitos, confirmação). Ver `docs/DATA_IMPORTS.md`.
+
+**Documento original preservado, não só o payload extraído.** A primeira
+versão desta funcionalidade guardava apenas `raw_payload_json` (o JSON já
+normalizado) — uma auditoria de "criar auditoria"/"guardar o documento
+original" confirmou que o ficheiro tal como foi submetido nunca ficava
+persistido, impossibilitando confirmar uma importação contra a fonte
+original. Corrigido com `FieldImportBatch.raw_document_text` (o texto
+completo do ficheiro carregado) e `GET /api/imports/{batch_id}/document`
+para o consultar — migração `f1134f80f657`.
+
+**Importador de licenciamento (Excel) — confirmado implementado:**
+`app/services/imports_licensing.py` + `app/cli/import_licensing.py`
+(`--dry-run`/`--apply`/`--rollback`), nunca uma UI — decisão de segurança
+mantida (ficheiro real nunca commitado, só a fixture sintética).
+
+**Mapa (`/map`) e Planeamento (`/planning`) — UI implementada.**
+`frontend/src/pages/Map.tsx`: Leaflet quando há `MAP_TILE_URL`
+configurado, lista funcional sempre que não há (nunca depende de um
+serviço externo para o resto da app funcionar); filtros, painel "sem
+coordenadas" com edição manual, seleção múltipla + link de rota externa
+(sem otimização automática, por pedido explícito), formulários de
+fornecedor/ponto de recolha, pendências com conversão em tarefa.
+`frontend/src/pages/Planning.tsx`: vistas de semana/mês/lista; filtros
+todos/meus/por PM/por projeto/por responsável; criar e reagendar pelo
+mesmo formulário; **deteção de conflitos de horário só no cliente**, a
+partir dos eventos já carregados para o período visível — avisa
+sobreposições para o mesmo responsável e exige confirmação explícita
+antes de gravar, mas não bloqueia nem valida no servidor (o pedido não
+especificava bloqueio rígido; o backend não tem essa restrição — ver
+`docs/OPEN_QUESTIONS.md` pergunta 34).
+
+**Tab "Inventário" no detalhe do projeto (nova).** Não existia nenhuma
+forma de reservar/consumir/libertar/devolver material a partir do
+browser — só `/inventory` (stock central) tinha UI. Adicionada uma tab
+que mostra as necessidades de material do projeto e os seus movimentos,
+com um formulário para as quatro operações — reaproveita os endpoints já
+existentes e testados de `app/api/routes_inventory.py`
+(`inventory.allocate_project`/`consume_project`/`release_project`,
+validados sempre no servidor).
+
+**Tarefas: cenário de dois PMs explicitamente testado.** Os testes já
+cobriam "PM não edita tarefa de projeto sem PM" e "PM não edita tarefa de
+outra pessoa no seu próprio projeto", mas não o caso pedido
+explicitamente — uma tarefa de um projeto gerido por **outro PM**.
+Adicionado `test_pm_can_view_but_not_edit_or_reassign_task_of_another_pms_project`
+em `tests/test_tasks_api.py`, confirmando visibilidade (`task.view_all`)
+sem direito de escrita nem de reatribuição.
+
+**Seed:** `seed_dev.py:seed_calendar_events` acrescenta 3 `CalendarEvent`
+sintéticos ligados a projetos/tarefas/pessoas reais, para `/planning` não
+abrir vazio — mesma convenção das outras áreas do MVP (mapa, inventário,
+metas).
+
+**Testes:** +2 no backend (documento original preservado; cenário de
+dois PMs) — 380 no total (+2 skipped); `tests/test_imports_notes.py` (16),
+`tests/test_import_licensing_cli.py` (10), `tests/test_map_api.py` (7),
+`tests/test_planning_api.py` (9) confirmados a passar. Frontend: +12
+testes novos (`Map.test.tsx`, `Planning.test.tsx`) — 85 no total.
+Validação visual manual de 22 cenários (login por perfil, todas as tabs
+do projeto, mapa, planeamento, inventário por projeto, metas com todos
+os filtros) contra dados de demonstração reais, incluindo o ciclo
+completo notas→projeto→mapa→pendência→tarefa→calendário→inventário→metas.

@@ -67,6 +67,20 @@ em_falta = max(0, quantidade_necessaria − reservado[projeto] − consumido[pro
 cobre o `em_falta` calculado — usado para o alerta "material em falta" na
 UI.
 
+## UI
+
+- `/inventory` (`frontend/src/pages/Inventory.tsx`): stock central por
+  item, alerta de stock baixo, e "Registar movimento" (entrada/ajuste) —
+  âmbito central, nunca por projeto.
+- Tab **Inventário** no detalhe do projeto
+  (`frontend/src/pages/ProjectDetail.tsx`): necessidades de material do
+  projeto (necessário/reservado/consumido/em falta/stock suficiente) e os
+  movimentos desse projeto, com um botão "Movimento" para
+  reservar/consumir/libertar/devolver — atrás de `inventory.view` para
+  consulta e de `inventory.allocate_project`/`consume_project`/
+  `release_project` para cada ação (o servidor volta sempre a validar,
+  ver tabela acima).
+
 ## Localizações (`InventoryLocation`)
 
 Tipos: `central | project | vehicle | supplier`. O seed cria uma única

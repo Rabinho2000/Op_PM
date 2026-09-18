@@ -65,6 +65,17 @@ dízimas com dezenas de casas, inúteis para apresentação.
   pendentes de certificação" (concluído mas sem `certificate_date`).
 - `yearly` — instalações e kWp concluídos, últimos 5 anos.
 
+## UI (`frontend/src/pages/Performance.tsx`)
+
+- Filtros: ano, tipo de período (ano inteiro/semestre/trimestre/mês) com o
+  seletor de semestre/trimestre/mês correspondente a aparecer só quando
+  relevante, e PM (ou "todos os PM e empresa") — todos enviados ao
+  servidor (`GET /api/performance/summary`), nunca filtrados no cliente a
+  partir de uma lista completa.
+- "Nova meta" e "Editar" (por meta) atrás de `performance.manage_goals` —
+  editar altera `target_value`/`notes`; o progresso nunca é editável
+  diretamente, é sempre recalculado a partir dos dados reais.
+
 ## Permissões
 
 `performance.view_all` (Chefe/Admin/Comercial/Financeiro — leitura
