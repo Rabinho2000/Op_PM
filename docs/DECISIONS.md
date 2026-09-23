@@ -2245,3 +2245,44 @@ total. Validado no browser contra o seed real: agendar 15/07/2099 09:00 gravou
 **Fica para as fatias seguintes:** entrega/recolha de material (ledger ainda não
 distingue "reservado" de "entregue"), fornecedores no mapa com pedido, combinar
 trabalhos numa deslocação, otimização de rota.
+
+## D-063 — Planeamento: horas de Lisboa enviadas como instantes com offset
+
+Correção de um defeito pré-existente em `frontend/src/pages/Planning.tsx`
+(PR #13), descoberto ao investigar a falha de CI de `Planning.test.tsx`
+(D-058) e confirmado ao implementar as visitas futuras (D-062).
+
+**Problema.** O formulário de Planeamento trabalha em **hora de Lisboa**
+(`toDatetimeLocalValue` formata com `Europe/Lisbon`), mas enviava
+`"…T09:00:00"` **sem offset**. Com PostgreSQL (colunas `timestamptz`) o
+servidor lê uma string sem offset como UTC; no horário de Verão o evento
+aparecia **1 hora mais tarde** do que o utilizador escolheu. O mesmo padrão
+afetava dois outros pontos: a deteção de sobreposições (`findConflicts`
+comparava um instante "hora local de quem executa" com instantes reais) e o
+filtro do intervalo visível (`starts_from`/`starts_to` de
+`listCalendarEvents`).
+
+**Correção.** Os três pontos passam a usar `lisbonWallClockToIso`
+(`utils/dates.ts`, introduzido em D-062): converte a hora de parede de Lisboa
+(valor de um `<input type="datetime-local">`) no instante UTC correspondente,
+em ISO com offset. Só usa `Date.UTC` e `Intl` com `timeZone` explícito, por
+isso é independente do fuso do browser/runner e correto no Verão/Inverno e nas
+mudanças de hora (testado com 29/03/2026).
+
+**Relação com o CI.** A falha original de `Planning.test.tsx` era este mesmo
+padrão nos *fixtures* (datas sem offset, lidas na hora local do runner UTC). Foi
+resolvida só nos testes, fixando `TZ=Europe/Lisbon` em `vitest.config.ts`
+(D-058). Este D-063 corrige a causa na aplicação; o `TZ` do Vitest mantém-se,
+porque os fixtures continuam a usar datas sem offset.
+
+**Limitação conhecida.** Em **SQLite** (só desenvolvimento/testes) o servidor
+devolve datetimes **sem offset**, porque o SQLite descarta o fuso; a
+apresentação continua ambígua nesse motor. Em **PostgreSQL** (staging/produção)
+o servidor devolve offset e fica correta. Não foi validado contra um
+PostgreSQL real, só pela suite de frontend; o job `backend-postgres` do CI
+não exercita o frontend. Confirmar num ambiente com PostgreSQL antes de
+depender disto em produção.
+
+**Testes:** +3 em `Planning.test.tsx` (09:00 de Verão → `08:00Z`; 09:00 de
+Inverno → `09:00Z`; intervalo visível com offset). Contagem atual: 111 Vitest e
+411 de backend (+2 skipped).
