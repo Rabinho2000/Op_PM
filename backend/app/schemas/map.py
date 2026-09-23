@@ -6,10 +6,18 @@ import uuid
 from pydantic import BaseModel, ConfigDict
 
 
+class NextOperationalTaskRead(BaseModel):
+    id: uuid.UUID
+    title: str
+    due_date: dt.date | None
+    priority: str
+
+
 class MapProjectRead(BaseModel):
     id: uuid.UUID
     name: str
     client_name: str | None
+    pm_person_id: uuid.UUID | None = None
     pm_display_name: str | None
     status: str
     lat: float | None
@@ -17,6 +25,25 @@ class MapProjectRead(BaseModel):
     power_kwp: float | None
     open_tasks_count: int
     issues_count: int
+
+    # attention (green|yellow|red) — sempre derivado, nunca persistido; ver
+    # app/services/map.py:_compute_attention. Só usa OPERATIONAL_TASK_CATEGORIES
+    # (field/material) e, quando visível, material físico no local — nunca
+    # tarefas de workflow/documentação.
+    attention: str = "green"
+    operational_tasks_count: int = 0
+    overdue_operational_tasks_count: int = 0
+    blocked_operational_tasks_count: int = 0
+    urgent_operational_tasks_count: int = 0
+    next_operational_task: NextOperationalTaskRead | None = None
+
+    # Inventário: `material_visible=False` (sem inventory.view) devolve
+    # sempre `has_material_on_site`/`material_sku_count` a `null` — nunca
+    # `false`, para nunca revelar por omissão que não há stock a quem não
+    # tem permissão para ver stock nenhum.
+    material_visible: bool = False
+    has_material_on_site: bool | None = None
+    material_sku_count: int | None = None
 
 
 class MapSupplierRead(BaseModel):
@@ -175,6 +202,23 @@ class MapConfig(BaseModel):
     tile_attribution: str
 
 
+class MapSummaryRead(BaseModel):
+    """Duas métricas deliberadamente separadas — ver
+    app/services/map.py:compute_map_summary. `map_coverage_percent` é
+    cobertura de coordenadas (problema de dados); `operational_clean_percent`
+    é estado operacional (attention). Nunca a mesma métrica com dois nomes."""
+
+    visible_active_projects: int
+    mapped_projects: int
+    unmapped_projects: int
+    map_coverage_percent: float
+    green_projects: int
+    yellow_projects: int
+    red_projects: int
+    operational_clean_percent: float
+    projects_with_material: int
+
+
 class MapDataResponse(BaseModel):
     config: MapConfig
     projects: list[MapProjectRead]
@@ -182,3 +226,4 @@ class MapDataResponse(BaseModel):
     suppliers: list[MapSupplierRead]
     pickup_points: list[MapPickupPointRead]
     issues: list[ProjectIssueRead]
+    summary: MapSummaryRead

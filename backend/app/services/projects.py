@@ -38,7 +38,15 @@ class ProjectTaskSummary:
 
 def compute_project_task_summary(db: Session, project_id: uuid.UUID) -> ProjectTaskSummary:
     tasks = db.query(Task).filter(Task.project_id == project_id).all()
+    return compute_project_task_summary_from_tasks(tasks)
 
+
+def compute_project_task_summary_from_tasks(tasks: list[Task]) -> ProjectTaskSummary:
+    """Mesmo cálculo de `compute_project_task_summary`, mas a partir de uma
+    lista de tarefas já carregada — usada por quem precisa do resumo de
+    vários projetos de uma vez (ex. app/services/map.py) sem repetir uma
+    query de tarefas por projeto (padrão N+1 — ver docs/DECISIONS.md,
+    mapa operacional)."""
     if not tasks:
         return ProjectTaskSummary(
             status="nao_iniciado",

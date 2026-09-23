@@ -116,7 +116,11 @@ instalação"/"Licenciamento" no detalhe do projeto,
 mapa operacional (`/map`, Leaflet com lista funcional de recurso quando
 não há provider de tiles configurado) e calendário de planeamento
 (`/planning`, vistas de semana/mês/lista) — **backend e UI completos e
-testados**, ver [`docs/MAP_AND_PLANNING.md`](docs/MAP_AND_PLANNING.md);
+testados**; `Task.category` (workflow/field/material/documentation/
+commercial/other) e um estado `attention` (green/yellow/red) por projeto,
+derivado no servidor a partir de tarefas operacionais e inventário
+(`GET /api/map/data`) — **backend e testes completos, UI ainda por fazer**
+(D-058), ver [`docs/MAP_AND_PLANNING.md`](docs/MAP_AND_PLANNING.md);
 permissões de tarefas revistas (PM vê tarefas de todos os projetos, mas
 só cria/edita as suas — nunca reatribui); "Metas e indicadores" como
 página única (`/performance`, nunca "Metas"/"Dashboards" separados, com
@@ -126,7 +130,7 @@ de notas iniciais (arrastar HTML/JSON, preview, conflitos por campo,
 confirmação, auditoria — `/projects/import`) e importador de
 licenciamento via Excel (`python -m app.cli.import_licensing`,
 `--dry-run`/`--apply`/`--rollback`, nunca via UI), ver
-[`docs/DATA_IMPORTS.md`](docs/DATA_IMPORTS.md). 380 testes de backend
+[`docs/DATA_IMPORTS.md`](docs/DATA_IMPORTS.md). 405 testes de backend
 (+2 skipped) e 85 testes Vitest no frontend.
 
 Documentação:
@@ -288,7 +292,8 @@ omissão) — depois:
 Validado manualmente ponta-a-ponta nesta fase — ver `docs/DECISIONS.md` D-027/D-031,
 D-039 a D-047 (Fase 1.5), D-052 a D-056 (MVP de Operações, fatia 1) e D-057
 (fatia 2 — importadores implementados, UI de mapa/planeamento, tab de
-inventário por projeto).
+inventário por projeto). D-058 (`Task.category`/`attention` do mapa) é
+só backend — sem validação manual de UI, ver secção acima.
 
 Login Microsoft real requer uma app registration SPA (Authorization Code + PKCE, sem
 client secret) e uma app registration de API expondo o âmbito `access_as_user` — ver

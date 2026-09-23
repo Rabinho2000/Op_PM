@@ -71,6 +71,44 @@ PRIORITY_URGENT = "urgent"
 
 TASK_PRIORITIES: frozenset[str] = frozenset({PRIORITY_LOW, PRIORITY_MEDIUM, PRIORITY_HIGH, PRIORITY_URGENT})
 
+# Categoria operacional da tarefa — vocabulário pequeno e controlado,
+# distinto de `task_type` (tipo funcional específico). `category` separa
+# workflow/documentação (não geram dívida operacional) de pendências reais
+# de campo/material (ver OPERATIONAL_TASK_CATEGORIES, usado pelo mapa
+# operacional — app/services/map.py — para calcular o estado `attention`).
+TASK_CATEGORY_WORKFLOW = "workflow"
+TASK_CATEGORY_FIELD = "field"
+TASK_CATEGORY_MATERIAL = "material"
+TASK_CATEGORY_DOCUMENTATION = "documentation"
+TASK_CATEGORY_COMMERCIAL = "commercial"
+TASK_CATEGORY_OTHER = "other"
+
+TASK_CATEGORIES: frozenset[str] = frozenset(
+    {
+        TASK_CATEGORY_WORKFLOW,
+        TASK_CATEGORY_FIELD,
+        TASK_CATEGORY_MATERIAL,
+        TASK_CATEGORY_DOCUMENTATION,
+        TASK_CATEGORY_COMMERCIAL,
+        TASK_CATEGORY_OTHER,
+    }
+)
+
+# Categorias que contam como dívida operacional para o mapa (`attention`) —
+# nunca hardcoded como string "field"/"material" fora deste módulo.
+OPERATIONAL_TASK_CATEGORIES: frozenset[str] = frozenset({TASK_CATEGORY_FIELD, TASK_CATEGORY_MATERIAL})
+
+# Categoria por omissão de cada tipo de tarefa padrão (ver DEFAULT_TASK_TYPES
+# acima) — usada por ensure_default_tasks_for_project. `custom` (tarefas
+# ad-hoc) recebe TASK_CATEGORY_OTHER por omissão.
+DEFAULT_TASK_TYPE_CATEGORIES: dict[str, str] = {
+    TASK_TYPE_VISITA_TECNICA: TASK_CATEGORY_WORKFLOW,
+    TASK_TYPE_PREPARACAO_INSTALACAO: TASK_CATEGORY_WORKFLOW,
+    TASK_TYPE_INSTALACAO: TASK_CATEGORY_WORKFLOW,
+    TASK_TYPE_COMISSIONAMENTO: TASK_CATEGORY_WORKFLOW,
+    TASK_TYPE_FOTOS_DRIVE: TASK_CATEGORY_DOCUMENTATION,
+}
+
 
 class Task(UUIDPk, TimestampMixin, Base):
     __tablename__ = "tasks"
@@ -81,6 +119,7 @@ class Task(UUIDPk, TimestampMixin, Base):
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(32), default=STATUS_TODO, nullable=False)
     priority: Mapped[str] = mapped_column(String(16), default=PRIORITY_MEDIUM, nullable=False)
+    category: Mapped[str] = mapped_column(String(32), default=TASK_CATEGORY_OTHER, nullable=False)
     assigned_to_person_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("people.id"), nullable=True
     )

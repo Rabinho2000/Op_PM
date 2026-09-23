@@ -1974,3 +1974,100 @@ Validação visual manual de 22 cenários (login por perfil, todas as tabs
 do projeto, mapa, planeamento, inventário por projeto, metas com todos
 os filtros) contra dados de demonstração reais, incluindo o ciclo
 completo notas→projeto→mapa→pendência→tarefa→calendário→inventário→metas.
+
+## D-058 — Mapa operacional: `Task.category` e `attention` derivado (backend), reaproveitando o `/api/map/data` e o `InventoryLocation` já existentes
+
+**Contexto:** um pedido nesta sessão descrevia um "Mapa Operacional" a
+construir de raiz — `InventoryLocation`, endpoint `/api/operations-map`,
+UI Leaflet nova — partindo do princípio de que nada disto existia ainda.
+**Não era verdade:** `/api/map/data` (`app/api/routes_map.py`,
+D-052/D-055), `InventoryLocation` (D-052), `ProjectIssue`/`PickupPoint`, e
+a UI Leaflet de `/map` (D-057) já estavam implementados, testados, e
+documentados (`docs/PLAN_OPERATIONS_MVP.md`, `docs/MAP_AND_PLANNING.md`,
+`docs/INVENTORY_RULES.md`). Confirmado com o utilizador antes de
+implementar (repositório como fonte de verdade, não o pedido colado) —
+âmbito revisto para **só** as duas peças que de facto não existiam:
+`Task.category` e um estado `attention` (green/yellow/red) derivado sobre
+o endpoint já existente, sem UI nova nesta sessão, sem duplicar
+`InventoryLocation`/mapa.
+
+**`Task.category`** (`app/models/task.py`) — vocabulário pequeno e
+controlado (`workflow|field|material|documentation|commercial|other`),
+distinto de `task_type` (tipo funcional específico). `OPERATIONAL_TASK_CATEGORIES
+= {field, material}` é a única definição no código (nunca strings
+`"field"`/`"material"` soltas noutros ficheiros — `app/services/map.py`
+importa a constante). Migração `25103ca9bfeb`: coluna `NOT NULL` com
+`server_default` transitório (mesmo padrão de `f1134f80f657`), backfill
+das 5 tarefas padrão via `DEFAULT_TASK_TYPE_CATEGORIES` (`visita_tecnica`/
+`preparacao_instalacao`/`instalacao`/`comissionamento` → `workflow`,
+`fotos_drive` → `documentation`); qualquer tarefa `custom` existente fica
+em `other` — nunca inventada. `TaskCreate`/`TaskUpdate` validam contra
+`TASK_CATEGORIES`; uma alteração de categoria gera `TaskHistory`, tal como
+qualquer outro campo (nenhum endpoint dedicado).
+
+**`attention` (green/yellow/red)** — nunca persistido, sempre calculado em
+`app/services/map.py:_compute_attention` sobre `visible_projects_query`
+(nunca `visible_tasks_query` — uma tarefa atribuída a alguém fora do
+projeto que gere pode continuar visível em `/tasks`, mas nunca torna esse
+projeto visível no mapa; testado explicitamente,
+`test_task_assigned_to_pm_outside_their_projects_never_leaks_project_on_map`
+em `tests/test_map_attention.py`). Regras: **red** se existir uma tarefa
+operacional aberta (`category` em `field`/`material`, estado em
+`OPEN_TASK_STATUSES`) `blocked`, `urgent`, ou atrasada (`Task.is_overdue`,
+já em `Europe/Lisbon` — nenhuma lógica de fuso paralela); **yellow** se
+não for red e existir uma tarefa operacional aberta, ou (só quando
+`ctx.has_permission("inventory.view")`) material físico no local; **green**
+caso contrário. Tarefas `workflow`/`documentation` nunca alteram
+`attention` (testado). `next_operational_task` é determinístico
+(due_date mais próxima → sem data por último → `created_at` → `id`).
+
+**Material "no local" reaproveita o saldo reservado líquido já modelado**
+(`reserva − liberta_reserva − consumo` por (item, projeto) — mesmo
+conceito de `app/services/inventory.py:reserved_for_project`, D-053) —
+este MVP não tem ainda um movimento de "entrega física" distinto de
+"reserva", por isso não distingue as duas coisas; documentado aqui como
+dívida técnica conhecida, não uma segunda fonte de verdade inventada.
+Calculado em **uma única query agregada** (`GROUP BY project_id, item_id`
+com `CASE`, portável SQLite/PostgreSQL), nunca uma chamada a
+`reserved_for_project` por (item, projeto) num ciclo. `material_visible`
+controla tudo: sem `inventory.view`, `has_material_on_site`/
+`material_sku_count` ficam sempre `null` (nunca `false` — evita inferir
+ausência de stock a partir de "sem permissão"), e material nunca torna um
+pin amarelo para quem não o pode ver (testado).
+
+**N+1 corrigido no mesmo endpoint (já existente antes desta sessão):**
+`get_map_projects` fazia uma query de tarefas e uma de pendências **por
+projeto**, e a rota chamava `compute_project_task_summary` (mais uma
+query de tarefas) por projeto outra vez. Reescrito para 4 queries fixas,
+independentes do número de projetos (projetos, tarefas de todos os
+projetos visíveis, pendências agregadas por projeto, inventário agregado
+por projeto) — `compute_project_task_summary` foi dividida numa função
+pura (`compute_project_task_summary_from_tasks`, reaproveitada aqui) mais
+o wrapper original inalterado para quem já a chama. Testado com
+`test_map_data_query_count_does_not_grow_with_project_count`
+(acrescenta 15 projetos com tarefa+movimento cada, confirma que o número
+de queries não cresce proporcionalmente).
+
+**`MapDataResponse.summary`** (novo) separa **`map_coverage_percent`**
+(cobertura de coordenadas — problema de dados) de
+**`operational_clean_percent`** (percentagem de projetos `green` — estado
+operacional) sobre o mesmo denominador (`visible_active_projects`) — nunca
+uma métrica de "limpeza" só que confunde as duas coisas (um projeto sem
+coordenadas nunca é "sujo" por isso).
+
+**Testes:** `tests/test_task_category.py` (9), `tests/test_map_attention.py`
+(16, incluindo segurança de scope, as 9 regras de negócio de
+red/yellow/green por categoria/estado pedidas, visibilidade de
+inventário, 2 SKUs nunca se anulam, cobertura de coordenadas, resumo, e
+número de queries limitado) — 405 testes de backend no total (+2
+skipped), sem nenhuma regressão na suite pré-existente. Frontend:
+inalterado nesta sessão (sem UI nova, por decisão explícita de âmbito) —
+85 testes Vitest continuam a passar, `npm run build`/`npm run lint` sem
+erros (o payload só ganhou campos novos, aditivos).
+
+**UI do mapa (fase seguinte, não implementada nesta sessão):**
+`frontend/src/pages/Map.tsx` pode passar a colorir os pins por
+`attention` (em vez de/a par de `open_tasks_count`/`issues_count`) e
+mostrar o resumo (`summary`) no topo da página — decisão de desenho de
+frontend deliberadamente deixada para uma sessão à parte, com o contrato
+do backend já fechado e testado.
