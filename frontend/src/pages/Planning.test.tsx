@@ -109,6 +109,40 @@ describe("Planeamento", () => {
     );
   });
 
+  it.each([
+    ["Verão (WEST, UTC+1)", "2099-07-15", "2099-07-15T08:00:00.000Z", "2099-07-15T09:30:00.000Z"],
+    ["Inverno (WET, UTC+0)", "2099-01-15", "2099-01-15T09:00:00.000Z", "2099-01-15T10:30:00.000Z"],
+  ])("envia as horas de Lisboa como instantes com offset — %s", async (_label, day, startsAt, endsAt) => {
+    renderWithProviders(<Planning />, { me: makeMe({ permissions: ["calendar.view", "calendar.manage"] }) });
+    await screen.findByText("Visita técnica sintética");
+
+    fireEvent.click(screen.getByRole("button", { name: /^novo evento$/i }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Título *"), { target: { value: "Evento com offset" } });
+    fireEvent.change(within(dialog).getByLabelText("Início *"), { target: { value: `${day}T09:00` } });
+    fireEvent.change(within(dialog).getByLabelText("Fim *"), { target: { value: `${day}T10:30` } });
+
+    api.createCalendarEvent.mockResolvedValue(event({ id: "evt-3" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /^guardar$/i }));
+
+    // Nunca "…T09:00:00" sem offset: o servidor (timestamptz) leria-o como UTC
+    // e, no Verão, o evento apareceria 1 hora mais tarde do que o escolhido.
+    await waitFor(() =>
+      expect(api.createCalendarEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Evento com offset", starts_at: startsAt, ends_at: endsAt })
+      )
+    );
+  });
+
+  it("pede ao servidor o intervalo visível como instantes com offset", async () => {
+    renderWithProviders(<Planning />, { me: makeMe({ permissions: ["calendar.view", "calendar.manage"] }) });
+    await screen.findByText("Visita técnica sintética");
+    const call = api.listCalendarEvents.mock.calls[0][0] as { starts_from: string; starts_to: string };
+    expect(call.starts_from).toMatch(/Z$/);
+    expect(call.starts_to).toMatch(/Z$/);
+    expect(new Date(call.starts_from).getTime()).toBeLessThan(new Date(call.starts_to).getTime());
+  });
+
   it("deteta sobreposição de horário para o mesmo responsável e exige confirmação", async () => {
     renderWithProviders(<Planning />, { me: makeMe({ permissions: ["calendar.view", "calendar.manage"] }) });
     await screen.findByText("Visita técnica sintética");
