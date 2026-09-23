@@ -2056,14 +2056,34 @@ uma métrica de "limpeza" só que confunde as duas coisas (um projeto sem
 coordenadas nunca é "sujo" por isso).
 
 **Testes:** `tests/test_task_category.py` (9), `tests/test_map_attention.py`
-(16, incluindo segurança de scope, as 9 regras de negócio de
+(17, incluindo segurança de scope, as 9 regras de negócio de
 red/yellow/green por categoria/estado pedidas, visibilidade de
-inventário, 2 SKUs nunca se anulam, cobertura de coordenadas, resumo, e
-número de queries limitado) — 405 testes de backend no total (+2
-skipped), sem nenhuma regressão na suite pré-existente. Frontend:
-inalterado nesta sessão (sem UI nova, por decisão explícita de âmbito) —
-85 testes Vitest continuam a passar, `npm run build`/`npm run lint` sem
-erros (o payload só ganhou campos novos, aditivos).
+inventário, 2 SKUs nunca se anulam, cobertura de coordenadas, resumo,
+número de queries limitado, e os 5 cenários do seed abaixo) — 406 testes
+de backend no total (+2 skipped), sem nenhuma regressão na suite
+pré-existente. Frontend: inalterado nesta sessão (sem UI nova, por
+decisão explícita de âmbito) — 85 testes Vitest continuam a passar,
+`npm run build`/`npm run lint` sem erros (o payload só ganhou campos
+novos, aditivos).
+
+**Seed sintético (`app/migration/seed_dev.py:seed_sample_projects`)**
+ganhou os 5 cenários do mapa operacional, sem projetos dedicados extra —
+reaproveita projetos já existentes do seed de Fase 1.5, acrescentando só
+duas tarefas operacionais novas: "Instalação Sintética F — PM Legado"
+(green, nenhuma alteração — já não tinha tarefa field/material aberta),
+"Instalação Sintética A — Início Próximo" (yellow — nova tarefa
+`category=field`, `status=todo`, sem atraso), "Instalação Sintética B —
+Atrasada" (red — nova tarefa `category=material`, aberta e atrasada;
+distinta da tarefa de workflow já bloqueada nesse projeto, que nunca
+conta), "Instalação Sintética de Demonstração" (yellow só por material
+físico — reaproveita a reserva de cabo já existente em
+`seed_map_and_inventory`, sem tarefa operacional nenhuma), "Instalação
+Sintética Incompleta" (sem coordenadas — já assim, sem alteração).
+Verificado manualmente contra o seed real (`python -m
+app.migration.seed_dev` + `GET /api/map/data`) e testado em
+`test_seed_covers_the_five_map_scenarios`. `seed_sample_projects`
+continua idempotente (guarda existente `if db.query(Project).count() > 0:
+return` — confirmado a correr o seed duas vezes sem duplicar).
 
 **UI do mapa (fase seguinte, não implementada nesta sessão):**
 `frontend/src/pages/Map.tsx` pode passar a colorir os pins por

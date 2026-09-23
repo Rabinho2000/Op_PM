@@ -130,7 +130,7 @@ de notas iniciais (arrastar HTML/JSON, preview, conflitos por campo,
 confirmação, auditoria — `/projects/import`) e importador de
 licenciamento via Excel (`python -m app.cli.import_licensing`,
 `--dry-run`/`--apply`/`--rollback`, nunca via UI), ver
-[`docs/DATA_IMPORTS.md`](docs/DATA_IMPORTS.md). 405 testes de backend
+[`docs/DATA_IMPORTS.md`](docs/DATA_IMPORTS.md). 406 testes de backend
 (+2 skipped) e 85 testes Vitest no frontend.
 
 Documentação:

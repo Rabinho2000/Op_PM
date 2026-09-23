@@ -352,6 +352,39 @@ def test_map_data_query_count_does_not_grow_with_project_count(db_session, api_c
     )
 
 
+# --- Seed sintético: os 5 cenários do mapa (ver
+#     app/migration/seed_dev.py:seed_sample_projects, docs/DECISIONS.md
+#     D-058) ficam demonstráveis logo depois de `python -m
+#     app.migration.seed_dev`, sem precisar de nenhum passo manual. ---
+
+
+def test_seed_covers_the_five_map_scenarios(api_client):
+    resp = api_client.get("/api/map/data", headers=_headers("chefe.sintetico@example.invalid"))
+    assert resp.status_code == 200
+    body = resp.json()
+    by_name = {p["name"]: p for p in body["projects"]}
+
+    green = by_name["Instalação Sintética F — PM Legado"]
+    assert green["attention"] == "green"
+
+    yellow_field = by_name["Instalação Sintética A — Início Próximo"]
+    assert yellow_field["attention"] == "yellow"
+    assert yellow_field["operational_tasks_count"] >= 1
+    assert yellow_field["has_material_on_site"] is False
+
+    red = by_name["Instalação Sintética B — Atrasada"]
+    assert red["attention"] == "red"
+    assert red["overdue_operational_tasks_count"] >= 1
+
+    yellow_material = by_name["Instalação Sintética de Demonstração"]
+    assert yellow_material["attention"] == "yellow"
+    assert yellow_material["operational_tasks_count"] == 0  # amarelo só por material
+    assert yellow_material["has_material_on_site"] is True
+
+    unmapped_names = {p["name"] for p in body["projects_without_coordinates"]}
+    assert "Instalação Sintética Incompleta" in unmapped_names
+
+
 def test_summary_counts_and_percentages_are_consistent(db_session, api_client):
     resp = api_client.get("/api/map/data", headers=_headers("chefe.sintetico@example.invalid"))
     body = resp.json()
