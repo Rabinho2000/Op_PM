@@ -2286,3 +2286,64 @@ depender disto em produção.
 **Testes:** +3 em `Planning.test.tsx` (09:00 de Verão → `08:00Z`; 09:00 de
 Inverno → `09:00Z`; intervalo visível com offset). Contagem atual: 111 Vitest e
 411 de backend (+2 skipped).
+
+## D-064 — Inventário: entrega e recolha de material (Fase F, 3/n)
+
+Terceira funcionalidade da Fase F e a única que mexe no livro de stock. Fecha
+a dívida registada em D-058: o "material no local" do mapa era o **saldo
+reservado**, porque não existia nenhum movimento de entrega.
+
+**Como foi decidido.** Desenho aditivo proposto e confirmado com o negócio
+antes de escrever código (mudava o significado de "material no local" no
+mapa). A resposta sobre a recolha corrigiu uma premissa minha: a obra recebe
+**mais do que o reservado** (excedente da transportadora, ou reforço
+propositado como painéis de reserva), e esse excedente é o que se recolhe. O
+desenho inicial limitava a entrega ao reservado e estaria errado.
+
+**Modelo.** `MOVEMENT_ENTREGA`/`MOVEMENT_RECOLHA` e a coluna nova
+`inventory_movements.from_site_quantity` (nullable, sem default — migração
+`5cef0d14b6e6`, round-trip testado, sem backfill). `no_local = Σ entrega −
+Σ recolha − Σ from_site_quantity(consumo)`. Detalhe e regras em
+`docs/INVENTORY_RULES.md`.
+
+**Porquê `from_site_quantity` e não um replay cronológico.** Abater o consumo
+ao material no local exige saber a ordem entre entregas e consumos, mas
+`created_at` usa `server_default=func.now()` (1 segundo em SQLite), pelo que
+um replay seria não determinístico. Guardar no consumo quanto abateu torna o
+saldo uma **soma independente da ordem**, calculável numa única query.
+
+**O que NÃO mudou.** Reservar, libertar, consumir e devolver mantêm-se; o stock
+físico central, o disponível e o reservado não são afetados por entregas/
+recolhas (testado). O consumo continua a exigir reserva.
+
+**Permissões** novas `inventory.deliver_project`/`inventory.collect_project`
+para Administrador, Chefe de Operações e PM (PM só nos seus projetos, como
+reservar/consumir); Comercial e Financeiro recebem 403.
+
+**Mapa.** `has_material_on_site`/`material_sku_count` passam a vir de
+`on_site_balances_by_project` (uma query agregada, sem N+1). Consequência
+deliberada: material **reservado mas não entregue já não conta**; um projeto
+**concluído com material ainda no local fica amarelo** (o exemplo do pedido
+original). O seed ganhou uma entrega de 15 km ao projeto de demonstração para
+o cenário "amarelo só por material" se manter.
+
+**UI.** Separador Inventário do projeto: cartão **Material no local** (inclui
+excedentes sem necessidade associada) e as ações **Entregar no local**/
+**Recolher do local** no modal de movimentos.
+
+**Limitação assumida.** Entrega/recolha não movem o stock central: material
+que veio direto do fornecedor, ou que regressou ao armazém, é regularizado à
+parte com `entrada`/`ajuste`. Não foi pedida nem decidida uma ligação
+automática, para não inventar contabilidade de stock.
+
+**Testes.** +25 backend (`test_inventory_on_site.py`: saldo, excedente acima da
+reserva, recolha limitada, isolamento de stock/reserva, abate no consumo,
+independência da ordem, movimentos antigos, idempotência, permissões, mapa,
+projeto concluído) — 436 no total (+2 skipped); 3 testes do mapa atualizados
+para a nova semântica. +6 Vitest (`ProjectDetail.inventory.test.tsx`) — 117.
+Validado no browser contra o backend real: recolher 20 com 15 no local foi
+recusado com a mensagem do servidor; recolher 5 e entregar 3 conectores
+atualizaram o cartão; stock central (95/80/15) inalterado; o mapa passou a 2 SKUs.
+
+**Por fazer na Fase F:** fornecedores no mapa com pedido de material, combinar
+trabalhos numa deslocação, otimização de rota.

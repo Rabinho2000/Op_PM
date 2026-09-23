@@ -119,7 +119,18 @@ class ProjectMaterialRequirementUpdate(BaseModel):
     notes: str | None = None
 
 
+class ProjectOnSiteRead(BaseModel):
+    """Material fisicamente na instalação (D-064) — independente da reserva:
+    inclui excedentes que não têm nenhuma "necessidade" associada."""
+
+    item_id: uuid.UUID
+    item_name: str | None = None
+    item_unit: str | None = None
+    quantity: Decimal
+
+
 class ProjectInventorySummary(BaseModel):
     project_id: uuid.UUID
     requirements: list[ProjectMaterialRequirementRead]
     reservations: list[InventoryMovementRead]
+    on_site: list[ProjectOnSiteRead] = []

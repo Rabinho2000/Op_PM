@@ -191,6 +191,14 @@ def can_release_inventory_for_project(ctx: AuthContext, project: Project) -> boo
     return ctx.has_permission("inventory.release_project") and can_edit_project(ctx, project)
 
 
+def can_deliver_inventory_for_project(ctx: AuthContext, project: Project) -> bool:
+    return ctx.has_permission("inventory.deliver_project") and can_edit_project(ctx, project)
+
+
+def can_collect_inventory_for_project(ctx: AuthContext, project: Project) -> bool:
+    return ctx.has_permission("inventory.collect_project") and can_edit_project(ctx, project)
+
+
 def can_manage_material_requirements(ctx: AuthContext, project: Project) -> bool:
     return ctx.has_permission("inventory.manage_requirements") and can_edit_project(ctx, project)
 

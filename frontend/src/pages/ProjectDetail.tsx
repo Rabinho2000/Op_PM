@@ -2,8 +2,10 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   ApiError,
+  collectProjectMaterial,
   consumeProjectMaterial,
   DEFAULT_TASK_TYPE_LABELS,
+  deliverProjectMaterial,
   getProject,
   getProjectCommunicationData,
   getProjectHistory,
@@ -407,13 +409,15 @@ const COMMUNICATION_FIELDS: DataFieldConfig<ProjectCommunicationData>[] = [
   { key: "notes", label: "Notas", multiline: true },
 ];
 
-type InventoryAction = "reserve" | "consume" | "release" | "return";
+type InventoryAction = "reserve" | "consume" | "release" | "return" | "deliver" | "collect";
 
 const INVENTORY_ACTION_LABELS: Record<InventoryAction, string> = {
   reserve: "Reservar",
   consume: "Consumir",
   release: "Libertar reserva",
   return: "Devolver ao stock",
+  deliver: "Entregar no local",
+  collect: "Recolher do local",
 };
 
 function ProjectInventoryOperationModal({
@@ -446,6 +450,8 @@ function ProjectInventoryOperationModal({
         consume: consumeProjectMaterial,
         release: releaseProjectMaterial,
         return: returnProjectMaterial,
+        deliver: deliverProjectMaterial,
+        collect: collectProjectMaterial,
       }[form.action];
       await operation(projectId, payload);
       onDone();
@@ -548,7 +554,11 @@ export default function ProjectDetail() {
   const canEditCommunication = can("project.edit_communication_data");
   const canViewInventory = can("inventory.view");
   const canOperateInventory =
-    can("inventory.allocate_project") || can("inventory.consume_project") || can("inventory.release_project");
+    can("inventory.allocate_project") ||
+    can("inventory.consume_project") ||
+    can("inventory.release_project") ||
+    can("inventory.deliver_project") ||
+    can("inventory.collect_project");
 
   const load = useCallback(() => {
     if (!projectId) return;
@@ -1030,6 +1040,28 @@ export default function ProjectDetail() {
                     ))}
                   </tbody>
                 </table>
+              )}
+            </Card>
+
+            <Card title="Material no local" icon="mapPin">
+              {inventory === null ? (
+                <LoadingState rows={2} />
+              ) : inventory.on_site.length === 0 ? (
+                <EmptyState compact icon="mapPin" title="Nenhum material entregue e ainda no local." />
+              ) : (
+                <ul className="list">
+                  {inventory.on_site.map((o) => (
+                    <li key={o.item_id} className="list__item">
+                      <div className="list__main">
+                        <span className="list__title">{o.item_name ?? "—"}</span>
+                        <div className="list__meta">Por recolher ou consumir — independente da reserva.</div>
+                      </div>
+                      <Badge tone="warning">
+                        {o.quantity} {o.item_unit}
+                      </Badge>
+                    </li>
+                  ))}
+                </ul>
               )}
             </Card>
 

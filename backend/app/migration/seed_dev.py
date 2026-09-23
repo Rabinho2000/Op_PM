@@ -36,6 +36,7 @@ from app.models.inventory import (
     LOCATION_TYPE_CENTRAL,
     MOVEMENT_CONSUMO,
     MOVEMENT_ENTRADA,
+    MOVEMENT_ENTREGA,
     MOVEMENT_LIBERTA_RESERVA,
     MOVEMENT_RESERVA,
     InventoryItem,
@@ -719,6 +720,22 @@ def seed_map_and_inventory(db: Session) -> None:
                 created_by_person_id=chefe.id,
             ),
         ]
+    )
+
+    # Material fisicamente na instalação de demonstração (D-064): o "material
+    # no local" do mapa deixou de ser o saldo reservado e passou a vir de
+    # entregas/recolhas — sem esta entrega o projeto deixava de ser amarelo
+    # por material. 15 km entregues (coincide com os 15 reservados líquidos
+    # deste cenário, mas os dois saldos são independentes).
+    db.add(
+        InventoryMovement(
+            item_id=cable.id,
+            movement_type=MOVEMENT_ENTREGA,
+            quantity="15.000",
+            project_id=demo.id,
+            reference="Entrega sintética de cabo DC à instalação de demonstração.",
+            created_by_person_id=pm_um.id,
+        )
     )
 
     db.add(
