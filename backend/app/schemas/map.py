@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
-
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -290,3 +290,77 @@ class RouteOptimizationResponse(BaseModel):
     # Distância em linha reta (grande círculo) — aproximação, não quilómetros
     # de condução. O frontend deve dizê-lo.
     distance_model: Literal["great_circle"] = "great_circle"
+
+
+# --- Plano de deslocação (D-066) ---
+
+
+class TripTaskRead(BaseModel):
+    id: uuid.UUID
+    title: str
+    category: str
+    priority: str
+    status: str
+    due_date: dt.date | None
+    is_overdue: bool
+
+
+class TripIssueRead(BaseModel):
+    id: uuid.UUID
+    description: str
+    category: str
+    priority: str
+    due_date: dt.date | None
+
+
+class TripCollectRead(BaseModel):
+    """Material que está no local e há a recolher/consumir (D-064)."""
+
+    item_id: uuid.UUID
+    item_name: str | None = None
+    item_unit: str | None = None
+    quantity: Decimal
+
+
+class TripStopJobs(BaseModel):
+    """O que há para fazer numa instalação. Cada secção é `null` quando o
+    utilizador não tem a permissão para a ver (nunca uma lista vazia, que
+    diria "não há nada")."""
+
+    tasks: list[TripTaskRead] | None = None
+    issues: list[TripIssueRead] | None = None
+    collect: list[TripCollectRead] | None = None
+    next_visit: NextVisitRead | None = None
+
+
+class TripStopRead(RouteStopRead):
+    # Só fornecedores/pontos de recolha: o texto livre dos materiais que fornecem.
+    info: str | None = None
+    # Só instalações.
+    jobs: TripStopJobs | None = None
+
+
+class TripVisibility(BaseModel):
+    tasks: bool
+    issues: bool
+    material: bool
+    visits: bool
+
+
+class TripSummary(BaseModel):
+    """Totais da deslocação. Cada total é `null` quando a secção correspondente
+    não é visível ao utilizador (nunca 0)."""
+
+    projects: int
+    suppliers: int
+    pickup_points: int
+    operational_tasks: int | None = None
+    overdue_tasks: int | None = None
+    issues: int | None = None
+    items_to_collect: int | None = None  # linhas de material (SKUs) no local
+
+
+class TripPlanResponse(RouteOptimizationResponse):
+    stops: list[TripStopRead]  # type: ignore[assignment]
+    summary: TripSummary
+    visibility: TripVisibility

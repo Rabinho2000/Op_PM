@@ -196,3 +196,56 @@ def resolve_stops(db: Session, ctx: AuthContext, refs: list[tuple[str, uuid.UUID
     if missing_coordinates:
         raise RouteError("Paragens sem coordenadas: " + ", ".join(missing_coordinates) + ".")
     return resolved
+
+
+# --- Rota completa (pernas, totais e poupança) — partilhada por todos os endpoints ---
+
+
+@dataclasses.dataclass(frozen=True)
+class RouteLeg:
+    stop: ResolvedStop
+    leg_km: float  # desde a paragem anterior (0 na primeira)
+    cumulative_km: float
+
+
+@dataclasses.dataclass(frozen=True)
+class RouteComputation:
+    legs: list[RouteLeg]
+    return_leg_km: float | None  # só com round_trip
+    total_km: float
+    requested_order_km: float
+    saved_km: float
+    method: Literal["exact", "heuristic"]
+    round_trip: bool
+
+
+def compute_route(stops: list[ResolvedStop], round_trip: bool) -> RouteComputation:
+    """Otimiza a ordem e calcula pernas/totais. É o único sítio que faz esta
+    conta: a otimização de rota (D-065) e o plano de deslocação (D-066) usam-no,
+    por isso nunca podem divergir."""
+    points = [(s.lat, s.lon) for s in stops]
+    order, method = optimize_order(points, round_trip)
+    requested = route_length_km(points, list(range(len(points))), round_trip)
+    total = route_length_km(points, order, round_trip)
+
+    ordered = [stops[i] for i in order]
+    legs: list[RouteLeg] = []
+    cumulative = 0.0
+    for index, stop in enumerate(ordered):
+        leg = haversine_km((ordered[index - 1].lat, ordered[index - 1].lon), (stop.lat, stop.lon)) if index else 0.0
+        cumulative += leg
+        legs.append(RouteLeg(stop=stop, leg_km=round(leg, 2), cumulative_km=round(cumulative, 2)))
+    return_leg = (
+        round(haversine_km((ordered[-1].lat, ordered[-1].lon), (ordered[0].lat, ordered[0].lon)), 2)
+        if round_trip
+        else None
+    )
+    return RouteComputation(
+        legs=legs,
+        return_leg_km=return_leg,
+        total_km=round(total, 2),
+        requested_order_km=round(requested, 2),
+        saved_km=round(max(requested - total, 0.0), 2),
+        method=method,
+        round_trip=round_trip,
+    )

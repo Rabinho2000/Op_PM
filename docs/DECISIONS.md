@@ -2403,3 +2403,61 @@ Vitest — 124. Validado no browser contra o seed real: 5 paragens em ordem má
 **Por fazer na Fase F:** fornecedores no mapa com pedido de material (o pedido
 de material ainda não existe como fluxo) e combinar vários trabalhos numa
 deslocação.
+
+## D-066 — Mapa operacional, Fase F (5/n): plano de deslocação
+
+Quinta funcionalidade da Fase F: o "combinar vários trabalhos numa deslocação"
+do plano original ("3 instalações, 5 pendências, 2 recolhas numa saída").
+
+**O que conta como "trabalho" — decidido aqui, por não estar definido.** Não
+havia definição, por isso escolhi a mais conservadora e deixo-a explícita: o
+trabalho de uma instalação é o que já existe e é relevante para quem vai ao
+local — **tarefas operacionais abertas** (`field`/`material`, a mesma regra do
+`attention`, D-058; workflow, documentação e concluídas não contam), **pendências
+abertas**, **material no local a recolher** (D-064) e a **próxima visita já
+agendada** (D-062). Fornecedores e pontos de recolha são paragens sem trabalho
+próprio, só com o texto livre dos materiais que fornecem.
+
+**Só leitura, sem entidade nova.** O plano não cria tarefas, visitas nem
+movimentos (testado: nenhuma contagem muda). Uma "deslocação" gravável, atribuível
+e com estado seria uma decisão maior (quem a cria, quem a executa, o que fecha
+o trabalho) que ninguém pediu; o plano dá já o valor pretendido — ver tudo o que
+há a fazer numa saída — sem antecipar esse modelo.
+
+**API.** `POST /api/map/trip-plan` (`map.view`), mesmo corpo que a otimização:
+só `{kind, id}` de cada paragem, nunca coordenadas. Devolve a rota otimizada
+(idêntica à de D-065) e, por instalação, `jobs`, mais `summary` e `visibility`.
+O cálculo da rota foi extraído para `compute_route`, partilhado pelos dois
+endpoints, por isso **não podem divergir** (testado).
+
+**Permissões por secção.** Cada secção respeita a permissão que já a protege e é
+`null` quando o utilizador não a tem — **nunca uma lista vazia**, que diria "não
+há nada": tarefas (`task.view_all`/`task.view_own`), pendências
+(`project_issue.view`), material (`inventory.view`), visitas (`calendar.view`).
+Os totais do resumo seguem a mesma regra. O âmbito das paragens é o do mapa
+(`visible_projects_query`); uma paragem alheia dá a mesma mensagem segura e não
+revela o nome.
+
+**Desempenho.** Número de queries fixo, independente do número de paragens
+(tarefas, pendências, saldos no local e visitas de todas as instalações de uma
+vez, reaproveitando os carregadores agregados do mapa). O teste de contagem
+apanhou primeiro um "N+1" que **era ruído do próprio teste** — ler `p.id` de
+instâncias expiradas por um `commit` dentro da janela de contagem; a pilha desse
+SELECT não passava por nenhum código de `app/`. O teste passou a construir os
+pedidos antes de contar.
+
+**UI.** No cartão "Rota externa", **Planear deslocação** abre o plano: resumo
+(km, poupança, totais), e por paragem tarefas, pendências, material e visita;
+uma secção sem permissão diz "Sem permissão para ver…", nunca "nenhuma". **Abrir
+rota** usa a ordem do servidor e **Copiar resumo** gera um texto para partilhar
+(função pura `buildTripSummaryText`, testada). As distâncias continuam a ser em
+linha reta e o modal diz-o.
+
+**Testes.** +14 backend (`test_trip_plan.py`: conteúdo por paragem, totais,
+consistência com a otimização, cada permissão isolada, âmbito, validações
+herdadas, só leitura, queries limitadas) — 479 no total (+2 skipped). +10
+Vitest (4 do resumo em texto, 6 de UI) — 134. Validado no browser contra o seed
+real: 4 paragens, 308 km, com o trabalho de cada instalação.
+
+**Por fazer na Fase F:** fornecedores no mapa com pedido de material (o pedido
+de material ainda não existe como fluxo).

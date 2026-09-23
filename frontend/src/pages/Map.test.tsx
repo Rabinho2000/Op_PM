@@ -1,7 +1,7 @@
 // Mapa operacional: sem provider de tiles configurado tem de mostrar
 // sempre a lista funcional (nunca uma página quebrada); com provider,
 // mostra também o mapa Leaflet.
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MapData } from "../api/client";
 import { makeMe } from "../test/fixtures";
@@ -15,6 +15,7 @@ const api = vi.hoisted(() => ({
   updateProject: vi.fn(),
   createTask: vi.fn(),
   optimizeRoute: vi.fn(),
+  planTrip: vi.fn(),
   createCalendarEvent: vi.fn(),
 }));
 
@@ -413,6 +414,117 @@ describe("Mapa operacional", () => {
 
       fireEvent.click(screen.getByLabelText("Selecionar Ponto de Recolha Sintético para rota")); // desmarca
       await waitFor(() => expect(screen.queryByLabelText("Rota otimizada")).not.toBeInTheDocument());
+    });
+  });
+
+  describe("plano de deslocação", () => {
+    function plan(overrides: Record<string, unknown> = {}) {
+      return {
+        stops: [
+          {
+            kind: "project", id: "proj-1", name: "Instalação Sintética Um", lat: 38.7, lon: -9.1, leg_km: 0, cumulative_km: 0, info: null,
+            jobs: {
+              tasks: [{ id: "t1", title: "Medir telhado", category: "field", priority: "high", status: "todo", due_date: "2026-10-01", is_overdue: true }],
+              issues: [{ id: "i1", description: "Acesso bloqueado ao telhado", category: "obra", priority: "high", due_date: null }],
+              collect: [{ item_id: "it1", item_name: "Painel 450 W", item_unit: "un", quantity: "3.000" }],
+              next_visit: null,
+            },
+          },
+          { kind: "pickup", id: "pk-1", name: "Ponto de Recolha Sintético", lat: 38.72, lon: -9.13, leg_km: 3.5, cumulative_km: 3.5, info: "cabo solar", jobs: null },
+          { kind: "supplier", id: "sup-1", name: "Fornecedor Sintético", lat: 38.71, lon: -9.12, leg_km: 1.6, cumulative_km: 5.1, info: null, jobs: null },
+        ],
+        return_leg_km: null, round_trip: false, total_km: 5.1, requested_order_km: 7.4, saved_km: 2.3, method: "exact", distance_model: "great_circle",
+        summary: { projects: 1, suppliers: 1, pickup_points: 1, operational_tasks: 1, overdue_tasks: 1, issues: 1, items_to_collect: 1 },
+        visibility: { tasks: true, issues: true, material: true, visits: true },
+        ...overrides,
+      };
+    }
+
+    async function selectThreeAndPlan(response: unknown = plan()) {
+      renderWithProviders(<MapPage />, { me: makeMe({ permissions: ["map.view"] }) });
+      await screen.findByRole("button", { name: "Instalação Sintética Um" });
+      fireEvent.click(screen.getByLabelText("Selecionar Instalação Sintética Um para rota"));
+      fireEvent.click(screen.getByLabelText("Selecionar Fornecedor Sintético para rota"));
+      fireEvent.click(screen.getByLabelText("Selecionar Ponto de Recolha Sintético para rota"));
+      api.planTrip.mockResolvedValue(response);
+      fireEvent.click(screen.getByRole("button", { name: /planear deslocação/i }));
+      return await screen.findByText("Plano da deslocação");
+    }
+
+    it("só permite planear com pelo menos duas paragens", async () => {
+      renderWithProviders(<MapPage />, { me: makeMe({ permissions: ["map.view"] }) });
+      await screen.findByRole("button", { name: "Instalação Sintética Um" });
+      expect(screen.getByRole("button", { name: /planear deslocação/i })).toBeDisabled();
+      fireEvent.click(screen.getByLabelText("Selecionar Instalação Sintética Um para rota"));
+      fireEvent.click(screen.getByLabelText("Selecionar Fornecedor Sintético para rota"));
+      expect(screen.getByRole("button", { name: /planear deslocação/i })).toBeEnabled();
+    });
+
+    it("envia só as referências pela ordem de seleção e mostra o que há a fazer em cada paragem", async () => {
+      await selectThreeAndPlan();
+      expect(api.planTrip).toHaveBeenCalledWith(
+        [
+          { kind: "project", id: "proj-1" },
+          { kind: "supplier", id: "sup-1" },
+          { kind: "pickup", id: "pk-1" },
+        ],
+        false
+      );
+      const summary = screen.getByLabelText("Resumo da deslocação");
+      expect(summary).toHaveTextContent("5.1 km em linha reta — menos 2.3 km");
+      expect(summary).toHaveTextContent("1 instalação(ões) · 1 fornecedor(es) · 1 ponto(s) de recolha · 1 tarefa(s) operacional(is) (1 atrasada(s)) · 1 pendência(s) · 1 material(is) a recolher");
+      // Dentro do diálogo: a página por trás também lista as pendências do mapa.
+      const dialog = within(screen.getByRole("dialog"));
+      expect(dialog.getByText(/Medir telhado/)).toBeInTheDocument();
+      expect(dialog.getByText(/Acesso bloqueado ao telhado/)).toBeInTheDocument();
+      expect(dialog.getByText(/3.000 un — Painel 450 W/)).toBeInTheDocument();
+      expect(dialog.getByText(/Materiais: cabo solar/)).toBeInTheDocument(); // info do ponto de recolha
+    });
+
+    it("uma secção sem permissão mostra 'sem permissão' e nunca 'nenhuma tarefa'", async () => {
+      const restricted = plan();
+      restricted.stops[0] = { ...restricted.stops[0], jobs: { tasks: null, issues: [], collect: null, next_visit: null } } as never;
+      restricted.summary = { ...restricted.summary, operational_tasks: null, overdue_tasks: null, items_to_collect: null } as never;
+      await selectThreeAndPlan(restricted);
+      expect(screen.getByText("Sem permissão para ver as tarefas.")).toBeInTheDocument();
+      expect(screen.getByText("Sem permissão para ver o inventário.")).toBeInTheDocument();
+      expect(screen.getByText("Nenhuma pendência aberta.")).toBeInTheDocument(); // esta sim é vazia de verdade
+      expect(screen.queryByText("Nenhuma tarefa operacional aberta.")).not.toBeInTheDocument();
+    });
+
+    it("'Abrir rota' do plano usa exatamente a ordem do servidor", async () => {
+      const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+      await selectThreeAndPlan();
+      fireEvent.click(screen.getByRole("button", { name: /^abrir rota$/i }));
+      const url = decodeURIComponent(String(openSpy.mock.calls[0][0]));
+      // partida -> recolha -> fornecedor (destino): não a ordem de seleção.
+      expect(url).toContain("destination=38.71,-9.12");
+      expect(url).toContain("waypoints=38.7,-9.1|38.72,-9.13");
+      openSpy.mockRestore();
+    });
+
+    it("copia o resumo em texto para a área de transferência", async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+      await selectThreeAndPlan();
+      fireEvent.click(screen.getByRole("button", { name: /copiar resumo/i }));
+      await waitFor(() => expect(writeText).toHaveBeenCalled());
+      const text = String(writeText.mock.calls[0][0]);
+      expect(text).toContain("Deslocação — 3 paragens, 5.1 km (distância em linha reta, aproximação)");
+      expect(text).toContain("- Tarefa: Medir telhado (atrasada)");
+      expect(await screen.findByText("Resumo copiado.")).toBeInTheDocument();
+    });
+
+    it("mostra a mensagem do servidor quando o plano é recusado", async () => {
+      renderWithProviders(<MapPage />, { me: makeMe({ permissions: ["map.view"] }) });
+      await screen.findByRole("button", { name: "Instalação Sintética Um" });
+      fireEvent.click(screen.getByLabelText("Selecionar Instalação Sintética Um para rota"));
+      fireEvent.click(screen.getByLabelText("Selecionar Fornecedor Sintético para rota"));
+      const { ApiError } = await vi.importActual<typeof import("../api/client")>("../api/client");
+      api.planTrip.mockRejectedValue(new ApiError(400, "Uma das paragens não existe ou não tem permissão para a ver."));
+      fireEvent.click(screen.getByRole("button", { name: /planear deslocação/i }));
+      expect(await screen.findByText("Uma das paragens não existe ou não tem permissão para a ver.")).toBeInTheDocument();
+      expect(screen.queryByText("Plano da deslocação")).not.toBeInTheDocument();
     });
   });
 
