@@ -552,6 +552,12 @@ deixado de fora da Fase 1").**
 
 ## Fase 5 — Inventário e pedidos de material
 
+> **Estado (D-064, D-067):** o inventário com reservas/consumo/entrega/recolha e o
+> **fluxo de pedidos de material a fornecedores** (estados, permissões, histórico,
+> rascunho de email que o sistema nunca envia) estão implementados. Ficam por
+> fazer as partes que dependem do Financial e de decisões de negócio — ver
+> `docs/OPEN_QUESTIONS.md` perguntas 35 a 38.
+
 - **Objetivo:** cálculo de stock por movimentos; fluxo completo de pedidos
   de material com estados; linhas de custo por categoria/tipo.
 - **Entidades:** `inventory_movements`, `material_requests`,

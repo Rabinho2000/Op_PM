@@ -2461,3 +2461,96 @@ real: 4 paragens, 308 km, com o trabalho de cada instalação.
 
 **Por fazer na Fase F:** fornecedores no mapa com pedido de material (o pedido
 de material ainda não existe como fluxo).
+
+## D-067 — Mapa operacional, Fase F (6/n): fornecedores com pedido de material
+
+Última funcionalidade da Fase F. O `MaterialRequest` existia desde a Fase 0 (com
+os estados e as permissões `material_request.create/approve/adjudicate`
+definidas em `catalog.py`), mas sem endpoints, regras nem UI. Foi pedida sem eu
+ter as respostas às perguntas que tinha levantado (estados, quem aprova, envio);
+**decidi da forma mais conservadora e deixo tudo explícito abaixo, para poder ser
+contestado** — as decisões de negócio estão em `OPEN_QUESTIONS.md` (perguntas 35 a 38).
+
+**Máquina de estados, aplicada só no servidor.** `rascunho → pedido_enviado →
+orcamento_recebido → aprovado → adjudicado`, mais `cancelado`. `record_quote` também
+é válida em `orcamento_recebido` (corrigir preços antes de aprovar). Um estado
+terminal (`adjudicado`, `cancelado`) não permite nada. `enviado_financeiro` e
+`pago` continuam no modelo mas **sem transição**: dependem da integração
+Financial, por decidir. O cliente nunca decide uma transição: a resposta traz
+`allowed_actions` (estado ∩ permissões ∩ âmbito do projeto) e a UI só mostra
+essas — a regra existe num único sítio.
+
+**Quem faz o quê** (mantém `catalog.py`, sem permissões novas):
+- **PM** (`material_request.create`): cria e edita **rascunhos dos seus
+  projetos** (mesma regra de escrita de projeto que reservar/consumir material)
+  e cancela o seu próprio rascunho. **Não envia, nem aprova, nem adjudica.**
+- **Chefe de Operações / Administrador**: `send`, `record_quote` e `approve`
+  exigem `material_request.approve`; `adjudicate` exige `material_request.adjudicate`
+  (não implicada pela anterior — testado). Cancelar um pedido já enviado exige
+  `approve` e um **motivo obrigatório**.
+- Ver pedidos exige `inventory.view` e o projeto dentro do âmbito do utilizador;
+  um pedido de um projeto alheio dá **404** (nunca 403), sem revelar que existe.
+
+**O sistema nunca envia email (D-010 mantém-se).** "Marcar como enviado" regista
+que uma pessoa autorizada aprovou o envio e o fez **fora do sistema**; a UI avisa
+explicitamente. `GET /api/material-requests/{id}/email-draft` devolve **texto**
+(para, assunto, corpo) para essa pessoa rever e copiar: determinístico, sem IA, sem
+preços, e **não escreve nenhum ficheiro** (testado: a pasta de saída do adapter
+Graph fica inalterada). O adapter de email não é usado — ligá-lo é da Fase do Graph.
+
+**Adjudicação sempre por ação humana** (regra herdada do plano): só existe pelo
+endpoint `actions`, com `material_request.adjudicate`, e ninguém a pode
+desfazer neste momento (a UI avisa). Editar um pedido nunca muda o estado
+(`extra="forbid"`, testado).
+
+**Orçamento = preços introduzidos à mão**, por linha, e tem de cobrir **todas** as
+linhas com valores positivos (uma linha em falta, negativa, repetida ou de outro
+pedido recusa tudo, sem gravar nada). Sem anexo do documento do fornecedor (a
+biblioteca documental é outra fase). O total é `null` enquanto houver linhas sem
+preço — nunca um total parcial.
+
+**Precisão do dinheiro — um erro apanhado a verificar.** A UI revelou que um
+preço de 4.325 €/un ficava 4.33 sem aviso: `unit_price` era `Numeric(12,2)`
+(D-018) e materiais custam frações de cêntimo. Passou a `Numeric(14,4)` e um
+preço com **mais de 4 casas é recusado com mensagem** (nunca arredondado em
+silêncio). Os **totais** continuam a 2 casas e o total de cada linha usa a
+**mesma** regra (`ROUND_HALF_UP`) que o total do pedido, num único ponto
+(`line_total`) — a primeira versão arredondava as linhas em half-even e o total
+em half-up (10.82 vs 10.83), e os testes apanharam-no.
+
+**Ordem das linhas estável — outro erro real apanhado.** Ordenava-se por
+`created_at`, com resolução de 1 s em SQLite: linhas do mesmo pedido criadas no
+mesmo segundo saíam por UUID aleatório (um teste falhava só na suite completa).
+Coluna `position`; a lista vai por email, por isso a ordem tem de ser a introduzida.
+
+**Auditoria.** `material_request_history` (append-only, sem `updated_at`): cada
+passo guarda quem, quando, de que estado para qual, e a nota. `changed_at` é
+escrito em Python (microssegundos), não por `server_default`. Tentativas
+recusadas (transição inválida, sem permissão) não deixam rasto no histórico.
+
+**O que NÃO faz** (deliberado): não cria `CostLine` nem custo ao adjudicar, não
+gera movimentos de inventário (uma adjudicação não é uma entrada de stock), não
+liga ao Financial, não anexa orçamentos. Cada um destes é uma decisão própria.
+
+**Migração `01366c322464`**: tabela nova + `material_request_items.position` +
+`unit_price` a 4 casas. Colunas novas com `server_default` só para linhas
+existentes (que não há), removido a seguir; round-trip testado de raiz.
+
+**UI.** No detalhe de um fornecedor no mapa: lista dos pedidos com estado e
+**Pedir material** (só com `material_request.create`). O detalhe do pedido mostra
+linhas, total, o rascunho do email (copiar), o histórico e as ações do servidor,
+cada uma com o seu passo de confirmação (enviar avisa que o sistema não envia;
+orçamento pede o preço de todas as linhas; adjudicar avisa que é irreversível).
+
+**Testes.** +38 backend (`test_material_requests.py`): estados e transições
+inválidas, cada permissão, âmbito, PM vs Chefe, total em `Decimal`, precisão dos
+preços, ordem das linhas, email sem escrita, histórico, queries limitadas — 517
+no total (+2 skipped), corrida três vezes sem falhas. +20 Vitest — 154; uma
+verificação de mutação confirmou que os testes apanham "mostrar todas as ações".
+Validado no browser com dois utilizadores: o PM cria o rascunho (só vê
+"Cancelar pedido"); o Chefe envia, regista o orçamento, aprova e adjudica, com o
+histórico a mostrar quem fez cada passo.
+
+**Fase F concluída.** Ficam por decidir/fazer, fora do âmbito: integração com o
+Financial (`enviado_financeiro`/`pago`), custos, anexos de orçamentos, e envio
+real por Microsoft Graph.

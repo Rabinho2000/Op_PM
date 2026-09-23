@@ -20,6 +20,7 @@ from app.models.inventory import (  # noqa: F401
     InventoryLocation,
     InventoryMovement,
     MaterialRequest,
+    MaterialRequestHistory,
     MaterialRequestItem,
     ProjectMaterialRequirement,
 )

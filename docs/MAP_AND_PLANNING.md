@@ -87,6 +87,13 @@ distância em **linha reta** (aproximação, não quilómetros de condução).
 **Nenhum pedido a um serviço de routing** nem geocoding; estradas, portagens e
 tempos continuam fora de âmbito. Ver `docs/DECISIONS.md` D-065.
 
+**Pedidos de material a fornecedores (D-067).** No detalhe de um fornecedor:
+lista dos pedidos (estado, projeto, total) e **Pedir material** (só com
+`material_request.create`). A API está em `/api/material-requests`; o detalhe
+mostra linhas, total, histórico, o rascunho do email (para copiar — o sistema
+nunca o envia) e as ações que o **servidor** permite a este utilizador
+(`allowed_actions`). Ver `docs/DECISIONS.md` D-067.
+
 **Plano de deslocação (D-066).** "Planear deslocação" chama
 `POST /api/map/trip-plan` (mesmo corpo, `map.view`): devolve a rota otimizada e,
 por instalação, o que há a fazer — tarefas operacionais abertas, pendências

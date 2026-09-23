@@ -15,10 +15,11 @@ metros/quilómetros de cabo sem perder precisão.
 """
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, GUID
@@ -28,6 +29,9 @@ from app.models.cost import MONEY
 # 14 dígitos, 3 casas decimais — cobre quantidades fracionárias (ex. km de
 # cabo) sem o erro de arredondamento binário de `float`.
 QUANTITY = Numeric(14, 3)
+
+# Preço unitário de material: 4 casas decimais (ver MaterialRequestItem.unit_price).
+UNIT_PRICE = Numeric(14, 4)
 
 # Localização física/lógica de stock (ver InventoryLocation.location_type).
 LOCATION_TYPE_CENTRAL = "central"
@@ -183,10 +187,37 @@ class MaterialRequestItem(UUIDPk, TimestampMixin, Base):
     request_id: Mapped[uuid.UUID] = mapped_column(
         GUID(), ForeignKey("material_requests.id"), nullable=False
     )
+    # Ordem das linhas tal como foram introduzidas (D-067). Não se pode ordenar
+    # por `created_at`: tem resolução de 1 s em SQLite e as linhas de um mesmo
+    # pedido são criadas todas no mesmo segundo.
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     item_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("inventory_items.id"), nullable=True)
     description: Mapped[str] = mapped_column(String(512), default="")
     quantity: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
-    # Monetário — Numeric, nunca Float (ver app/models/cost.py:MONEY).
-    unit_price: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
+    # Monetário — Numeric, nunca Float. Preço UNITÁRIO com 4 casas (`UNIT_PRICE`,
+    # não `MONEY`): materiais custam frequentemente frações de cêntimo (ex.
+    # 0.325 €/m de cabo) e `Numeric(12, 2)` arredondaria o preço em silêncio,
+    # alterando o total. Os TOTAIS continuam a 2 casas (D-018).
+    unit_price: Mapped[Decimal | None] = mapped_column(UNIT_PRICE, nullable=True)
 
     request: Mapped["MaterialRequest"] = relationship(back_populates="items")
+
+
+class MaterialRequestHistory(UUIDPk, Base):
+    """Auditoria append-only das transições de um pedido de material (D-067) —
+    mesmo padrão de `ProjectHistory`/`TaskHistory`: sem `updated_at`, nunca
+    editada nem apagada. Guarda quem fez cada passo (enviar, orçamento,
+    aprovar, adjudicar, cancelar). `changed_at` é escrito em Python (resolução
+    de microssegundos), não por `server_default`, para a ordem ser exata."""
+
+    __tablename__ = "material_request_history"
+
+    request_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("material_requests.id"), nullable=False)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)  # create|send|record_quote|approve|adjudicate|cancel
+    from_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    to_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    changed_by_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("people.id"), nullable=True
+    )
+    note: Mapped[str] = mapped_column(Text, default="")
+    changed_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)

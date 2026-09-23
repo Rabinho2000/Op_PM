@@ -53,12 +53,13 @@ trabalhos urgentes), entidade `Task` genérica (checklist padrão de 5 tarefas p
 projeto + tarefas ad-hoc, máquina de estados, histórico), férias/ausências
 (`Absence`), e o aviso persistente de fotos por colocar na Drive quando visita
 técnica/comissionamento é concluído — ver `docs/DECISIONS.md` D-039 a D-047.
-479 testes automatizados de backend a passar (+2 skipped) em SQLite (e em
-PostgreSQL, ver abaixo) + 134 testes Vitest no frontend. Sem integrações
+517 testes automatizados de backend a passar (+2 skipped) em SQLite (e em
+PostgreSQL, ver abaixo) + 154 testes Vitest no frontend. Sem integrações
 externas reais ligadas (Claude, Microsoft
 Graph, ClickUp, Financial); sem migração de dados reais (os 295 projetos reais
 continuam por migrar); sem envio de email ou criação de eventos reais; sem
-pedidos de material ou biblioteca documental. Ver
+biblioteca documental (os pedidos de material a fornecedores existem, mas
+nunca enviam email — D-067). Ver
 `docs/PLAN.md` para o roadmap completo, `docs/STAGING_CHECKLIST.md`/
 `docs/GO_LIVE_CHECKLIST.md` para os procedimentos de deployment, e
 `docs/DATA_MIGRATION_RUNBOOK.md` para a migração real dos 295 projetos.
@@ -120,7 +121,10 @@ testados**; `Task.category` (workflow/field/material/documentation/
 commercial/other) e um estado `attention` (green/yellow/red) por projeto,
 derivado no servidor a partir de tarefas operacionais e inventário
 (`GET /api/map/data`), com pins/lista/resumo coloridos por `attention` em
-`/map` — **backend e UI completos e testados** (D-058), ver
+`/map` — **backend e UI completos e testados** (D-058); a Fase F do mapa
+está concluída: criar tarefas e agendar visitas a partir do mapa, material
+entregue/recolhido, otimização e plano de deslocação, e **pedidos de material a
+fornecedores** com estados, aprovação e histórico (D-061 a D-067), ver
 [`docs/MAP_AND_PLANNING.md`](docs/MAP_AND_PLANNING.md);
 permissões de tarefas revistas (PM vê tarefas de todos os projetos, mas
 só cria/edita as suas — nunca reatribui); "Metas e indicadores" como
@@ -131,8 +135,8 @@ de notas iniciais (arrastar HTML/JSON, preview, conflitos por campo,
 confirmação, auditoria — `/projects/import`) e importador de
 licenciamento via Excel (`python -m app.cli.import_licensing`,
 `--dry-run`/`--apply`/`--rollback`, nunca via UI), ver
-[`docs/DATA_IMPORTS.md`](docs/DATA_IMPORTS.md). 479 testes de backend
-(+2 skipped) e 134 testes Vitest no frontend.
+[`docs/DATA_IMPORTS.md`](docs/DATA_IMPORTS.md). 517 testes de backend
+(+2 skipped) e 154 testes Vitest no frontend.
 
 Documentação:
 

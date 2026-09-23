@@ -661,6 +661,115 @@ export interface InventoryItem {
 
 export const listInventoryItems = () => apiGet<InventoryItem[]>("/api/inventory/items");
 
+// --- Pedidos de material a fornecedores (D-067) ---
+// A máquina de estados vive no servidor: `allowed_actions` diz o que ESTE
+// utilizador pode fazer AGORA (estado ∩ permissões ∩ âmbito) e a UI só mostra
+// essas ações — nunca reconstrói a regra. O sistema nunca envia email: "enviar"
+// regista que uma pessoa autorizada o fez fora do sistema.
+export type MaterialRequestStatus =
+  | "rascunho"
+  | "pedido_enviado"
+  | "orcamento_recebido"
+  | "aprovado"
+  | "adjudicado"
+  | "cancelado";
+
+export type MaterialRequestAction = "send" | "record_quote" | "approve" | "adjudicate" | "cancel";
+
+export const MATERIAL_REQUEST_STATUS_LABELS: Record<MaterialRequestStatus, string> = {
+  rascunho: "Rascunho",
+  pedido_enviado: "Pedido enviado",
+  orcamento_recebido: "Orçamento recebido",
+  aprovado: "Aprovado",
+  adjudicado: "Adjudicado",
+  cancelado: "Cancelado",
+};
+
+export const MATERIAL_REQUEST_ACTION_LABELS: Record<MaterialRequestAction, string> = {
+  send: "Marcar como enviado",
+  record_quote: "Registar orçamento",
+  approve: "Aprovar orçamento",
+  adjudicate: "Adjudicar",
+  cancel: "Cancelar pedido",
+};
+
+export interface MaterialRequestLine {
+  id: string;
+  item_id: string | null;
+  description: string;
+  quantity: string;
+  unit: string | null;
+  unit_price: string | null;
+  line_total: string | null;
+}
+
+export interface MaterialRequestHistoryEntry {
+  action: string;
+  from_status: string | null;
+  to_status: string;
+  changed_by_display_name: string | null;
+  note: string;
+  changed_at: string;
+}
+
+export interface MaterialRequest {
+  id: string;
+  project_id: string;
+  project_name: string | null;
+  supplier_id: string | null;
+  supplier_name: string | null;
+  status: MaterialRequestStatus;
+  notes: string;
+  created_by_display_name: string | null;
+  approved_by_display_name: string | null;
+  created_at: string;
+  updated_at: string;
+  lines: MaterialRequestLine[];
+  // `null` enquanto houver linhas sem preço — nunca um total parcial.
+  total: string | null;
+  allowed_actions: MaterialRequestAction[];
+  history: MaterialRequestHistoryEntry[];
+}
+
+export interface MaterialRequestLineInput {
+  item_id?: string | null;
+  description?: string;
+  quantity: string;
+}
+
+export const listMaterialRequests = (
+  filters: { project_id?: string; supplier_id?: string; status?: string } = {},
+) => {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) if (value) params.set(key, value);
+  const query = params.toString();
+  return apiGet<MaterialRequest[]>(`/api/material-requests${query ? `?${query}` : ""}`);
+};
+
+export const getMaterialRequest = (id: string) => apiGet<MaterialRequest>(`/api/material-requests/${id}`);
+
+export const createMaterialRequest = (payload: {
+  project_id: string;
+  supplier_id?: string | null;
+  notes?: string;
+  lines: MaterialRequestLineInput[];
+}) => apiPost<MaterialRequest>("/api/material-requests", payload);
+
+export const applyMaterialRequestAction = (
+  id: string,
+  payload: { action: MaterialRequestAction; note?: string; prices?: { line_id: string; unit_price: string }[] },
+) => apiPost<MaterialRequest>(`/api/material-requests/${id}/actions`, payload);
+
+// Texto para uma pessoa rever, copiar e enviar — o sistema nunca o envia.
+export interface MaterialRequestEmailDraft {
+  to: string | null;
+  subject: string;
+  body: string;
+}
+
+export const getMaterialRequestEmailDraft = (id: string) =>
+  apiGet<MaterialRequestEmailDraft>(`/api/material-requests/${id}/email-draft`);
+
 export interface InventoryMovement {
   id: string;
   item_id: string;
