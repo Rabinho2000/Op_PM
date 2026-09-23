@@ -162,6 +162,22 @@ describe("Mapa operacional", () => {
     expect(screen.getAllByText(/^Atenção$|^Crítico$/).length).toBeGreaterThan(0);
   });
 
+  it("filtra instalações por attention e por 'com pendências'", async () => {
+    renderWithProviders(<MapPage />, { me: makeMe({ permissions: ["map.view"] }) });
+    await screen.findByRole("button", { name: "Instalação Sintética Um" }); // attention=yellow
+
+    fireEvent.change(screen.getByLabelText("Atenção"), { target: { value: "red" } });
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Instalação Sintética Um" })).not.toBeInTheDocument()
+    );
+
+    fireEvent.change(screen.getByLabelText("Atenção"), { target: { value: "yellow" } });
+    expect(await screen.findByRole("button", { name: "Instalação Sintética Um" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Com pendências"));
+    expect(screen.getByRole("button", { name: "Instalação Sintética Um" })).toBeInTheDocument();
+  });
+
   it("filtra instalações por pesquisa", async () => {
     renderWithProviders(<MapPage />, { me: makeMe({ permissions: ["map.view"] }) });
     await screen.findByRole("button", { name: "Instalação Sintética Um" });

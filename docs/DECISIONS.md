@@ -2113,3 +2113,30 @@ resumo com 87.5% de cobertura / 62.5% limpo / 2 em atenção / 1 crítico
 `MapProject`/`MapData` (todos os campos novos) e um teste dedicado ao
 resumo/attention — 86 testes Vitest no total (+1, era 85). `npm run
 lint`/`npm run build` sem erros.
+
+## D-059 — Mapa operacional: filtros por attention, pendências e material (UI-2)
+
+Segunda fatia da UI do mapa (a seguir a D-058, que fechou o contrato do
+backend e os pins/resumo por `attention`). Filtros novos em
+`frontend/src/pages/Map.tsx`, feitos **no cliente** sobre o payload já
+devolvido — sem endpoints novos, para os volumes atuais (~300 projetos):
+**Atenção** (crítico/atenção/sem pendências operacionais), **Com
+pendências** (pendências abertas OU tarefas operacionais abertas) e
+**Material no local**.
+
+A lógica vive em `frontend/src/utils/mapFilters.ts`
+(`filterMapProjects`, função pura, testada sem Leaflet/jsdom em
+`mapFilters.test.ts`) e nunca recalcula `attention` — só filtra pelo valor
+que o servidor devolveu. O filtro "Material no local" só é oferecido
+quando algum projeto tem `material_visible=true`; um `has_material_on_site`
+`null` (sem `inventory.view`) nunca conta como "sem material" nem como
+"com material".
+
+Fora desta fatia (mantém-se para depois): filtro por cliente dedicado,
+"só críticos" como atalho, "sem coordenadas" como filtro (já existe a
+lista própria), e clustering de pins (UI-3).
+
+**Testes:** +7 em `mapFilters.test.ts`, +1 em `Map.test.tsx` — 94 testes
+Vitest no total (era 86). `npm run lint`/`build` sem erros; validado
+manualmente contra o seed real ("Atenção = Crítico" reduz a lista a 1
+instalação).

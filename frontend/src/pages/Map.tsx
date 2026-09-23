@@ -28,6 +28,7 @@ import { useSession } from "../session/SessionContext";
 import { PROJECT_STATUS_LABELS } from "../api/client";
 import { PROJECT_STATUS_TONES } from "../utils/labels";
 import { formatDatePt } from "../utils/dates";
+import { canFilterByMaterial, EMPTY_MAP_FILTERS, filterMapProjects, MapFilters } from "../utils/mapFilters";
 
 type LayerKey = "projects" | "suppliers" | "pickups" | "issues";
 
@@ -437,9 +438,7 @@ export default function MapPage() {
   const { notify } = useToast();
   const [data, setData] = useState<MapData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [pmFilter, setPmFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
+  const [filters, setFilters] = useState<MapFilters>(EMPTY_MAP_FILTERS);
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>({
     projects: true,
     suppliers: true,
@@ -464,16 +463,12 @@ export default function MapPage() {
 
   useEffect(load, []);
 
-  const filteredProjects = useMemo(() => {
-    if (!data) return [];
-    const term = search.trim().toLowerCase();
-    return data.projects.filter((p) => {
-      if (term && !p.name.toLowerCase().includes(term) && !(p.client_name ?? "").toLowerCase().includes(term)) return false;
-      if (pmFilter && p.pm_display_name !== pmFilter) return false;
-      if (statusFilter && p.status !== statusFilter) return false;
-      return true;
-    });
-  }, [data, search, pmFilter, statusFilter]);
+  const filteredProjects = useMemo(
+    () => (data ? filterMapProjects(data.projects, filters) : []),
+    [data, filters]
+  );
+
+  const showMaterialFilter = useMemo(() => (data ? canFilterByMaterial(data.projects) : false), [data]);
 
   const pmOptions = useMemo(() => {
     if (!data) return [];
@@ -614,11 +609,11 @@ export default function MapPage() {
       <form className="toolbar" role="search" aria-label="Filtros do mapa" onSubmit={(e) => e.preventDefault()}>
         <div className="field field--wide">
           <label htmlFor="map-search">Pesquisar</label>
-          <input id="map-search" className="input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Projeto ou cliente…" />
+          <input id="map-search" className="input" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} placeholder="Projeto ou cliente…" />
         </div>
         <div className="field">
           <label htmlFor="map-pm">PM</label>
-          <select id="map-pm" className="select" value={pmFilter} onChange={(e) => setPmFilter(e.target.value)}>
+          <select id="map-pm" className="select" value={filters.pm} onChange={(e) => setFilters({ ...filters, pm: e.target.value })}>
             <option value="">Todos</option>
             {pmOptions.map((pm) => (
               <option key={pm} value={pm}>
@@ -629,7 +624,7 @@ export default function MapPage() {
         </div>
         <div className="field">
           <label htmlFor="map-status">Estado</label>
-          <select id="map-status" className="select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <select id="map-status" className="select" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
             <option value="">Todos</option>
             {Object.entries(PROJECT_STATUS_LABELS).map(([k, v]) => (
               <option key={k} value={k}>
@@ -637,6 +632,43 @@ export default function MapPage() {
               </option>
             ))}
           </select>
+        </div>
+        <div className="field">
+          <label htmlFor="map-attention">Atenção</label>
+          <select
+            id="map-attention"
+            className="select"
+            value={filters.attention}
+            onChange={(e) => setFilters({ ...filters, attention: e.target.value as MapFilters["attention"] })}
+          >
+            <option value="">Todas</option>
+            <option value="red">Crítico</option>
+            <option value="yellow">Atenção</option>
+            <option value="green">Sem pendências operacionais</option>
+          </select>
+        </div>
+        <div className="field">
+          <span>Mostrar só</span>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <label className="checkbox small">
+              <input
+                type="checkbox"
+                checked={filters.onlyWithPending}
+                onChange={(e) => setFilters({ ...filters, onlyWithPending: e.target.checked })}
+              />
+              Com pendências
+            </label>
+            {showMaterialFilter && (
+              <label className="checkbox small">
+                <input
+                  type="checkbox"
+                  checked={filters.onlyWithMaterial}
+                  onChange={(e) => setFilters({ ...filters, onlyWithMaterial: e.target.checked })}
+                />
+                Material no local
+              </label>
+            )}
+          </div>
         </div>
         <div className="field">
           <span>Camadas</span>
