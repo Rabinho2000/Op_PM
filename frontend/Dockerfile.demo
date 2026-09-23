@@ -15,7 +15,7 @@
 # - Sem variáveis Entra ID: o botão "Entrar com Microsoft" aparece
 #   desativado, com a explicação.
 
-FROM node:20-slim AS build
+FROM node:22-slim AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./

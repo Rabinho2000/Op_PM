@@ -2554,3 +2554,19 @@ histórico a mostrar quem fez cada passo.
 **Fase F concluída.** Ficam por decidir/fazer, fora do âmbito: integração com o
 Financial (`enviado_financeiro`/`pago`), custos, anexos de orçamentos, e envio
 real por Microsoft Graph.
+
+## D-068 — Vulnerabilidades do frontend: `react-router-dom` 7 e `vitest` 5, Node 22
+
+**Decisão:** `react-router-dom` passou de 6.30 para 7.18.4 e `vitest` de 3.2 para
+5.0.1, o que fecha as 4 vulnerabilidades moderadas que restavam
+(`GHSA-wrjc-x8rr-h8h6`, `GHSA-337j-9hxr-rhxg`, `GHSA-82fw-gwwq-j7x9`):
+`npm audit` passa a 0.
+
+**Consequências:**
+- As flags `future={{ v7_startTransition, v7_relativeSplatPath }}` do
+  `BrowserRouter`/`MemoryRouter` deixaram de existir (na v7 são o comportamento
+  por omissão) e foram removidas de `main.tsx` e `test/render.tsx`. Nenhuma
+  outra mudança de código foi precisa.
+- O `vitest` 5 exige Node ≥ 22.12; CI (`ci.yml`) e as duas imagens Docker do
+  frontend passaram de Node 20 para 22 (o Node 20 já está em fim de vida).
+- Verificado: `tsc`, 154 testes Vitest, `vite build`.
