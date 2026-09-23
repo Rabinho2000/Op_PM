@@ -52,10 +52,15 @@ para quem não o pode ver. Ver `docs/DECISIONS.md` D-058 para o detalhe
 completo (incluindo a correção de N+1 já existente neste endpoint) e
 `backend/tests/test_map_attention.py` para os casos testados.
 
-**Fora de âmbito nesta revisão:** UI do mapa a colorir pins por
-`attention`/mostrar `summary` — o frontend de `/map` continua a usar
-`open_tasks_count`/`issues_count`, como antes; fica para uma sessão
-seguinte, com o contrato do backend já fechado.
+**UI implementada (D-058 addendum):** `frontend/src/pages/Map.tsx` colore
+os pins e o indicador de cada instalação na lista por `attention`
+(`var(--success)`/`var(--warning)`/`var(--danger)` — nunca recalculado no
+frontend, só apresentado), mostra a barra de resumo (`summary`) no topo
+da página (cobertura de coordenadas, estado operacional limpo, projetos
+em atenção/críticos), e o painel de detalhe de cada instalação lista
+tarefas operacionais (com contagem de atrasadas/bloqueadas/urgentes),
+próxima ação, e material (ou "sem permissão para ver inventário" quando
+`material_visible=false`).
 
 - `config.provider_enabled` reflete `MAP_PROVIDER_ENABLED` (`backend/.env`).
   Sem provider configurado, o endpoint continua a devolver todos os

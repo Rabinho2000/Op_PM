@@ -2085,9 +2085,31 @@ app.migration.seed_dev` + `GET /api/map/data`) e testado em
 continua idempotente (guarda existente `if db.query(Project).count() > 0:
 return` — confirmado a correr o seed duas vezes sem duplicar).
 
-**UI do mapa (fase seguinte, não implementada nesta sessão):**
-`frontend/src/pages/Map.tsx` pode passar a colorir os pins por
-`attention` (em vez de/a par de `open_tasks_count`/`issues_count`) e
-mostrar o resumo (`summary`) no topo da página — decisão de desenho de
-frontend deliberadamente deixada para uma sessão à parte, com o contrato
-do backend já fechado e testado.
+**UI do mapa — implementada** (continuação desta sessão, depois de
+confirmação explícita):
+`frontend/src/pages/Map.tsx` colore os pins do Leaflet e o indicador na
+lista funcional pelo `attention` devolvido pelo servidor
+(`ATTENTION_COLORS`/`ATTENTION_TONES`/`ATTENTION_LABELS` — nunca
+recalculado no frontend, `var(--success)`/`var(--warning)`/`var(--danger)`
+já usadas no resto da app), mostra a barra `MapSummaryBar`
+(`data.summary` — cobertura de coordenadas, estado operacional limpo,
+projetos em atenção/críticos, mesmo padrão de `StatCard` já usado no
+painel inicial), e o painel de detalhe (`Modal`) de cada instalação
+mostra tarefas operacionais (com contagem de atrasadas/bloqueadas/
+urgentes), a próxima ação determinística, e material — ou "sem permissão
+para ver inventário" quando `material_visible=false` (nunca inventa um
+"não há material" para quem não pode saber). `frontend/src/api/client.ts`
+ganhou os tipos `MapAttention`/`MapNextOperationalTask`/`MapSummary` e os
+campos novos em `MapProject`/`MapData`, espelhando exatamente o schema do
+backend.
+
+**Validado manualmente** contra o seed real (`/map`, utilizador Chefe):
+os 5 cenários do seed (ver acima) aparecem corretamente — "Atenção"/
+"Crítico"/"Sem pendências operacionais" na lista e no painel de detalhe,
+resumo com 87.5% de cobertura / 62.5% limpo / 2 em atenção / 1 crítico
+(números reais do seed sintético).
+
+**Testes:** `tests/Map.test.tsx` ganhou fixtures completas para
+`MapProject`/`MapData` (todos os campos novos) e um teste dedicado ao
+resumo/attention — 86 testes Vitest no total (+1, era 85). `npm run
+lint`/`npm run build` sem erros.

@@ -13,6 +13,7 @@ import {
   createPickupPoint,
   createSupplier,
   getMapData,
+  MapAttention,
   MapData,
   MapPickupPoint,
   MapProject,
@@ -20,12 +21,13 @@ import {
   ProjectIssue,
   updateProject,
 } from "../api/client";
-import Icon from "../components/Icon";
+import Icon, { IconName } from "../components/Icon";
 import { useToast } from "../components/Toast";
-import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHeader } from "../components/ui";
+import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHeader, Tone } from "../components/ui";
 import { useSession } from "../session/SessionContext";
 import { PROJECT_STATUS_LABELS } from "../api/client";
 import { PROJECT_STATUS_TONES } from "../utils/labels";
+import { formatDatePt } from "../utils/dates";
 
 type LayerKey = "projects" | "suppliers" | "pickups" | "issues";
 
@@ -41,6 +43,45 @@ const MARKER_COLORS: Record<LayerKey, string> = {
   pickups: "#d97706",
   issues: "#dc2626",
 };
+
+// `attention` (green|yellow|red) vem sempre calculado do servidor — o
+// frontend só apresenta, nunca recalcula a regra (ver docs/DECISIONS.md
+// D-058). Cores/tons/labels alinhados com o resto da app (var(--success)/
+// var(--warning)/var(--danger), ver src/styles/app.css).
+const ATTENTION_COLORS: Record<MapAttention, string> = {
+  green: "var(--success)",
+  yellow: "var(--warning)",
+  red: "var(--danger)",
+};
+
+const ATTENTION_TONES: Record<MapAttention, Tone> = {
+  green: "success",
+  yellow: "warning",
+  red: "danger",
+};
+
+const ATTENTION_LABELS: Record<MapAttention, string> = {
+  green: "Sem pendências operacionais",
+  yellow: "Atenção",
+  red: "Crítico",
+};
+
+function AttentionDot({ attention }: { attention: MapAttention }) {
+  return (
+    <span
+      aria-hidden="true"
+      title={ATTENTION_LABELS[attention]}
+      style={{
+        display: "inline-block",
+        width: 10,
+        height: 10,
+        borderRadius: "50%",
+        background: ATTENTION_COLORS[attention],
+        flexShrink: 0,
+      }}
+    />
+  );
+}
 
 function makeDivIcon(color: string): L.DivIcon {
   return L.divIcon({
@@ -288,11 +329,19 @@ function CreatePickupPointModal({
   );
 }
 
-function LeafletMap({
-  items,
-}: {
-  items: { key: string; layer: LayerKey; lat: number; lon: number; title: string; onClick: () => void }[];
-}) {
+type MapItem = {
+  key: string;
+  layer: LayerKey;
+  lat: number;
+  lon: number;
+  title: string;
+  onClick: () => void;
+  // Só definido para projetos — sobrepõe a cor por omissão da camada com
+  // a cor do `attention` (ver ATTENTION_COLORS acima).
+  color?: string;
+};
+
+function LeafletMap({ items }: { items: MapItem[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markersRef = useRef<L.Marker[]>([]);
@@ -317,7 +366,7 @@ function LeafletMap({
     markersRef.current = [];
     const bounds: L.LatLngExpression[] = [];
     for (const item of items) {
-      const marker = L.marker([item.lat, item.lon], { icon: makeDivIcon(MARKER_COLORS[item.layer]) })
+      const marker = L.marker([item.lat, item.lon], { icon: makeDivIcon(item.color ?? MARKER_COLORS[item.layer]) })
         .addTo(map)
         .bindTooltip(item.title)
         .on("click", item.onClick);
@@ -330,6 +379,48 @@ function LeafletMap({
   }, [items]);
 
   return <div ref={containerRef} style={{ height: 480, borderRadius: 12, overflow: "hidden" }} />;
+}
+
+// Barra de resumo do mapa — sempre a partir de `data.summary`, nunca
+// recalculada no frontend a partir das listas (mesma regra do dashboard,
+// D-041). `map_coverage_percent` (cobertura de coordenadas) e
+// `operational_clean_percent` (estado operacional) ficam deliberadamente
+// separadas — nunca uma métrica de "limpeza" só (ver D-058).
+function MapSummaryStat({ label, value, icon, tone }: { label: string; value: string; icon: IconName; tone: Tone }) {
+  return (
+    <div className="card stat">
+      <span className={`stat__icon tone-${tone}`}>
+        <Icon name={icon} size={20} />
+      </span>
+      <span>
+        <span className="stat__value">{value}</span>
+        <span className="stat__label" style={{ display: "block" }}>
+          {label}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+function MapSummaryBar({ summary }: { summary: MapData["summary"] }) {
+  return (
+    <div className="grid grid--stats" aria-label="Resumo do mapa operacional">
+      <MapSummaryStat
+        label={`Cobertura de coordenadas (${summary.mapped_projects}/${summary.visible_active_projects})`}
+        value={`${summary.map_coverage_percent}%`}
+        icon="mapPin"
+        tone="info"
+      />
+      <MapSummaryStat
+        label="Estado operacional limpo"
+        value={`${summary.operational_clean_percent}%`}
+        icon="checkCircle"
+        tone="success"
+      />
+      <MapSummaryStat label="Em atenção" value={String(summary.yellow_projects)} icon="alert" tone="warning" />
+      <MapSummaryStat label="Críticos" value={String(summary.red_projects)} icon="flame" tone="danger" />
+    </div>
+  );
 }
 
 // Contexto mínimo só para passar a config de tiles ao LeafletMap sem prop
@@ -391,11 +482,19 @@ export default function MapPage() {
 
   const mapItems = useMemo(() => {
     if (!data) return [];
-    const items: { key: string; layer: LayerKey; lat: number; lon: number; title: string; onClick: () => void }[] = [];
+    const items: MapItem[] = [];
     if (layers.projects) {
       for (const p of filteredProjects) {
         if (p.lat !== null && p.lon !== null) {
-          items.push({ key: `p-${p.id}`, layer: "projects", lat: p.lat, lon: p.lon, title: p.name, onClick: () => setSelected({ kind: "project", item: p }) });
+          items.push({
+            key: `p-${p.id}`,
+            layer: "projects",
+            lat: p.lat,
+            lon: p.lon,
+            title: `${p.name} — ${ATTENTION_LABELS[p.attention]}`,
+            onClick: () => setSelected({ kind: "project", item: p }),
+            color: ATTENTION_COLORS[p.attention],
+          });
         }
       }
     }
@@ -508,6 +607,10 @@ export default function MapPage() {
         </Alert>
       )}
 
+      <div className="section-gap">
+        <MapSummaryBar summary={data.summary} />
+      </div>
+
       <form className="toolbar" role="search" aria-label="Filtros do mapa" onSubmit={(e) => e.preventDefault()}>
         <div className="field field--wide">
           <label htmlFor="map-search">Pesquisar</label>
@@ -575,17 +678,26 @@ export default function MapPage() {
                     />
                   )}
                   <div className="list__main">
-                    <button type="button" className="list__title" style={{ background: "none", border: 0, padding: 0, textAlign: "left", cursor: "pointer" }} onClick={() => setSelected({ kind: "project", item: p })}>
+                    <button
+                      type="button"
+                      className="list__title"
+                      style={{ background: "none", border: 0, padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+                      onClick={() => setSelected({ kind: "project", item: p })}
+                    >
+                      <AttentionDot attention={p.attention} />
                       {p.name}
                     </button>
                     <div className="list__meta">
                       {p.client_name ?? "sem cliente"} · PM: {p.pm_display_name ?? "sem PM"}
                       {p.issues_count > 0 && ` · ${p.issues_count} pendência(s)`}
+                      {p.operational_tasks_count > 0 && ` · ${p.operational_tasks_count} tarefa(s) operacional(is)`}
+                      {p.material_visible && p.has_material_on_site && " · material no local"}
                     </div>
                   </div>
                   <Badge tone={PROJECT_STATUS_TONES[p.status as keyof typeof PROJECT_STATUS_TONES] ?? "neutral"}>
                     {PROJECT_STATUS_LABELS[p.status as keyof typeof PROJECT_STATUS_LABELS] ?? p.status}
                   </Badge>
+                  <Badge tone={ATTENTION_TONES[p.attention]}>{ATTENTION_LABELS[p.attention]}</Badge>
                 </li>
               ))}
             </ul>
@@ -710,7 +822,36 @@ export default function MapPage() {
               <dd>{PROJECT_STATUS_LABELS[selected.item.status as keyof typeof PROJECT_STATUS_LABELS] ?? selected.item.status}</dd>
               <dt>Potência</dt>
               <dd>{selected.item.power_kwp ?? "—"} kWp</dd>
-              <dt>Tarefas abertas</dt>
+              <dt>Atenção</dt>
+              <dd>
+                <Badge tone={ATTENTION_TONES[selected.item.attention]}>{ATTENTION_LABELS[selected.item.attention]}</Badge>
+              </dd>
+              <dt>Tarefas operacionais abertas</dt>
+              <dd>
+                {selected.item.operational_tasks_count}
+                {selected.item.overdue_operational_tasks_count > 0 && ` (${selected.item.overdue_operational_tasks_count} atrasada(s))`}
+                {selected.item.blocked_operational_tasks_count > 0 && ` · ${selected.item.blocked_operational_tasks_count} bloqueada(s)`}
+                {selected.item.urgent_operational_tasks_count > 0 && ` · ${selected.item.urgent_operational_tasks_count} urgente(s)`}
+              </dd>
+              {selected.item.next_operational_task && (
+                <>
+                  <dt>Próxima ação</dt>
+                  <dd>
+                    {selected.item.next_operational_task.title}
+                    {selected.item.next_operational_task.due_date &&
+                      ` — ${formatDatePt(selected.item.next_operational_task.due_date)}`}
+                  </dd>
+                </>
+              )}
+              <dt>Material</dt>
+              <dd>
+                {selected.item.material_visible
+                  ? selected.item.has_material_on_site
+                    ? `Sim (${selected.item.material_sku_count} item(ns))`
+                    : "Não"
+                  : "Sem permissão para ver inventário"}
+              </dd>
+              <dt>Tarefas abertas (total)</dt>
               <dd>{selected.item.open_tasks_count}</dd>
               <dt>Pendências</dt>
               <dd>{selected.item.issues_count}</dd>

@@ -975,10 +975,22 @@ export const updateProjectCommunicationData = (projectId: string, changes: Parti
 
 // --- Mapa operacional ---
 
+// Estado (green|yellow|red) derivado no servidor — nunca recalculado no
+// frontend (ver docs/DECISIONS.md D-058, app/services/map.py).
+export type MapAttention = "green" | "yellow" | "red";
+
+export interface MapNextOperationalTask {
+  id: string;
+  title: string;
+  due_date: string | null;
+  priority: string;
+}
+
 export interface MapProject {
   id: string;
   name: string;
   client_name: string | null;
+  pm_person_id: string | null;
   pm_display_name: string | null;
   status: string;
   lat: number | null;
@@ -986,6 +998,29 @@ export interface MapProject {
   power_kwp: number | null;
   open_tasks_count: number;
   issues_count: number;
+  attention: MapAttention;
+  operational_tasks_count: number;
+  overdue_operational_tasks_count: number;
+  blocked_operational_tasks_count: number;
+  urgent_operational_tasks_count: number;
+  next_operational_task: MapNextOperationalTask | null;
+  // `material_visible=false` (sem inventory.view) => os dois campos
+  // abaixo ficam sempre `null` — nunca `false` (D-058).
+  material_visible: boolean;
+  has_material_on_site: boolean | null;
+  material_sku_count: number | null;
+}
+
+export interface MapSummary {
+  visible_active_projects: number;
+  mapped_projects: number;
+  unmapped_projects: number;
+  map_coverage_percent: number;
+  green_projects: number;
+  yellow_projects: number;
+  red_projects: number;
+  operational_clean_percent: number;
+  projects_with_material: number;
 }
 
 export interface MapSupplier {
@@ -1043,6 +1078,7 @@ export interface MapData {
   suppliers: MapSupplier[];
   pickup_points: MapPickupPoint[];
   issues: ProjectIssue[];
+  summary: MapSummary;
 }
 
 export const getMapData = () => apiGet<MapData>("/api/map/data");
