@@ -14,6 +14,7 @@ import {
   ApiError,
   createPickupPoint,
   createSupplier,
+  createTask,
   getMapData,
   MapAttention,
   MapData,
@@ -21,6 +22,10 @@ import {
   MapProject,
   MapSupplier,
   ProjectIssue,
+  TASK_CATEGORY_LABELS,
+  TASK_PRIORITY_LABELS,
+  TaskCategory,
+  TaskPriority,
   updateProject,
 } from "../api/client";
 import Icon, { IconName } from "../components/Icon";
@@ -152,6 +157,103 @@ function EditCoordinatesModal({
           <input id="m-lon" className="input" type="number" step="0.000001" value={lon} onChange={(e) => setLon(e.target.value)} />
         </div>
       </div>
+    </Modal>
+  );
+}
+
+// Cria uma tarefa no projeto selecionado (Fase F). Reaproveita POST /api/tasks:
+// o servidor valida sempre permissões (um PM só cria no seu projeto e só
+// atribuída a si — nunca confiado à UI), a categoria e a prioridade.
+function CreateTaskModal({
+  project,
+  onClose,
+  onDone,
+}: {
+  project: MapProject;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [form, setForm] = useState<{ title: string; category: TaskCategory; priority: TaskPriority; due_date: string }>({
+    title: "",
+    category: "field",
+    priority: "medium",
+    due_date: "",
+  });
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    if (!form.title.trim()) {
+      setError("Indique o título da tarefa.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await createTask({
+        project_id: project.id,
+        title: form.title.trim(),
+        category: form.category,
+        priority: form.priority,
+        due_date: form.due_date || null,
+      });
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : "Não foi possível criar a tarefa.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={`Nova tarefa — ${project.name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose}>
+            Cancelar
+          </button>
+          <button type="button" className="btn btn--primary" onClick={handleSave} disabled={saving}>
+            {saving ? "A criar…" : "Criar tarefa"}
+          </button>
+        </>
+      }
+    >
+      {error && <Alert tone="danger">{error}</Alert>}
+      <div className="form-grid">
+        <div className="field span-2">
+          <label htmlFor="t-title">Título *</label>
+          <input id="t-title" className="input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+        </div>
+        <div className="field">
+          <label htmlFor="t-category">Categoria</label>
+          <select id="t-category" className="select" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value as TaskCategory })}>
+            {(Object.keys(TASK_CATEGORY_LABELS) as TaskCategory[]).map((c) => (
+              <option key={c} value={c}>
+                {TASK_CATEGORY_LABELS[c]}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="t-priority">Prioridade</label>
+          <select id="t-priority" className="select" value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value as TaskPriority })}>
+            {(Object.keys(TASK_PRIORITY_LABELS) as TaskPriority[]).map((p) => (
+              <option key={p} value={p}>
+                {TASK_PRIORITY_LABELS[p]}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="t-due">Prazo</label>
+          <input id="t-due" className="input" type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} />
+        </div>
+      </div>
+      <p className="small muted">
+        Só as categorias Campo e Material contam para o estado de atenção do mapa.
+      </p>
     </Modal>
   );
 }
@@ -481,11 +583,13 @@ export default function MapPage() {
   const [selected, setSelected] = useState<SelectedItem | null>(null);
   const [selectedForRoute, setSelectedForRoute] = useState<Set<string>>(new Set());
   const [editingCoordinates, setEditingCoordinates] = useState<MapProject | null>(null);
+  const [creatingTaskFor, setCreatingTaskFor] = useState<MapProject | null>(null);
   const [creatingSupplier, setCreatingSupplier] = useState(false);
   const [creatingPickup, setCreatingPickup] = useState(false);
 
   const canManageSuppliers = can("supplier.manage");
   const canManagePickups = can("pickup_point.manage");
+  const canCreateTasks = can("task.edit_all") || can("task.edit_own");
 
   function load() {
     setError(null);
@@ -889,7 +993,24 @@ export default function MapPage() {
       </div>
 
       {selected && (
-        <Modal title="Detalhe" onClose={() => setSelected(null)}>
+        <Modal
+          title="Detalhe"
+          onClose={() => setSelected(null)}
+          footer={
+            selected.kind === "project" && canCreateTasks ? (
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={() => {
+                  setCreatingTaskFor(selected.item);
+                  setSelected(null);
+                }}
+              >
+                <Icon name="plus" size={14} /> Criar tarefa
+              </button>
+            ) : undefined
+          }
+        >
           {selected.kind === "project" && (
             <dl className="kv">
               <dt>Nome</dt>
@@ -992,6 +1113,18 @@ export default function MapPage() {
             setEditingCoordinates(null);
             notify("Coordenadas atualizadas.", "success");
             load();
+          }}
+        />
+      )}
+
+      {creatingTaskFor && (
+        <CreateTaskModal
+          project={creatingTaskFor}
+          onClose={() => setCreatingTaskFor(null)}
+          onDone={() => {
+            setCreatingTaskFor(null);
+            notify("Tarefa criada.", "success");
+            load(); // o attention do projeto pode ter mudado
           }}
         />
       )}
