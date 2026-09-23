@@ -321,7 +321,8 @@ Barreiras que impedem o modo demo fora de `local` (independentes entre si):
   documental ou custos na interface.
 - Mapa: sem provider de tiles configurado por omissão (`MAP_TILE_URL`
   vazio) — mostra sempre a lista funcional em vez do mapa visual; a
-  seleção de rota é manual, sem otimização automática.
+  seleção de rota é manual e a ordem pode ser otimizada (distância em linha
+  reta, sem serviço externo — D-065).
 - Planeamento: deteção de conflitos de horário é só um aviso no
   cliente (não bloqueia, e só considera os eventos do período
   visível) — ver `docs/OPEN_QUESTIONS.md` pergunta 34.

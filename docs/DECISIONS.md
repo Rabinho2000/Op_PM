@@ -2347,3 +2347,59 @@ atualizaram o cartão; stock central (95/80/15) inalterado; o mapa passou a 2 SK
 
 **Por fazer na Fase F:** fornecedores no mapa com pedido de material, combinar
 trabalhos numa deslocação, otimização de rota.
+
+## D-065 — Mapa operacional, Fase F (4/n): otimização da ordem de paragens
+
+Quarta funcionalidade da Fase F. Até aqui a rota era só um link externo pela
+ordem de seleção, "sem otimização automática, por pedido explícito"
+(`MAP_AND_PLANNING.md`); a otimização passou a ser pedida.
+
+**Restrições já registadas e mantidas.** A otimização de rotas é sempre um
+**cálculo determinístico do backend** (`ARCHITECTURE_PROPOSAL.md`, secção de
+integrações) e o fornecedor de serviço de mapas/rotas continua por decidir
+(`OPEN_QUESTIONS.md`). Por isso: **sem serviço externo de routing, sem
+geocoding, sem chamadas de rede**.
+
+**Distância em linha reta — uma aproximação assumida.** Usa-se a distância de
+grande círculo (haversine). Serve para **comparar a ordem** das paragens, mas
+não é a distância de condução: a API devolve `distance_model: "great_circle"`
+e a UI diz "distâncias em linha reta (aproximação) — não são quilómetros de
+condução". Estradas, portagens e tempos ficam fora; se forem precisos, é a
+altura de decidir o serviço de routing.
+
+**Algoritmo** (`app/services/route_optimization.py`). A primeira paragem é o
+ponto de partida e fica sempre em primeiro. Com `round_trip` a rota fecha na
+partida; sem ele, termina onde for mais curto.
+- Até **12 paragens**: **ótimo garantido** (programação dinâmica sobre
+  subconjuntos, Held-Karp).
+- De 13 a **25** (máximo): vizinho mais próximo + 2-opt — boa, **não
+  garantidamente ótima** (a resposta diz `method: "heuristic"` e a UI avisa).
+- Determinístico: o mesmo pedido dá sempre a mesma rota (empates pelo menor
+  índice). Pior caso medido: ~28 ms (12 exatas) e ~36 ms (25 heurísticas).
+
+**API.** `POST /api/map/optimize-route` (`map.view`), só lê. O cliente envia só
+`{kind, id}` de cada paragem (`project|supplier|pickup`) — **nunca coordenadas**
+(o schema rejeita campos extra): o servidor resolve coordenadas e visibilidade,
+com a mesma regra do mapa (`visible_projects_query`, só ativos). Uma paragem
+inexistente, inativa ou fora do âmbito do utilizador dá **a mesma mensagem** (não
+revela se existe nem o nome). Paragens repetidas e sem coordenadas são recusadas
+(estas últimas nomeando-as). A resposta traz a ordem, a distância de cada
+perna e acumulada, o total, a distância na ordem pedida e a poupança.
+
+**UI.** No cartão "Rota externa": **Otimizar ordem**, opção **Voltar ao ponto de
+partida**, lista ordenada com quilómetros e poupança. "Abrir rota" usa
+**exatamente a ordem calculada pelo servidor**; o resultado é descartado se a
+seleção ou a opção mudarem (deixa de valer).
+
+**Testes.** +29 backend (`test_route_optimization.py`): o resultado exato é
+comparado com **força bruta** sobre 180 conjuntos aleatórios de semente fixa
+(2 a 7 paragens, aberto e com regresso); início fixo e cada paragem uma só vez;
+determinismo; heurística vs ótimo (≤15% acima); limites; e o endpoint
+(paragens mistas, coordenadas do cliente rejeitadas, mesma mensagem segura,
+PM sem fuga de âmbito, sem escrita, 401) — 465 no total (+2 skipped). +7
+Vitest — 124. Validado no browser contra o seed real: 5 paragens em ordem má
+(1269 km) passaram a 704 km (ordem ótima), com a partida fixa.
+
+**Por fazer na Fase F:** fornecedores no mapa com pedido de material (o pedido
+de material ainda não existe como fluxo) e combinar vários trabalhos numa
+deslocação.

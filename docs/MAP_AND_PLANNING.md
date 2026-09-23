@@ -78,10 +78,14 @@ próxima ação, e material (ou "sem permissão para ver inventário" quando
   `POST /api/projects/{id}/issues/{issue_id}/convert-to-task` — cria uma
   `Task` e liga `related_task_id`, nunca duplica a entidade.
 
-**Fora de âmbito, por pedido explícito:** otimização automática de rotas.
-Na UI, a seleção é manual (caixas de verificação na lista) e o botão
-"Abrir rota" apenas monta um link do Google Maps com os locais na ordem
-escolhida — nenhuma otimização, nenhum pedido a um serviço de routing.
+**Rotas (D-065).** A seleção é manual (caixas de verificação na lista; a
+primeira paragem é a partida). "Abrir rota" monta um link do Google Maps na
+ordem escolhida — ou na ordem **otimizada**, se o utilizador carregou em
+"Otimizar ordem", que chama `POST /api/map/optimize-route`: cálculo
+determinístico no backend, ótimo até 12 paragens e heurístico até 25, por
+distância em **linha reta** (aproximação, não quilómetros de condução).
+**Nenhum pedido a um serviço de routing** nem geocoding; estradas, portagens e
+tempos continuam fora de âmbito. Ver `docs/DECISIONS.md` D-065.
 
 ### UI (`frontend/src/pages/Map.tsx`)
 

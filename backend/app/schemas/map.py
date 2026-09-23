@@ -3,7 +3,9 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from pydantic import BaseModel, ConfigDict
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class NextOperationalTaskRead(BaseModel):
@@ -242,3 +244,49 @@ class MapDataResponse(BaseModel):
     pickup_points: list[MapPickupPointRead]
     issues: list[ProjectIssueRead]
     summary: MapSummaryRead
+
+
+# --- Otimização de rota (D-065) ---
+
+
+class RouteStopRef(BaseModel):
+    """Só identifica a paragem — as coordenadas e a visibilidade são sempre
+    resolvidas no servidor, nunca aceites do cliente."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["project", "supplier", "pickup"]
+    id: uuid.UUID
+
+
+class RouteOptimizationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # A PRIMEIRA paragem é o ponto de partida e fica sempre em primeiro lugar.
+    stops: list[RouteStopRef] = Field(min_length=2, max_length=25)
+    round_trip: bool = False
+
+
+class RouteStopRead(BaseModel):
+    kind: str
+    id: uuid.UUID
+    name: str
+    lat: float
+    lon: float
+    leg_km: float  # desde a paragem anterior (0 na primeira)
+    cumulative_km: float
+
+
+class RouteOptimizationResponse(BaseModel):
+    stops: list[RouteStopRead]
+    # Só com round_trip: perna de regresso ao ponto de partida (já incluída em
+    # total_km, mas não em nenhuma paragem).
+    return_leg_km: float | None = None
+    round_trip: bool
+    total_km: float
+    requested_order_km: float  # a mesma rota na ordem em que as paragens foram pedidas
+    saved_km: float  # requested_order_km - total_km (nunca negativo)
+    method: Literal["exact", "heuristic"]
+    # Distância em linha reta (grande círculo) — aproximação, não quilómetros
+    # de condução. O frontend deve dizê-lo.
+    distance_model: Literal["great_circle"] = "great_circle"

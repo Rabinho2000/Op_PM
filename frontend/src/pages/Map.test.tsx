@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
   createPickupPoint: vi.fn(),
   updateProject: vi.fn(),
   createTask: vi.fn(),
+  optimizeRoute: vi.fn(),
   createCalendarEvent: vi.fn(),
 }));
 
@@ -296,6 +297,123 @@ describe("Mapa operacional", () => {
     fireEvent.click(screen.getByRole("button", { name: /^agendar visita$/i }));
     expect(await screen.findByText("Uma visita futura tem de começar no futuro.")).toBeInTheDocument();
     expect(api.createCalendarEvent).not.toHaveBeenCalled();
+  });
+
+  describe("otimização de rota", () => {
+    function optimized(overrides: Record<string, unknown> = {}) {
+      return {
+        stops: [
+          { kind: "project", id: "proj-1", name: "Instalação Sintética Um", lat: 38.7, lon: -9.1, leg_km: 0, cumulative_km: 0 },
+          { kind: "pickup", id: "pk-1", name: "Ponto de Recolha Sintético", lat: 38.72, lon: -9.13, leg_km: 3.5, cumulative_km: 3.5 },
+          { kind: "supplier", id: "sup-1", name: "Fornecedor Sintético", lat: 38.71, lon: -9.12, leg_km: 1.6, cumulative_km: 5.1 },
+        ],
+        return_leg_km: null,
+        round_trip: false,
+        total_km: 5.1,
+        requested_order_km: 7.4,
+        saved_km: 2.3,
+        method: "exact",
+        distance_model: "great_circle",
+        ...overrides,
+      };
+    }
+
+    async function selectThree() {
+      renderWithProviders(<MapPage />, { me: makeMe({ permissions: ["map.view"] }) });
+      await screen.findByRole("button", { name: "Instalação Sintética Um" });
+      // Ordem de seleção = ordem pedida: obra (partida), fornecedor, recolha.
+      fireEvent.click(screen.getByLabelText("Selecionar Instalação Sintética Um para rota"));
+      fireEvent.click(screen.getByLabelText("Selecionar Fornecedor Sintético para rota"));
+      fireEvent.click(screen.getByLabelText("Selecionar Ponto de Recolha Sintético para rota"));
+    }
+
+    it("só permite otimizar com pelo menos duas paragens", async () => {
+      renderWithProviders(<MapPage />, { me: makeMe({ permissions: ["map.view"] }) });
+      await screen.findByRole("button", { name: "Instalação Sintética Um" });
+      expect(screen.getByRole("button", { name: /otimizar ordem/i })).toBeDisabled();
+      fireEvent.click(screen.getByLabelText("Selecionar Instalação Sintética Um para rota"));
+      expect(screen.getByRole("button", { name: /otimizar ordem/i })).toBeDisabled();
+      fireEvent.click(screen.getByLabelText("Selecionar Fornecedor Sintético para rota"));
+      expect(screen.getByRole("button", { name: /otimizar ordem/i })).toBeEnabled();
+    });
+
+    it("envia só as referências pela ordem de seleção (nunca coordenadas) e mostra o resultado", async () => {
+      await selectThree();
+      api.optimizeRoute.mockResolvedValue(optimized());
+      fireEvent.click(screen.getByRole("button", { name: /otimizar ordem/i }));
+
+      await waitFor(() =>
+        expect(api.optimizeRoute).toHaveBeenCalledWith(
+          [
+            { kind: "project", id: "proj-1" },
+            { kind: "supplier", id: "sup-1" },
+            { kind: "pickup", id: "pk-1" },
+          ],
+          false
+        )
+      );
+      const result = await screen.findByLabelText("Rota otimizada");
+      expect(result).toHaveTextContent("5.1 km em linha reta");
+      expect(result).toHaveTextContent("menos 2.3 km do que a ordem escolhida (7.4 km)");
+      expect(result).toHaveTextContent("Ordem ótima.");
+      expect(result).toHaveTextContent("Instalação Sintética Um (partida)");
+      expect(result).toHaveTextContent("Distâncias em linha reta (aproximação) — não são quilómetros de condução.");
+      // A ordem mostrada é a do servidor (recolha antes do fornecedor).
+      const items = Array.from(result.querySelectorAll("li")).map((li) => li.textContent);
+      expect(items[1]).toContain("Ponto de Recolha Sintético");
+      expect(items[2]).toContain("Fornecedor Sintético");
+    });
+
+    it("distingue uma heurística de uma ordem ótima", async () => {
+      await selectThree();
+      api.optimizeRoute.mockResolvedValue(optimized({ method: "heuristic" }));
+      fireEvent.click(screen.getByRole("button", { name: /otimizar ordem/i }));
+      expect(await screen.findByText(/Boa ordem, mas não garantidamente a ótima\./)).toBeInTheDocument();
+    });
+
+    it("'Abrir rota' usa exatamente a ordem calculada pelo servidor", async () => {
+      const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+      await selectThree();
+      api.optimizeRoute.mockResolvedValue(optimized());
+      fireEvent.click(screen.getByRole("button", { name: /otimizar ordem/i }));
+      await screen.findByLabelText("Rota otimizada");
+
+      fireEvent.click(screen.getByRole("button", { name: /abrir rota \(3\)/i }));
+      const url = decodeURIComponent(String(openSpy.mock.calls[0][0]));
+      // partida -> recolha -> fornecedor (destino): não a ordem de seleção.
+      expect(url).toContain("destination=38.71,-9.12");
+      expect(url).toContain("waypoints=38.7,-9.1|38.72,-9.13");
+      openSpy.mockRestore();
+    });
+
+    it("com 'Voltar ao ponto de partida' pede regresso e mostra a perna final", async () => {
+      await selectThree();
+      fireEvent.click(screen.getByLabelText("Voltar ao ponto de partida"));
+      api.optimizeRoute.mockResolvedValue(optimized({ round_trip: true, return_leg_km: 2.2, total_km: 7.3 }));
+      fireEvent.click(screen.getByRole("button", { name: /otimizar ordem/i }));
+
+      await waitFor(() => expect(api.optimizeRoute).toHaveBeenCalledWith(expect.any(Array), true));
+      expect(await screen.findByText("Regresso à partida — +2.2 km")).toBeInTheDocument();
+    });
+
+    it("mostra a mensagem do servidor quando a otimização é recusada", async () => {
+      await selectThree();
+      const { ApiError } = await vi.importActual<typeof import("../api/client")>("../api/client");
+      api.optimizeRoute.mockRejectedValue(new ApiError(400, "Paragens sem coordenadas: Fornecedor X."));
+      fireEvent.click(screen.getByRole("button", { name: /otimizar ordem/i }));
+      expect(await screen.findByText("Paragens sem coordenadas: Fornecedor X.")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Rota otimizada")).not.toBeInTheDocument();
+    });
+
+    it("descarta a rota otimizada quando a seleção muda (deixa de valer)", async () => {
+      await selectThree();
+      api.optimizeRoute.mockResolvedValue(optimized());
+      fireEvent.click(screen.getByRole("button", { name: /otimizar ordem/i }));
+      await screen.findByLabelText("Rota otimizada");
+
+      fireEvent.click(screen.getByLabelText("Selecionar Ponto de Recolha Sintético para rota")); // desmarca
+      await waitFor(() => expect(screen.queryByLabelText("Rota otimizada")).not.toBeInTheDocument());
+    });
   });
 
   it("filtra instalações por pesquisa", async () => {
