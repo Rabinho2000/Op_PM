@@ -12,5 +12,12 @@ export default defineConfig({
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     globals: true,
     setupFiles: ["./src/setupTests.ts"],
+    // A aplicação assume sempre Europe/Lisbon (equipa interna em Portugal
+    // — ver app/utils/timezones.py no backend e os comentários "sempre em
+    // Europe/Lisbon" espalhados pelo código). Fixtures de teste que
+    // constroem datas/horas sem offset explícito (ex. Planning.test.tsx)
+    // dependem implicitamente disto — sem fixar o TZ do runner, um CI em
+    // UTC (ex. ubuntu-latest do GitHub Actions) mostra horas deslocadas.
+    env: { TZ: "Europe/Lisbon" },
   },
 });
