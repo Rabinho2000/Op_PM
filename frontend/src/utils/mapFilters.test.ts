@@ -24,6 +24,9 @@ function project(overrides: Partial<MapProject> = {}): MapProject {
     material_visible: true,
     has_material_on_site: false,
     material_sku_count: 0,
+    visits_visible: true,
+    upcoming_visits_count: 0,
+    next_visit: null,
     ...overrides,
   };
 }

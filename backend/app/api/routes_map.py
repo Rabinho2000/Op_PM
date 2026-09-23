@@ -22,6 +22,7 @@ from app.schemas.map import (
     MapSummaryRead,
     MapSupplierRead,
     NextOperationalTaskRead,
+    NextVisitRead,
     PickupPointCreate,
     PickupPointUpdate,
     ProjectIssueCreate,
@@ -71,6 +72,15 @@ def _map_project_read(entry) -> MapProjectRead:
             due_date=entry.next_operational_task.due_date,
             priority=entry.next_operational_task.priority,
         )
+    next_visit = None
+    if entry.next_visit is not None:
+        next_visit = NextVisitRead(
+            id=entry.next_visit.id,
+            title=entry.next_visit.title,
+            starts_at=entry.next_visit.starts_at,
+            ends_at=entry.next_visit.ends_at,
+            assigned_to_display_name=entry.next_visit.assigned_to_display_name,
+        )
     return MapProjectRead(
         id=project.id,
         name=project.name,
@@ -92,6 +102,9 @@ def _map_project_read(entry) -> MapProjectRead:
         material_visible=entry.material_visible,
         has_material_on_site=entry.has_material_on_site,
         material_sku_count=entry.material_sku_count,
+        visits_visible=entry.visits_visible,
+        upcoming_visits_count=entry.upcoming_visits_count,
+        next_visit=next_visit,
     )
 
 
