@@ -54,6 +54,11 @@ MOVEMENT_DEVOLUCAO = "devolucao"
 MOVEMENT_AJUSTE = "ajuste"
 MOVEMENT_TRANSITO_ENTRADA = "transito_entrada"
 MOVEMENT_TRANSITO_SAIDA = "transito_saida"
+# Localização física do material numa instalação (D-064). Nenhum dos dois
+# altera o stock físico central nem a reserva — só o saldo "no local" (ver
+# app/services/inventory.py:on_site_for_project).
+MOVEMENT_ENTREGA = "entrega"
+MOVEMENT_RECOLHA = "recolha"
 
 MOVEMENT_TYPES: frozenset[str] = frozenset(
     {
@@ -66,6 +71,8 @@ MOVEMENT_TYPES: frozenset[str] = frozenset(
         MOVEMENT_AJUSTE,
         MOVEMENT_TRANSITO_ENTRADA,
         MOVEMENT_TRANSITO_SAIDA,
+        MOVEMENT_ENTREGA,
+        MOVEMENT_RECOLHA,
     }
 )
 
@@ -112,6 +119,12 @@ class InventoryMovement(UUIDPk, TimestampMixin, Base):
         GUID(), ForeignKey("inventory_locations.id"), nullable=True
     )
     unit_cost: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
+    # Só em `consumo`: quanto do consumo foi abatido ao material que estava no
+    # local (D-064). Guardado no próprio movimento — e não recalculado por
+    # ordem cronológica — porque `created_at` tem resolução de 1 segundo em
+    # SQLite e o saldo "no local" tem de ser independente da ordem. NULL nos
+    # movimentos anteriores a esta coluna (tratado como 0).
+    from_site_quantity: Mapped[Decimal | None] = mapped_column(QUANTITY, nullable=True)
     reference: Mapped[str] = mapped_column(String(256), default="")
     # Presente só quando o chamador pede idempotência explícita (ex. um
     # pedido HTTP repetido pela UI por falha de rede) — repetir a mesma

@@ -21,7 +21,7 @@ import uuid
 from dataclasses import dataclass
 from decimal import Decimal
 
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app.models.inventory import (
@@ -29,7 +29,9 @@ from app.models.inventory import (
     MOVEMENT_CONSUMO,
     MOVEMENT_DEVOLUCAO,
     MOVEMENT_ENTRADA,
+    MOVEMENT_ENTREGA,
     MOVEMENT_LIBERTA_RESERVA,
+    MOVEMENT_RECOLHA,
     MOVEMENT_RESERVA,
     MOVEMENT_SAIDA,
     InventoryItem,
@@ -132,6 +134,66 @@ def consumed_for_project(db: Session, item_id: uuid.UUID, project_id: uuid.UUID)
     return consumos - devolucoes
 
 
+def on_site_for_project(db: Session, item_id: uuid.UUID, project_id: uuid.UUID) -> Decimal:
+    """Material fisicamente na instalação (D-064):
+
+        no_local = Σ entrega − Σ recolha − Σ from_site_quantity(consumo)
+
+    Independente da reserva (pode haver mais no local do que o reservado —
+    excedente enviado pela transportadora ou reforço propositado) e do stock
+    físico central. Soma simples, independente da ordem dos movimentos."""
+    entregas = _movement_sum(
+        db, item_id=item_id, movement_types=(MOVEMENT_ENTREGA,), project_id=project_id, project_filter=True
+    )
+    recolhas = _movement_sum(
+        db, item_id=item_id, movement_types=(MOVEMENT_RECOLHA,), project_id=project_id, project_filter=True
+    )
+    abatido = (
+        db.query(func.coalesce(func.sum(InventoryMovement.from_site_quantity), ZERO))
+        .filter(
+            InventoryMovement.item_id == item_id,
+            InventoryMovement.project_id == project_id,
+            InventoryMovement.movement_type == MOVEMENT_CONSUMO,
+        )
+        .scalar()
+    )
+    return entregas - recolhas - (Decimal(abatido) if abatido is not None else ZERO)
+
+
+def on_site_balances_by_project(
+    db: Session, project_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, dict[uuid.UUID, Decimal]]:
+    """Saldo "no local" positivo por projeto e item, numa única query
+    agregada (mesma fórmula de `on_site_for_project`). Usado pelo mapa e pelo
+    resumo do projeto — nunca uma query por (projeto, item)."""
+    result: dict[uuid.UUID, dict[uuid.UUID, Decimal]] = {}
+    if not project_ids:
+        return result
+    signed = case(
+        (InventoryMovement.movement_type == MOVEMENT_ENTREGA, InventoryMovement.quantity),
+        (InventoryMovement.movement_type == MOVEMENT_RECOLHA, -InventoryMovement.quantity),
+        (
+            InventoryMovement.movement_type == MOVEMENT_CONSUMO,
+            -func.coalesce(InventoryMovement.from_site_quantity, 0),
+        ),
+        else_=0,
+    )
+    balance = func.sum(signed)
+    rows = (
+        db.query(InventoryMovement.project_id, InventoryMovement.item_id, balance.label("on_site"))
+        .filter(
+            InventoryMovement.project_id.in_(project_ids),
+            InventoryMovement.movement_type.in_((MOVEMENT_ENTREGA, MOVEMENT_RECOLHA, MOVEMENT_CONSUMO)),
+        )
+        .group_by(InventoryMovement.project_id, InventoryMovement.item_id)
+        .having(balance > 0)
+        .all()
+    )
+    for project_id, item_id, on_site in rows:
+        result.setdefault(project_id, {})[item_id] = Decimal(on_site)
+    return result
+
+
 @dataclass(frozen=True)
 class InventoryItemBalance:
     item_id: uuid.UUID
@@ -159,12 +221,14 @@ def _create_movement(
     reference: str,
     unit_cost: Decimal | None,
     idempotency_key: str | None,
+    from_site_quantity: Decimal | None = None,
 ) -> InventoryMovement:
     existing = _existing_by_idempotency_key(db, idempotency_key)
     if existing is not None:
         return existing
 
     movement = InventoryMovement(
+        from_site_quantity=from_site_quantity,
         item_id=item_id,
         movement_type=movement_type,
         quantity=quantity,
@@ -329,6 +393,10 @@ def consume_from_project(
             f"Não pode consumir mais do que o reservado para este projeto "
             f"(reservado {reserved}, pedido {quantity})."
         )
+    # O consumo abate primeiro ao material que está no local (D-064) — a parte
+    # abatida fica registada no próprio movimento. O consumo em si (exige
+    # reserva, reduz stock central e reservado) não muda.
+    on_site = max(on_site_for_project(db, item.id, project_id), ZERO)
     return _create_movement(
         db,
         item_id=item.id,
@@ -339,6 +407,7 @@ def consume_from_project(
         reference=reference,
         unit_cost=None,
         idempotency_key=idempotency_key,
+        from_site_quantity=min(quantity, on_site),
     )
 
 
@@ -370,6 +439,75 @@ def return_to_stock(
         db,
         item_id=item.id,
         movement_type=MOVEMENT_DEVOLUCAO,
+        quantity=quantity,
+        project_id=project_id,
+        created_by_person_id=created_by_person_id,
+        reference=reference,
+        unit_cost=None,
+        idempotency_key=idempotency_key,
+    )
+
+
+def deliver_to_project(
+    db: Session,
+    *,
+    item: InventoryItem,
+    project_id: uuid.UUID,
+    quantity: Decimal,
+    created_by_person_id: uuid.UUID | None,
+    reference: str = "",
+    idempotency_key: str | None = None,
+) -> InventoryMovement:
+    """Regista material que passou a estar fisicamente na instalação.
+
+    Sem limite pela reserva: a obra pode receber mais do que o reservado
+    (excedente da transportadora ou reforço propositado, ex. painéis de
+    reserva). Não altera o stock físico central nem a reserva (D-064)."""
+    if quantity <= ZERO:
+        raise InventoryError("A quantidade a entregar tem de ser positiva.")
+    return _create_movement(
+        db,
+        item_id=item.id,
+        movement_type=MOVEMENT_ENTREGA,
+        quantity=quantity,
+        project_id=project_id,
+        created_by_person_id=created_by_person_id,
+        reference=reference,
+        unit_cost=None,
+        idempotency_key=idempotency_key,
+    )
+
+
+def collect_from_project(
+    db: Session,
+    *,
+    item: InventoryItem,
+    project_id: uuid.UUID,
+    quantity: Decimal,
+    created_by_person_id: uuid.UUID | None,
+    reference: str = "",
+    idempotency_key: str | None = None,
+) -> InventoryMovement:
+    """Regista material que deixou de estar na instalação (recolhido).
+
+    Não pode recolher mais do que o que está no local. Não liberta a reserva
+    nem altera o stock físico central (D-064) — o excedente que motiva uma
+    recolha normalmente nunca foi reservado; libertar reserva é uma operação
+    separada e explícita."""
+    if quantity <= ZERO:
+        raise InventoryError("A quantidade a recolher tem de ser positiva.")
+    existing = _existing_by_idempotency_key(db, idempotency_key)
+    if existing is not None:
+        return existing
+    on_site = on_site_for_project(db, item.id, project_id)
+    if quantity > on_site:
+        raise InventoryError(
+            f"Não pode recolher mais do que o que está no local (no local {on_site}, pedido {quantity})."
+        )
+    return _create_movement(
+        db,
+        item_id=item.id,
+        movement_type=MOVEMENT_RECOLHA,
         quantity=quantity,
         project_id=project_id,
         created_by_person_id=created_by_person_id,

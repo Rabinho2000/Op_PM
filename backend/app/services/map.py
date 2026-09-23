@@ -16,18 +16,11 @@ import dataclasses
 import datetime as dt
 import uuid
 from collections import defaultdict
-from decimal import Decimal
 
-from sqlalchemy import case, func
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.calendar import CalendarEvent
-from app.models.inventory import (
-    MOVEMENT_CONSUMO,
-    MOVEMENT_LIBERTA_RESERVA,
-    MOVEMENT_RESERVA,
-    InventoryMovement,
-)
 from app.models.map_ops import PickupPoint, ProjectIssue
 from app.models.people import Person
 from app.models.project import Project
@@ -40,6 +33,7 @@ from app.models.task import (
     Task,
 )
 from app.security.permissions import AuthContext, can_view_project_issue
+from app.services.inventory import on_site_balances_by_project
 from app.services.projects import ProjectTaskSummary, compute_project_task_summary_from_tasks, visible_projects_query
 
 ATTENTION_GREEN = "green"
@@ -154,40 +148,15 @@ def _load_issue_counts_by_project(db: Session, project_ids: list[uuid.UUID]) -> 
 
 
 def _load_material_presence_by_project(db: Session, project_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
-    """Número de SKUs com saldo reservado líquido positivo, por projeto —
-    uma única query agregada (GROUP BY project_id, item_id), nunca uma
-    chamada a `reserved_for_project` por (item, projeto) dentro de um
-    ciclo. "Material no local" reaproveita o saldo reservado líquido
-    (reserva − liberta_reserva − consumo) já modelado por
-    `app/services/inventory.py:reserved_for_project` — este MVP não
-    distingue "reservado" de "fisicamente entregue no local" (nenhum
-    movimento de entrega dedicado existe ainda); ver docs/DECISIONS.md."""
-    if not project_ids:
-        return {}
-    # SQLite/PostgreSQL portável: soma com sinal via CASE (não `FILTER`,
-    # que o SQLite não suporta).
-    signed_quantity = case(
-        (InventoryMovement.movement_type == MOVEMENT_RESERVA, InventoryMovement.quantity),
-        (InventoryMovement.movement_type == MOVEMENT_LIBERTA_RESERVA, -InventoryMovement.quantity),
-        (InventoryMovement.movement_type == MOVEMENT_CONSUMO, -InventoryMovement.quantity),
-        else_=0,
-    )
-    reserved_expr = func.sum(signed_quantity)
-    rows = (
-        db.query(InventoryMovement.project_id, InventoryMovement.item_id, reserved_expr.label("reserved"))
-        .filter(
-            InventoryMovement.project_id.in_(project_ids),
-            InventoryMovement.movement_type.in_((MOVEMENT_RESERVA, MOVEMENT_LIBERTA_RESERVA, MOVEMENT_CONSUMO)),
-        )
-        .group_by(InventoryMovement.project_id, InventoryMovement.item_id)
-        .having(reserved_expr > 0)
-        .all()
-    )
-    sku_counts: dict[uuid.UUID, int] = defaultdict(int)
-    for project_id, _item_id, reserved in rows:
-        if reserved and Decimal(reserved) > 0:
-            sku_counts[project_id] += 1
-    return sku_counts
+    """Número de SKUs com material fisicamente no local, por projeto (D-064).
+
+    "No local" = Σ entrega − Σ recolha − Σ abatido pelo consumo — independente
+    da reserva (ver app/services/inventory.py:on_site_balances_by_project, uma
+    única query agregada). Antes de D-064 usava o saldo reservado como
+    aproximação, porque não havia movimento de entrega."""
+    return {
+        project_id: len(items) for project_id, items in on_site_balances_by_project(db, project_ids).items()
+    }
 
 
 def _next_operational_task(tasks: list[Task]) -> NextOperationalTask | None:

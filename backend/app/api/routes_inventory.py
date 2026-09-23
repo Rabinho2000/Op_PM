@@ -27,6 +27,7 @@ from app.schemas.inventory import (
     ProjectInventoryOperationCreate,
     ProjectInventorySummary,
     ProjectMaterialRequirementCreate,
+    ProjectOnSiteRead,
     ProjectMaterialRequirementRead,
     ProjectMaterialRequirementUpdate,
 )
@@ -35,7 +36,9 @@ from app.security.permissions import (
     AuthContext,
     PermissionDenied,
     can_allocate_inventory_for_project,
+    can_collect_inventory_for_project,
     can_consume_inventory_for_project,
+    can_deliver_inventory_for_project,
     can_manage_central_inventory,
     can_manage_material_requirements,
     can_release_inventory_for_project,
@@ -46,11 +49,14 @@ from app.services.inventory import (
     InsufficientStockError,
     InventoryError,
     adjust_stock,
+    collect_from_project,
     consume_from_project,
     create_material_requirement,
+    deliver_to_project,
     enter_stock,
     item_balance,
     material_requirement_status,
+    on_site_balances_by_project,
     release_reservation,
     reserve_for_project,
     return_to_stock,
@@ -222,10 +228,28 @@ def project_inventory_summary_endpoint(
         .order_by(InventoryMovement.created_at.desc())
         .all()
     )
+    on_site_balances = on_site_balances_by_project(db, [project.id]).get(project.id, {})
+    items_by_id = (
+        {i.id: i for i in db.query(InventoryItem).filter(InventoryItem.id.in_(list(on_site_balances))).all()}
+        if on_site_balances
+        else {}
+    )
+    on_site = [
+        ProjectOnSiteRead(
+            item_id=item_id,
+            item_name=items_by_id[item_id].name if item_id in items_by_id else None,
+            item_unit=items_by_id[item_id].unit if item_id in items_by_id else None,
+            quantity=quantity,
+        )
+        for item_id, quantity in sorted(
+            on_site_balances.items(), key=lambda kv: (items_by_id[kv[0]].name if kv[0] in items_by_id else "", str(kv[0]))
+        )
+    ]
     return ProjectInventorySummary(
         project_id=project.id,
         requirements=requirement_reads,
         reservations=[_movement_to_read(db, m) for m in reservations],
+        on_site=on_site,
     )
 
 
@@ -398,4 +422,42 @@ def return_endpoint(
         ctx=ctx,
         permission_check=can_consume_inventory_for_project,
         operation=return_to_stock,
+    )
+
+
+@project_router.post("/deliver", response_model=InventoryMovementRead, status_code=201)
+def deliver_endpoint(
+    project_id: uuid.UUID,
+    body: ProjectInventoryOperationCreate,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> InventoryMovementRead:
+    """Material que passou a estar na instalação (D-064). Sem limite pela
+    reserva; não altera stock central nem reserva."""
+    return _project_operation(
+        project_id=project_id,
+        body=body,
+        db=db,
+        ctx=ctx,
+        permission_check=can_deliver_inventory_for_project,
+        operation=deliver_to_project,
+    )
+
+
+@project_router.post("/collect", response_model=InventoryMovementRead, status_code=201)
+def collect_endpoint(
+    project_id: uuid.UUID,
+    body: ProjectInventoryOperationCreate,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> InventoryMovementRead:
+    """Material que deixou de estar na instalação (D-064). Não pode exceder o
+    que está no local; não liberta a reserva."""
+    return _project_operation(
+        project_id=project_id,
+        body=body,
+        db=db,
+        ctx=ctx,
+        permission_check=can_collect_inventory_for_project,
+        operation=collect_from_project,
     )

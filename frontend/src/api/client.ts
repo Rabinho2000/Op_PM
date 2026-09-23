@@ -713,10 +713,20 @@ export interface ProjectMaterialRequirement {
   available_stock_sufficient: boolean;
 }
 
+// Material fisicamente na instalação (D-064) — independente da reserva:
+// inclui excedentes sem "necessidade" associada.
+export interface ProjectOnSite {
+  item_id: string;
+  item_name: string | null;
+  item_unit: string | null;
+  quantity: string;
+}
+
 export interface ProjectInventorySummary {
   project_id: string;
   requirements: ProjectMaterialRequirement[];
   reservations: InventoryMovement[];
+  on_site: ProjectOnSite[];
 }
 
 export const getProjectInventory = (projectId: string) =>
@@ -735,7 +745,7 @@ export const updateMaterialRequirement = (
 
 function projectInventoryOperation(
   projectId: string,
-  action: "reserve" | "consume" | "release" | "return",
+  action: "reserve" | "consume" | "release" | "return" | "deliver" | "collect",
   payload: { item_id: string; quantity: string; reference?: string },
 ) {
   return apiPost<InventoryMovement>(`/api/projects/${projectId}/inventory/${action}`, payload);
@@ -749,6 +759,12 @@ export const releaseProjectMaterial = (projectId: string, payload: { item_id: st
   projectInventoryOperation(projectId, "release", payload);
 export const returnProjectMaterial = (projectId: string, payload: { item_id: string; quantity: string; reference?: string }) =>
   projectInventoryOperation(projectId, "return", payload);
+// Entrega/recolha (D-064): localização física do material. Não alteram o
+// stock central nem a reserva; recolher não pode exceder o que está no local.
+export const deliverProjectMaterial = (projectId: string, payload: { item_id: string; quantity: string; reference?: string }) =>
+  projectInventoryOperation(projectId, "deliver", payload);
+export const collectProjectMaterial = (projectId: string, payload: { item_id: string; quantity: string; reference?: string }) =>
+  projectInventoryOperation(projectId, "collect", payload);
 
 // --- Metas e indicadores (página única — nunca "Metas"/"Dashboards" separados) ---
 

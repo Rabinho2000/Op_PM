@@ -7,7 +7,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from app.models.inventory import InventoryItem, InventoryMovement, MOVEMENT_RESERVA
+from app.models.inventory import InventoryItem, InventoryMovement, MOVEMENT_ENTREGA, MOVEMENT_RESERVA
 from app.models.project import Project
 from app.models.task import (
     STATUS_BLOCKED,
@@ -245,7 +245,7 @@ def test_material_on_site_is_yellow_only_with_inventory_view(db_session, api_cli
     db.add(
         InventoryMovement(
             item_id=item.id,
-            movement_type=MOVEMENT_RESERVA,
+            movement_type=MOVEMENT_ENTREGA,
             quantity=10,
             project_id=project.id,
         )
@@ -275,8 +275,8 @@ def test_two_skus_never_cancel_each_other_out(db_session, api_client):
     item_b = InventoryItem(sku=f"SKU-B-{uuid.uuid4().hex[:8]}", name="Conectores de teste", unit="un")
     db.add_all([item_a, item_b])
     db.flush()
-    db.add(InventoryMovement(item_id=item_a.id, movement_type=MOVEMENT_RESERVA, quantity=5, project_id=project.id))
-    db.add(InventoryMovement(item_id=item_b.id, movement_type=MOVEMENT_RESERVA, quantity=3, project_id=project.id))
+    db.add(InventoryMovement(item_id=item_a.id, movement_type=MOVEMENT_ENTREGA, quantity=5, project_id=project.id))
+    db.add(InventoryMovement(item_id=item_b.id, movement_type=MOVEMENT_ENTREGA, quantity=3, project_id=project.id))
     db.commit()
 
     resp = api_client.get("/api/map/data", headers=_headers("chefe.sintetico@example.invalid"))

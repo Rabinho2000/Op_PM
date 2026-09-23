@@ -40,7 +40,8 @@ Cada entrada em `projects`/`projects_without_coordinates` ganhou:
 
 Nunca persistido — calculado sempre a partir de `Task.category`
 (`app/models/task.py`: `workflow|field|material|documentation|commercial|other`)
-e, quando `inventory.view`, do saldo reservado de inventário. Só
+e, quando `inventory.view`, do material fisicamente no local (entregas
+menos recolhas, D-064 — antes usava o saldo reservado). Só
 `OPERATIONAL_TASK_CATEGORIES` (`field`/`material`) conta para o
 semáforo — uma tarefa `workflow`/`documentation` aberta nunca muda
 `attention`. `red` = tarefa operacional aberta `blocked`, `urgent`, ou
@@ -139,3 +140,10 @@ escolhida — nenhuma otimização, nenhum pedido a um serviço de routing.
 `map.view`, `supplier.manage`, `pickup_point.manage`, `project_issue.view`,
 `project_issue.manage`, `calendar.view`, `calendar.manage` — ver
 `app/security/catalog.py` para a matriz completa por papel.
+
+
+**Atualização (D-064):** `has_material_on_site`/`material_sku_count` deixaram de
+usar o saldo reservado. Passam a vir do saldo **no local**
+(`Σ entrega − Σ recolha − Σ abatido pelo consumo`, ver
+`docs/INVENTORY_RULES.md`): material reservado mas não entregue não conta, e um
+projeto concluído com material ainda no local fica amarelo.

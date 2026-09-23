@@ -103,3 +103,43 @@ O seed de demonstração (`app/migration/seed_dev.py:seed_map_and_inventory`)
 estende este exemplo com uma segunda reserva de 10 km para chegar ao
 estado final apresentado na demonstração: físico 95, disponível 80,
 reservado 15, consumido 5.
+
+
+## Material no local: entrega e recolha (D-064)
+
+Uma dimensão nova, **independente** dos quatro números acima: onde está
+fisicamente o material de um projeto. Os movimentos `entrega` e `recolha`
+(por projeto e item) não alteram o stock físico central, o disponível nem a
+reserva.
+
+```
+no_local[projeto, item] = Σ entrega − Σ recolha − Σ from_site_quantity(consumo)
+```
+
+| Operação | Efeito | Permissão |
+|---|---|---|
+| Entregar (`POST /api/projects/{id}/inventory/deliver`) | ↑ no local | `inventory.deliver_project` (+ âmbito de projeto) |
+| Recolher (`POST /api/projects/{id}/inventory/collect`) | ↓ no local | `inventory.collect_project` (+ âmbito de projeto) |
+
+**Regras** (decididas com o negócio):
+
+- **Uma entrega não está limitada pela reserva.** A obra pode receber mais do
+  que o reservado: a transportadora envia a mais, ou enviam-se painéis de
+  reserva de propósito para uma avaria não parar a obra. Esse excedente é
+  precisamente o que a recolha vem buscar.
+- **Recolher não pode exceder o que está no local** (400 com mensagem clara,
+  nada é gravado) e **não liberta a reserva**: o excedente normalmente nunca
+  foi reservado, e libertar reserva é uma operação separada e explícita.
+- **Consumir abate primeiro ao que está no local.** A parte abatida fica
+  guardada no próprio movimento (`from_site_quantity`), não é recalculada por
+  ordem cronológica — `created_at` tem resolução de 1 segundo em SQLite. O
+  consumo em si não mudou: continua a exigir reserva suficiente e a reduzir o
+  stock central e o reservado. Estar "no local" **não** substitui a reserva.
+- Movimentos anteriores à coluna `from_site_quantity` têm `NULL`, tratado
+  como 0.
+- Saldos por item nunca se anulam entre si; um saldo 0 não aparece.
+- Idempotência (`idempotency_key`), como nas restantes operações.
+
+**Limitação assumida:** como não alteram o stock central, uma entrega não
+o reduz nem uma recolha o repõe. Material que veio direto do fornecedor, ou
+que voltou ao armazém, tem de ser regularizado à parte (`entrada`/`ajuste`).
