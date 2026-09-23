@@ -536,6 +536,54 @@ fora do período atualmente visível na UI.
 client-side, só no período visível) é suficiente, ou se é preciso um
 bloqueio rígido/validação também no servidor.
 
+### 35. Pedidos de material: quem cria, quem envia, quem aprova e quem adjudica
+
+**Impacto:** o fluxo de pedidos de material a fornecedores (D-067) foi
+implementado **sem estas respostas**, com a leitura mais conservadora do
+`catalog.py`: o **PM** cria e edita rascunhos dos seus projetos e cancela o seu
+rascunho; **Chefe de Operações/Administrador** enviam, registam o orçamento,
+aprovam e cancelam (`material_request.approve`); só quem tem
+`material_request.adjudicate` adjudica.
+
+**Decisão necessária:** confirmar esta matriz, em particular se um **PM deve poder
+enviar os seus próprios pedidos** (a recomendação por omissão de "Quem aprova o
+quê", pergunta 5, sugeria que o PM aprova o seu próprio envio) e se há um limite de
+valor acima do qual a aprovação exige mais alguém.
+
+**Recomendação por defeito (já aplicada):** o PM só cria; envio e aprovação são
+do Chefe. Tornar o PM autorizado a enviar é uma alteração pequena em
+`app/services/material_requests.py:ACTION_PERMISSIONS`.
+
+### 36. "Enviar" um pedido ao fornecedor
+
+**Impacto:** o sistema **nunca envia email** (D-010). "Marcar como enviado" só
+regista que uma pessoa autorizada aprovou o envio e o fez fora do sistema; o
+texto do email é um rascunho para copiar.
+
+**Decisão necessária:** quando a integração Microsoft Graph estiver ligada (Fase 6
+do roadmap), o envio passa a ser real depois dessa mesma aprovação? Ou o processo
+mantém-se manual?
+
+### 37. Adjudicação: irreversível? o que dispara?
+
+**Impacto:** hoje a adjudicação **não pode ser desfeita** e **não faz mais nada**:
+não cria custo (`CostLine`), não gera movimentos de inventário, não avisa o
+Financial. Os estados `enviado_financeiro` e `pago` existem no modelo mas sem
+transição.
+
+**Decisão necessária:** o que deve acontecer a seguir à adjudicação (custo
+previsto? entrada de stock esperada? envio ao Financial?), e se deve ser possível
+anulá-la (e por quem).
+
+### 38. Orçamentos: preços com ou sem IVA, e anexo do documento
+
+**Impacto:** o orçamento é registado como **preço unitário por linha, introduzido
+à mão** (até 4 casas decimais), sem indicar se é com ou sem IVA e sem anexar o
+documento enviado pelo fornecedor (a biblioteca documental é outra fase).
+
+**Decisão necessária:** os preços comparam-se com ou sem IVA (o campo devia dizê-lo)?
+É preciso anexar o orçamento do fornecedor ao pedido?
+
 ## Podem ser decididas mais tarde
 
 - **Atualização major de `react-router-dom` (6→7) e `vitest`/

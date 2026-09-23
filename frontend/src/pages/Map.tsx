@@ -35,6 +35,11 @@ import {
   updateProject,
 } from "../api/client";
 import Icon, { IconName } from "../components/Icon";
+import {
+  CreateMaterialRequestModal,
+  MaterialRequestDetailModal,
+  SupplierRequestsSection,
+} from "../components/MaterialRequests";
 import TripPlanModal from "../components/TripPlanModal";
 import { useToast } from "../components/Toast";
 import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHeader, Tone } from "../components/ui";
@@ -688,6 +693,10 @@ export default function MapPage() {
   const [editingCoordinates, setEditingCoordinates] = useState<MapProject | null>(null);
   const [creatingTaskFor, setCreatingTaskFor] = useState<MapProject | null>(null);
   const [schedulingFor, setSchedulingFor] = useState<MapProject | null>(null);
+  // Pedidos de material a fornecedores (D-067)
+  const [requestingFrom, setRequestingFrom] = useState<MapSupplier | null>(null);
+  const [openRequestId, setOpenRequestId] = useState<string | null>(null);
+  const [requestsRefresh, setRequestsRefresh] = useState(0);
   const [creatingSupplier, setCreatingSupplier] = useState(false);
   const [creatingPickup, setCreatingPickup] = useState(false);
 
@@ -695,6 +704,8 @@ export default function MapPage() {
   const canManagePickups = can("pickup_point.manage");
   const canCreateTasks = can("task.edit_all") || can("task.edit_own");
   const canScheduleVisits = can("calendar.manage");
+  const canViewMaterialRequests = can("inventory.view");
+  const canCreateMaterialRequests = can("material_request.create");
 
   function load() {
     setError(null);
@@ -1297,6 +1308,15 @@ export default function MapPage() {
               <dd style={{ whiteSpace: "pre-wrap" }}>{selected.item.materials || "—"}</dd>
             </dl>
           )}
+          {selected.kind === "supplier" && canViewMaterialRequests && (
+            <SupplierRequestsSection
+              supplierId={selected.item.id}
+              canCreate={canCreateMaterialRequests}
+              refreshKey={requestsRefresh}
+              onCreate={() => setRequestingFrom(selected.item)}
+              onOpen={setOpenRequestId}
+            />
+          )}
           {selected.kind === "pickup" && (
             <dl className="kv">
               <dt>Nome</dt>
@@ -1358,6 +1378,30 @@ export default function MapPage() {
           onClose={() => setTripPlan(null)}
           onOpenRoute={() => openInMaps(tripPlan.stops.map((stop) => `${stop.lat},${stop.lon}`), tripPlan.round_trip)}
           onCopied={(ok) => notify(ok ? "Resumo copiado." : "Não foi possível copiar o resumo.", ok ? "success" : "error")}
+        />
+      )}
+
+      {requestingFrom && (
+        <CreateMaterialRequestModal
+          supplierId={requestingFrom.id}
+          supplierName={requestingFrom.name}
+          projects={[...data.projects, ...data.projects_without_coordinates].map((p) => ({ id: p.id, name: p.name }))}
+          onClose={() => setRequestingFrom(null)}
+          onDone={(created) => {
+            setRequestingFrom(null);
+            setRequestsRefresh((n) => n + 1);
+            setOpenRequestId(created.id);
+            notify("Rascunho do pedido criado.", "success");
+          }}
+        />
+      )}
+
+      {openRequestId && (
+        <MaterialRequestDetailModal
+          requestId={openRequestId}
+          onClose={() => setOpenRequestId(null)}
+          onChanged={() => setRequestsRefresh((n) => n + 1)}
+          onCopied={(ok) => notify(ok ? "Email copiado." : "Não foi possível copiar o email.", ok ? "success" : "error")}
         />
       )}
 

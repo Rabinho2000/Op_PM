@@ -9,6 +9,7 @@ from app.api.routes_health import router as health_router
 from app.api.routes_imports import router as imports_router
 from app.api.routes_inventory import project_router as project_inventory_router
 from app.api.routes_inventory import router as inventory_router
+from app.api.routes_material_requests import router as material_requests_router
 from app.api.routes_map import router as map_router
 from app.api.routes_me import router as me_router
 from app.api.routes_migration import router as migration_router
@@ -51,6 +52,7 @@ app.include_router(absences_router)
 app.include_router(dashboard_router)
 app.include_router(inventory_router)
 app.include_router(project_inventory_router)
+app.include_router(material_requests_router)
 app.include_router(project_data_router)
 app.include_router(map_router)
 app.include_router(planning_router)
