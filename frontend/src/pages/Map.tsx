@@ -13,6 +13,7 @@ import { Link } from "react-router-dom";
 import {
   ApiError,
   createPickupPoint,
+  createCalendarEvent,
   createSupplier,
   createTask,
   getMapData,
@@ -34,7 +35,7 @@ import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHe
 import { useSession } from "../session/SessionContext";
 import { PROJECT_STATUS_LABELS } from "../api/client";
 import { PROJECT_STATUS_TONES } from "../utils/labels";
-import { formatDatePt } from "../utils/dates";
+import { formatDatePt, formatDateTimePt, lisbonWallClockToIso } from "../utils/dates";
 import { canFilterByMaterial, EMPTY_MAP_FILTERS, filterMapProjects, MapFilters } from "../utils/mapFilters";
 
 type LayerKey = "projects" | "suppliers" | "pickups" | "issues";
@@ -254,6 +255,90 @@ function CreateTaskModal({
       <p className="small muted">
         Só as categorias Campo e Material contam para o estado de atenção do mapa.
       </p>
+    </Modal>
+  );
+}
+
+// Agenda uma visita (Fase F) como evento de calendário do projeto, via o
+// POST /api/planning/events existente — o servidor valida `calendar.manage` e
+// o âmbito do projeto. As horas são de Lisboa e convertidas para um instante
+// com offset (lisbonWallClockToIso), nunca enviadas como string "nua".
+function ScheduleVisitModal({
+  project,
+  onClose,
+  onDone,
+}: {
+  project: MapProject;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [form, setForm] = useState({ title: "Visita técnica", starts_at: "", ends_at: "" });
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    if (!form.title.trim() || !form.starts_at || !form.ends_at) {
+      setError("Indique título, início e fim.");
+      return;
+    }
+    const startsAt = lisbonWallClockToIso(form.starts_at);
+    const endsAt = lisbonWallClockToIso(form.ends_at);
+    if (endsAt <= startsAt) {
+      setError("O fim tem de ser depois do início.");
+      return;
+    }
+    if (new Date(startsAt).getTime() < Date.now()) {
+      setError("Uma visita futura tem de começar no futuro.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await createCalendarEvent({
+        title: form.title.trim(),
+        starts_at: startsAt,
+        ends_at: endsAt,
+        project_id: project.id,
+      });
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : "Não foi possível agendar a visita.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={`Agendar visita — ${project.name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose}>
+            Cancelar
+          </button>
+          <button type="button" className="btn btn--primary" onClick={handleSave} disabled={saving}>
+            {saving ? "A agendar…" : "Agendar visita"}
+          </button>
+        </>
+      }
+    >
+      {error && <Alert tone="danger">{error}</Alert>}
+      <div className="form-grid">
+        <div className="field span-2">
+          <label htmlFor="v-title">Título *</label>
+          <input id="v-title" className="input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+        </div>
+        <div className="field">
+          <label htmlFor="v-start">Início *</label>
+          <input id="v-start" className="input" type="datetime-local" value={form.starts_at} onChange={(e) => setForm({ ...form, starts_at: e.target.value })} />
+        </div>
+        <div className="field">
+          <label htmlFor="v-end">Fim *</label>
+          <input id="v-end" className="input" type="datetime-local" value={form.ends_at} onChange={(e) => setForm({ ...form, ends_at: e.target.value })} />
+        </div>
+      </div>
+      <p className="small muted">Horas de Lisboa. A visita fica como rascunho local no calendário (sem Outlook).</p>
     </Modal>
   );
 }
@@ -584,12 +669,14 @@ export default function MapPage() {
   const [selectedForRoute, setSelectedForRoute] = useState<Set<string>>(new Set());
   const [editingCoordinates, setEditingCoordinates] = useState<MapProject | null>(null);
   const [creatingTaskFor, setCreatingTaskFor] = useState<MapProject | null>(null);
+  const [schedulingFor, setSchedulingFor] = useState<MapProject | null>(null);
   const [creatingSupplier, setCreatingSupplier] = useState(false);
   const [creatingPickup, setCreatingPickup] = useState(false);
 
   const canManageSuppliers = can("supplier.manage");
   const canManagePickups = can("pickup_point.manage");
   const canCreateTasks = can("task.edit_all") || can("task.edit_own");
+  const canScheduleVisits = can("calendar.manage");
 
   function load() {
     setError(null);
@@ -878,6 +965,7 @@ export default function MapPage() {
                       {p.issues_count > 0 && ` · ${p.issues_count} pendência(s)`}
                       {p.operational_tasks_count > 0 && ` · ${p.operational_tasks_count} tarefa(s) operacional(is)`}
                       {p.material_visible && p.has_material_on_site && " · material no local"}
+                      {p.next_visit && ` · próxima visita ${formatDateTimePt(p.next_visit.starts_at)}`}
                     </div>
                   </div>
                   <Badge tone={PROJECT_STATUS_TONES[p.status as keyof typeof PROJECT_STATUS_TONES] ?? "neutral"}>
@@ -997,17 +1085,33 @@ export default function MapPage() {
           title="Detalhe"
           onClose={() => setSelected(null)}
           footer={
-            selected.kind === "project" && canCreateTasks ? (
-              <button
-                type="button"
-                className="btn btn--primary"
-                onClick={() => {
-                  setCreatingTaskFor(selected.item);
-                  setSelected(null);
-                }}
-              >
-                <Icon name="plus" size={14} /> Criar tarefa
-              </button>
+            selected.kind === "project" && (canCreateTasks || canScheduleVisits) ? (
+              <>
+                {canScheduleVisits && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      setSchedulingFor(selected.item);
+                      setSelected(null);
+                    }}
+                  >
+                    <Icon name="calendar" size={14} /> Agendar visita
+                  </button>
+                )}
+                {canCreateTasks && (
+                  <button
+                    type="button"
+                    className="btn btn--primary"
+                    onClick={() => {
+                      setCreatingTaskFor(selected.item);
+                      setSelected(null);
+                    }}
+                  >
+                    <Icon name="plus" size={14} /> Criar tarefa
+                  </button>
+                )}
+              </>
             ) : undefined
           }
         >
@@ -1053,6 +1157,18 @@ export default function MapPage() {
                     ? `Sim (${selected.item.material_sku_count} item(ns))`
                     : "Não"
                   : "Sem permissão para ver inventário"}
+              </dd>
+              <dt>Próxima visita</dt>
+              <dd>
+                {!selected.item.visits_visible
+                  ? "Sem permissão para ver o calendário"
+                  : selected.item.next_visit
+                    ? `${selected.item.next_visit.title} — ${formatDateTimePt(selected.item.next_visit.starts_at)}${
+                        selected.item.next_visit.assigned_to_display_name
+                          ? ` (${selected.item.next_visit.assigned_to_display_name})`
+                          : ""
+                      } · ${selected.item.upcoming_visits_count} agendada(s)`
+                    : "Nenhuma agendada"}
               </dd>
               <dt>Tarefas abertas (total)</dt>
               <dd>{selected.item.open_tasks_count}</dd>
@@ -1125,6 +1241,18 @@ export default function MapPage() {
             setCreatingTaskFor(null);
             notify("Tarefa criada.", "success");
             load(); // o attention do projeto pode ter mudado
+          }}
+        />
+      )}
+
+      {schedulingFor && (
+        <ScheduleVisitModal
+          project={schedulingFor}
+          onClose={() => setSchedulingFor(null)}
+          onDone={() => {
+            setSchedulingFor(null);
+            notify("Visita agendada.", "success");
+            load(); // a próxima visita do projeto pode ter mudado
           }}
         />
       )}

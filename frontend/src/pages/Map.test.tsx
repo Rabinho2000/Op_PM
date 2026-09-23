@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
   createPickupPoint: vi.fn(),
   updateProject: vi.fn(),
   createTask: vi.fn(),
+  createCalendarEvent: vi.fn(),
 }));
 
 vi.mock("../api/client", async () => {
@@ -46,6 +47,9 @@ function mapData(overrides: Partial<MapData> = {}): MapData {
         material_visible: true,
         has_material_on_site: false,
         material_sku_count: 0,
+        visits_visible: true,
+        upcoming_visits_count: 2,
+        next_visit: { id: "ev-1", title: "Visita técnica sintética", starts_at: "2099-03-10T10:00:00Z", ends_at: "2099-03-10T11:00:00Z", assigned_to_display_name: "PM Sintético" },
       },
     ],
     projects_without_coordinates: [
@@ -70,6 +74,9 @@ function mapData(overrides: Partial<MapData> = {}): MapData {
         material_visible: true,
         has_material_on_site: false,
         material_sku_count: 0,
+        visits_visible: true,
+        upcoming_visits_count: 0,
+        next_visit: null,
       },
     ],
     suppliers: [
@@ -218,6 +225,77 @@ describe("Mapa operacional", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^criar tarefa$/i }));
     expect(await screen.findByText("Indique o título da tarefa.")).toBeInTheDocument();
     expect(api.createTask).not.toHaveBeenCalled();
+  });
+
+  it("mostra a próxima visita e o número de visitas futuras no detalhe", async () => {
+    renderWithProviders(<MapPage />, { me: makeMe({ permissions: ["map.view"] }) });
+    fireEvent.click(await screen.findByRole("button", { name: "Instalação Sintética Um" }));
+    expect(await screen.findByText(/Visita técnica sintética — .*\(PM Sintético\) · 2 agendada\(s\)/)).toBeInTheDocument();
+  });
+
+  it("sem calendar.view mostra 'sem permissão' e nunca '0 visitas'", async () => {
+    api.getMapData.mockResolvedValue(
+      mapData({
+        projects: [
+          { ...mapData().projects[0], visits_visible: false, upcoming_visits_count: null, next_visit: null },
+        ],
+      })
+    );
+    renderWithProviders(<MapPage />, { me: makeMe({ permissions: ["map.view"] }) });
+    fireEvent.click(await screen.findByRole("button", { name: "Instalação Sintética Um" }));
+    expect(await screen.findByText("Sem permissão para ver o calendário")).toBeInTheDocument();
+    expect(screen.queryByText(/agendada\(s\)/)).not.toBeInTheDocument();
+  });
+
+  it("não oferece 'Agendar visita' sem calendar.manage", async () => {
+    renderWithProviders(<MapPage />, { me: makeMe({ permissions: ["map.view"] }) });
+    fireEvent.click(await screen.findByRole("button", { name: "Instalação Sintética Um" }));
+    await screen.findByText("Detalhe");
+    expect(screen.queryByRole("button", { name: /agendar visita/i })).not.toBeInTheDocument();
+  });
+
+  it("agenda uma visita com as horas de Lisboa convertidas para instantes com offset", async () => {
+    renderWithProviders(<MapPage />, { me: makeMe({ permissions: ["map.view", "calendar.manage"] }) });
+    fireEvent.click(await screen.findByRole("button", { name: "Instalação Sintética Um" }));
+    fireEvent.click(await screen.findByRole("button", { name: /agendar visita/i }));
+
+    fireEvent.change(await screen.findByLabelText("Início *"), { target: { value: "2099-07-15T09:00" } });
+    fireEvent.change(screen.getByLabelText("Fim *"), { target: { value: "2099-07-15T10:30" } });
+
+    api.createCalendarEvent.mockResolvedValue({});
+    api.getMapData.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /^agendar visita$/i }));
+
+    // Verão em Lisboa (UTC+1): 09:00 -> 08:00Z. Nunca uma string sem offset.
+    await waitFor(() =>
+      expect(api.createCalendarEvent).toHaveBeenCalledWith({
+        title: "Visita técnica",
+        starts_at: "2099-07-15T08:00:00.000Z",
+        ends_at: "2099-07-15T09:30:00.000Z",
+        project_id: "proj-1",
+      })
+    );
+    await waitFor(() => expect(api.getMapData).toHaveBeenCalled());
+  });
+
+  it("valida o intervalo e recusa visitas no passado", async () => {
+    renderWithProviders(<MapPage />, { me: makeMe({ permissions: ["map.view", "calendar.manage"] }) });
+    fireEvent.click(await screen.findByRole("button", { name: "Instalação Sintética Um" }));
+    fireEvent.click(await screen.findByRole("button", { name: /agendar visita/i }));
+
+    fireEvent.click(await screen.findByRole("button", { name: /^agendar visita$/i }));
+    expect(await screen.findByText("Indique título, início e fim.")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Início *"), { target: { value: "2099-07-15T10:00" } });
+    fireEvent.change(screen.getByLabelText("Fim *"), { target: { value: "2099-07-15T09:00" } });
+    fireEvent.click(screen.getByRole("button", { name: /^agendar visita$/i }));
+    expect(await screen.findByText("O fim tem de ser depois do início.")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Início *"), { target: { value: "2020-01-01T09:00" } });
+    fireEvent.change(screen.getByLabelText("Fim *"), { target: { value: "2020-01-01T10:00" } });
+    fireEvent.click(screen.getByRole("button", { name: /^agendar visita$/i }));
+    expect(await screen.findByText("Uma visita futura tem de começar no futuro.")).toBeInTheDocument();
+    expect(api.createCalendarEvent).not.toHaveBeenCalled();
   });
 
   it("filtra instalações por pesquisa", async () => {

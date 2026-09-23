@@ -101,3 +101,37 @@ export function formatDateTimePt(isoDateTime: string): string {
   if (Number.isNaN(date.getTime())) return isoDateTime;
   return date.toLocaleString("pt-PT", { timeZone: "Europe/Lisbon", dateStyle: "short", timeStyle: "short" });
 }
+
+// Converte a hora "de parede" de Lisboa (valor de um <input type="datetime-local">,
+// ex. "2026-07-15T09:00") no instante UTC correspondente, em ISO com offset
+// ("2026-07-15T08:00:00.000Z"). Independente do fuso do browser/runner e
+// correto no horário de Verão/Inverno — ao contrário de anexar ":00" a uma
+// string sem offset, que o JS interpreta na hora local de quem executa.
+const LISBON_WALL_CLOCK = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Europe/Lisbon",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+function lisbonOffsetMinutes(utcMs: number): number {
+  const parts = LISBON_WALL_CLOCK.formatToParts(new Date(utcMs));
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? "0");
+  const wallAsUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"));
+  return Math.round((wallAsUtc - Math.floor(utcMs / 60000) * 60000) / 60000);
+}
+
+export function lisbonWallClockToIso(local: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(local);
+  if (!match) throw new Error(`Data/hora inválida: ${local}`);
+  const [, y, mo, d, h, mi] = match.map(Number) as unknown as number[];
+  const asUtc = Date.UTC(y, mo - 1, d, h, mi);
+  // Duas passagens: a primeira aproxima com o offset de `asUtc`, a segunda
+  // corrige perto das mudanças de hora (último domingo de Março/Outubro).
+  const first = asUtc - lisbonOffsetMinutes(asUtc) * 60000;
+  const utc = asUtc - lisbonOffsetMinutes(first) * 60000;
+  return new Date(utc).toISOString();
+}

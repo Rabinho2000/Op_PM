@@ -1024,6 +1024,19 @@ export interface MapProject {
   material_visible: boolean;
   has_material_on_site: boolean | null;
   material_sku_count: number | null;
+  // Visitas futuras (calendário). `visits_visible=false` (sem calendar.view)
+  // => os dois campos ficam `null`, nunca "0 visitas". Não afetam attention.
+  visits_visible: boolean;
+  upcoming_visits_count: number | null;
+  next_visit: MapNextVisit | null;
+}
+
+export interface MapNextVisit {
+  id: string;
+  title: string;
+  starts_at: string;
+  ends_at: string;
+  assigned_to_display_name: string | null;
 }
 
 export interface MapSummary {

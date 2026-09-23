@@ -2200,3 +2200,48 @@ sobretudo as que mexem em stock): registar entrega/recolha de material (o ledger
 físico ainda não distingue "reservado" de "entregue no local" — dívida de D-058),
 visitas futuras, fornecedores no mapa com pedido, combinar vários trabalhos numa
 deslocação e otimização de rota. Gamificação fica fora.
+## D-062 — Mapa operacional, Fase F (2/n): visitas futuras
+
+Segunda funcionalidade da Fase F (a seguir a D-061), escolhida por reaproveitar
+o calendário já existente (D-055) e não mexer em stock.
+
+**Backend (`GET /api/map/data`):** cada projeto ganha `next_visit`
+(`{id, title, starts_at, ends_at, assigned_to_display_name}`),
+`upcoming_visits_count` e `visits_visible`. "Visita futura" = `CalendarEvent` do
+projeto, **não cancelado** e com início **no futuro**. Só a quem tem
+`calendar.view`; sem essa permissão os dois campos ficam `null` (nunca "0
+visitas" — mesma regra do material, D-058) e `visits_visible=false`. Não
+alteram `attention`: uma visita agendada não é dívida operacional.
+
+**Sem N+1:** +2 queries fixas, independentes do número de projetos (eventos de
+todos os projetos visíveis; nomes dos responsáveis das próximas visitas). O SQL só
+pré-filtra com 1 dia de margem e o corte exato "no futuro" faz-se em Python
+(`_as_aware`, assume UTC para datetimes sem tzinfo), porque o SQLite compara
+datetimes com e sem fuso de forma diferente do PostgreSQL. A próxima visita é
+determinística (início mais próximo; desempate por id). O scope continua a ser
+`visible_projects_query` — visitas de projetos fora dele nunca aparecem.
+
+**Frontend:** a lista mostra "próxima visita" por instalação; o detalhe mostra a
+próxima visita (com responsável) e o total agendado, ou "Sem permissão para ver o
+calendário". O botão **Agendar visita** (só com `calendar.manage`) abre
+`ScheduleVisitModal`, que cria um `CalendarEvent` via o `POST
+/api/planning/events` existente — o servidor valida permissão e âmbito. A visita
+fica como **rascunho local** (sem Outlook/Graph, D-010 mantém-se).
+
+**Fusos horários:** o formulário usa `datetime-local` (hora de parede de Lisboa) e
+converte com o novo `lisbonWallClockToIso` (`utils/dates.ts`) para um instante
+com offset, correto no horário de Verão/Inverno e nas mudanças de hora. Não
+repete o padrão de `Planning.tsx` (anexar `:00` a uma string sem offset, que o JS
+interpreta na hora local de quem executa — a causa da falha de CI em D-058/CI).
+Corrigir o `Planning.tsx` fica fora desta fatia, para não misturar âmbitos.
+
+**Testes:** +5 backend (`test_map_visits.py`: mais cedo + contagem exata;
+passadas/canceladas ignoradas; sem `calendar.view` => `null`; não altera
+`attention`; sem fuga de scope) — 411 no total (+2 skipped). +10 Vitest (5 do
+`lisbonWallClockToIso`, incluindo a mudança de hora de 29/03, e 5 de UI) — 108 no
+total. Validado no browser contra o seed real: agendar 15/07/2099 09:00 gravou
+`08:00Z`, contagem 1 -> 2, `attention` inalterado.
+
+**Fica para as fatias seguintes:** entrega/recolha de material (ledger ainda não
+distingue "reservado" de "entregue"), fornecedores no mapa com pedido, combinar
+trabalhos numa deslocação, otimização de rota.

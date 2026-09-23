@@ -13,6 +13,14 @@ class NextOperationalTaskRead(BaseModel):
     priority: str
 
 
+class NextVisitRead(BaseModel):
+    id: uuid.UUID
+    title: str
+    starts_at: dt.datetime
+    ends_at: dt.datetime
+    assigned_to_display_name: str | None = None
+
+
 class MapProjectRead(BaseModel):
     id: uuid.UUID
     name: str
@@ -44,6 +52,13 @@ class MapProjectRead(BaseModel):
     material_visible: bool = False
     has_material_on_site: bool | None = None
     material_sku_count: int | None = None
+
+    # Visitas futuras (calendário). `visits_visible=False` (sem calendar.view)
+    # => `upcoming_visits_count`/`next_visit` ficam sempre `null`, nunca
+    # "0 visitas". Não influenciam `attention`.
+    visits_visible: bool = False
+    upcoming_visits_count: int | None = None
+    next_visit: NextVisitRead | None = None
 
 
 class MapSupplierRead(BaseModel):

@@ -21,6 +21,7 @@ from decimal import Decimal
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
+from app.models.calendar import CalendarEvent
 from app.models.inventory import (
     MOVEMENT_CONSUMO,
     MOVEMENT_LIBERTA_RESERVA,
@@ -28,6 +29,7 @@ from app.models.inventory import (
     InventoryMovement,
 )
 from app.models.map_ops import PickupPoint, ProjectIssue
+from app.models.people import Person
 from app.models.project import Project
 from app.models.supplier import Supplier
 from app.models.task import (
@@ -54,6 +56,15 @@ class NextOperationalTask:
 
 
 @dataclasses.dataclass
+class NextVisit:
+    id: uuid.UUID
+    title: str
+    starts_at: dt.datetime
+    ends_at: dt.datetime
+    assigned_to_display_name: str | None
+
+
+@dataclasses.dataclass
 class MapProject:
     project: Project
     task_summary: ProjectTaskSummary
@@ -68,6 +79,53 @@ class MapProject:
     material_visible: bool
     has_material_on_site: bool | None
     material_sku_count: int | None
+    # Visitas futuras (calendário) — `visits_visible=False` (sem
+    # calendar.view) => os dois campos abaixo ficam `None`, nunca "0 visitas".
+    # Nunca influenciam `attention`: uma visita agendada não é dívida operacional.
+    visits_visible: bool = False
+    upcoming_visits_count: int | None = None
+    next_visit: NextVisit | None = None
+
+
+def _as_aware(value: dt.datetime) -> dt.datetime:
+    # SQLite devolve datetimes sem tzinfo mesmo em colunas timezone=True;
+    # assume UTC (o mesmo que o resto da app grava) para comparar sem erro.
+    return value if value.tzinfo is not None else value.replace(tzinfo=dt.timezone.utc)
+
+
+def _load_upcoming_visits_by_project(
+    db: Session, project_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[CalendarEvent]]:
+    """Uma única query para todos os projetos visíveis. O SQL só faz uma
+    pré-filtragem com 1 dia de margem (limita o crescimento com o histórico
+    de eventos passados sem depender de como cada motor compara datetimes com
+    e sem fuso); o corte exato "no futuro" é feito em Python."""
+    by_project: dict[uuid.UUID, list[CalendarEvent]] = defaultdict(list)
+    if not project_ids:
+        return by_project
+    now = dt.datetime.now(dt.timezone.utc)
+    rows = (
+        db.query(CalendarEvent)
+        .filter(
+            CalendarEvent.project_id.in_(project_ids),
+            CalendarEvent.status != "cancelado",
+            CalendarEvent.starts_at >= (now - dt.timedelta(days=1)).replace(tzinfo=None),
+        )
+        .all()
+    )
+    for event in rows:
+        if _as_aware(event.starts_at) >= now:
+            by_project[event.project_id].append(event)
+    for events in by_project.values():
+        # Determinístico: início mais próximo; desempate por id.
+        events.sort(key=lambda e: (_as_aware(e.starts_at), str(e.id)))
+    return by_project
+
+
+def _load_person_names(db: Session, person_ids: set[uuid.UUID]) -> dict[uuid.UUID, str]:
+    if not person_ids:
+        return {}
+    return {p.id: p.display_name for p in db.query(Person).filter(Person.id.in_(person_ids)).all()}
 
 
 def _load_tasks_by_project(db: Session, project_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[Task]]:
@@ -148,6 +206,21 @@ def _next_operational_task(tasks: list[Task]) -> NextOperationalTask | None:
     return NextOperationalTask(id=chosen.id, title=chosen.title, due_date=chosen.due_date, priority=chosen.priority)
 
 
+def _next_visit(events: list[CalendarEvent], assignee_names: dict[uuid.UUID, str]) -> NextVisit | None:
+    if not events:
+        return None
+    first = events[0]
+    return NextVisit(
+        id=first.id,
+        title=first.title,
+        starts_at=first.starts_at,
+        ends_at=first.ends_at,
+        assigned_to_display_name=assignee_names.get(first.assigned_to_person_id)
+        if first.assigned_to_person_id
+        else None,
+    )
+
+
 def _compute_attention(
     *, operational_open: list[Task], material_visible: bool, has_material_on_site: bool | None
 ) -> str:
@@ -181,6 +254,16 @@ def get_map_projects(db: Session, ctx: AuthContext) -> tuple[list[MapProject], l
     # resultado — evita trabalho e, sobretudo, nunca deixa o cálculo
     # depender de dados que o pedido não devolve (ver _compute_attention).
     material_sku_counts = _load_material_presence_by_project(db, project_ids) if material_visible else {}
+    visits_visible = ctx.has_permission("calendar.view")
+    visits_by_project = _load_upcoming_visits_by_project(db, project_ids) if visits_visible else {}
+    assignee_names = _load_person_names(
+        db,
+        {
+            events[0].assigned_to_person_id
+            for events in visits_by_project.values()
+            if events and events[0].assigned_to_person_id is not None
+        },
+    )
 
     with_coords: list[MapProject] = []
     without_coords: list[MapProject] = []
@@ -210,6 +293,9 @@ def get_map_projects(db: Session, ctx: AuthContext) -> tuple[list[MapProject], l
             material_visible=material_visible,
             has_material_on_site=has_material_on_site,
             material_sku_count=sku_count,
+            visits_visible=visits_visible,
+            upcoming_visits_count=len(visits_by_project.get(project.id, [])) if visits_visible else None,
+            next_visit=_next_visit(visits_by_project.get(project.id, []), assignee_names) if visits_visible else None,
         )
         if project.has_coordinates:
             with_coords.append(entry)
