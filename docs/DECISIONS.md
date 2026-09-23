@@ -2140,3 +2140,28 @@ lista própria), e clustering de pins (UI-3).
 Vitest no total (era 86). `npm run lint`/`build` sem erros; validado
 manualmente contra o seed real ("Atenção = Crítico" reduz a lista a 1
 instalação).
+
+## D-060 — Mapa operacional: clustering de pins (UI-3) e filtro por cliente
+
+Terceira e última fatia planeada da UI do mapa (a seguir a D-058/D-059).
+
+**Clustering:** `leaflet.markercluster@^1.5.3` (+ `@types/leaflet.markercluster`),
+o único plugin adicionado — compatível com Leaflet 1.9.4 e React 18.3, sem
+qualquer atualização de major. Só as **instalações** são agrupadas; fornecedores,
+recolhas e pendências ficam soltos (significados diferentes, poucos pontos).
+O ícone do cluster usa a **pior `attention` dos pins agrupados**
+(`clusterIcon` em `Map.tsx`, `var(--success|--warning|--danger)`), nunca as
+cores por omissão do plugin, que se confundiriam com o semáforo. Cada pin
+continua a abrir o mesmo painel de detalhe ao clicar.
+
+**Filtro por cliente** (`MapFilters.client`, correspondência exata, opções
+derivadas do payload). O atalho "só críticos" do plano não foi adicionado:
+**Atenção → Crítico** já faz exatamente isso.
+
+**Testes:** +1 em `mapFilters.test.ts` — 95 Vitest no total. O Leaflet não é
+testado em jsdom (decisão do plano); o clustering foi validado manualmente
+no browser com `MAP_PROVIDER_ENABLED=true` contra o seed real (cluster "2"
+cor de atenção; pins individuais nas cores do semáforo).
+
+Fora do MVP, por decisão do plano original (Fase F), mantém-se: criar
+tarefas a partir do mapa, movimentos de stock, visitas, otimização de rotas.
