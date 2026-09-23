@@ -18,9 +18,49 @@ lista completa enviada para o cliente filtrar):
   "projects_without_coordinates": [...],
   "suppliers": [...],
   "pickup_points": [...],
-  "issues": [...]
+  "issues": [...],
+  "summary": {
+    "visible_active_projects": 295, "mapped_projects": 187, "unmapped_projects": 108,
+    "map_coverage_percent": 63.4,
+    "green_projects": 150, "yellow_projects": 28, "red_projects": 9,
+    "operational_clean_percent": 50.8,
+    "projects_with_material": 6
+  }
 }
 ```
+
+### `attention` por projeto (green/yellow/red) — ver D-058
+
+Cada entrada em `projects`/`projects_without_coordinates` ganhou:
+`attention`, `operational_tasks_count`, `overdue_operational_tasks_count`,
+`blocked_operational_tasks_count`, `urgent_operational_tasks_count`,
+`next_operational_task` (`{id, title, due_date, priority}` ou `null`),
+`material_visible`, `has_material_on_site` (`bool | null`),
+`material_sku_count` (`int | null`).
+
+Nunca persistido — calculado sempre a partir de `Task.category`
+(`app/models/task.py`: `workflow|field|material|documentation|commercial|other`)
+e, quando `inventory.view`, do saldo reservado de inventário. Só
+`OPERATIONAL_TASK_CATEGORIES` (`field`/`material`) conta para o
+semáforo — uma tarefa `workflow`/`documentation` aberta nunca muda
+`attention`. `red` = tarefa operacional aberta `blocked`, `urgent`, ou
+atrasada (`Europe/Lisbon`); `yellow` = tarefa operacional aberta, ou
+material físico visível no local; `green` = nenhuma das anteriores. Sem
+`inventory.view`, `has_material_on_site`/`material_sku_count` ficam
+sempre `null` (nunca `false`) — material nunca influencia `attention`
+para quem não o pode ver. Ver `docs/DECISIONS.md` D-058 para o detalhe
+completo (incluindo a correção de N+1 já existente neste endpoint) e
+`backend/tests/test_map_attention.py` para os casos testados.
+
+**UI implementada (D-058 addendum):** `frontend/src/pages/Map.tsx` colore
+os pins e o indicador de cada instalação na lista por `attention`
+(`var(--success)`/`var(--warning)`/`var(--danger)` — nunca recalculado no
+frontend, só apresentado), mostra a barra de resumo (`summary`) no topo
+da página (cobertura de coordenadas, estado operacional limpo, projetos
+em atenção/críticos), e o painel de detalhe de cada instalação lista
+tarefas operacionais (com contagem de atrasadas/bloqueadas/urgentes),
+próxima ação, e material (ou "sem permissão para ver inventário" quando
+`material_visible=false`).
 
 - `config.provider_enabled` reflete `MAP_PROVIDER_ENABLED` (`backend/.env`).
   Sem provider configurado, o endpoint continua a devolver todos os

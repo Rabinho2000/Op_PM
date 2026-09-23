@@ -15,10 +15,13 @@ from app.audit.log import record_task_change
 from app.models.people import Person
 from app.models.project import Project
 from app.models.task import (
+    DEFAULT_TASK_TYPE_CATEGORIES,
     DEFAULT_TASK_TYPES,
     OPEN_TASK_STATUSES,
     STATUS_DONE,
     STATUS_TODO,
+    TASK_CATEGORIES,
+    TASK_CATEGORY_OTHER,
     TASK_PRIORITIES,
     TASK_STATUSES,
     Task,
@@ -64,7 +67,10 @@ def ensure_default_tasks_for_project(db: Session, project: Project) -> list[Task
     for task_type, title in DEFAULT_TASK_TYPES:
         if task_type in existing_types:
             continue
-        task = Task(project_id=project.id, title=title, task_type=task_type, status=STATUS_TODO)
+        category = DEFAULT_TASK_TYPE_CATEGORIES.get(task_type, TASK_CATEGORY_OTHER)
+        task = Task(
+            project_id=project.id, title=title, task_type=task_type, status=STATUS_TODO, category=category
+        )
         db.add(task)
         created.append(task)
     return created
@@ -129,6 +135,8 @@ def create_task(db: Session, *, changes: TaskCreate, ctx: AuthContext) -> Task:
         raise PermissionDenied("task.edit_all|task.edit_own")
     if changes.priority not in TASK_PRIORITIES:
         raise ValueError(f"Prioridade inválida: {changes.priority!r}")
+    if changes.category not in TASK_CATEGORIES:
+        raise ValueError(f"Categoria inválida: {changes.category!r}")
 
     assigned_to_person_id = changes.assigned_to_person_id
     if ctx.has_permission("task.edit_all"):
@@ -147,6 +155,7 @@ def create_task(db: Session, *, changes: TaskCreate, ctx: AuthContext) -> Task:
         task_type=changes.task_type,
         description=changes.description,
         priority=changes.priority,
+        category=changes.category,
         assigned_to_person_id=assigned_to_person_id,
         due_date=changes.due_date,
         notes=changes.notes,
@@ -173,6 +182,9 @@ def update_task(db: Session, *, task: Task, changes: TaskUpdate, ctx: AuthContex
 
     if "priority" in changed_fields and changed_fields["priority"] not in TASK_PRIORITIES:
         raise ValueError(f"Prioridade inválida: {changed_fields['priority']!r}")
+
+    if "category" in changed_fields and changed_fields["category"] not in TASK_CATEGORIES:
+        raise ValueError(f"Categoria inválida: {changed_fields['category']!r}")
 
     if "assigned_to_person_id" in changed_fields:
         new_assignee = changed_fields["assigned_to_person_id"]

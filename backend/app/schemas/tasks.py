@@ -16,6 +16,7 @@ class TaskRead(BaseModel):
     description: str
     status: str
     priority: str
+    category: str
     assigned_to_person_id: uuid.UUID | None
     due_date: dt.date | None
     completed_at: dt.datetime | None
@@ -41,6 +42,7 @@ class TaskCreate(BaseModel):
     task_type: str = "custom"
     description: str = ""
     priority: str = "medium"
+    category: str = "other"
     assigned_to_person_id: uuid.UUID | None = None
     due_date: dt.date | None = None
     notes: str = ""
@@ -58,6 +60,7 @@ class TaskUpdate(BaseModel):
     description: str | None = None
     status: str | None = None
     priority: str | None = None
+    category: str | None = None
     assigned_to_person_id: uuid.UUID | None = None
     due_date: dt.date | None = None
     notes: str | None = None

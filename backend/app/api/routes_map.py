@@ -19,7 +19,9 @@ from app.schemas.map import (
     MapDataResponse,
     MapPickupPointRead,
     MapProjectRead,
+    MapSummaryRead,
     MapSupplierRead,
+    NextOperationalTaskRead,
     PickupPointCreate,
     PickupPointUpdate,
     ProjectIssueCreate,
@@ -39,6 +41,7 @@ from app.security.permissions import (
     can_view_project_issue,
 )
 from app.services.map import (
+    compute_map_summary,
     convert_issue_to_task,
     create_project_issue,
     get_map_projects,
@@ -48,7 +51,7 @@ from app.services.map import (
     list_project_issues,
     update_project_issue,
 )
-from app.services.projects import compute_project_task_summary, get_visible_project
+from app.services.projects import get_visible_project
 
 router = APIRouter(tags=["map"])
 
@@ -58,20 +61,37 @@ def _require_map_view(ctx: AuthContext) -> None:
         raise HTTPException(status_code=403, detail="Sem permissão para ver o mapa operacional.")
 
 
-def _map_project_read(db: Session, entry) -> MapProjectRead:
+def _map_project_read(entry) -> MapProjectRead:
     project = entry.project
-    summary = compute_project_task_summary(db, project.id)
+    next_task = None
+    if entry.next_operational_task is not None:
+        next_task = NextOperationalTaskRead(
+            id=entry.next_operational_task.id,
+            title=entry.next_operational_task.title,
+            due_date=entry.next_operational_task.due_date,
+            priority=entry.next_operational_task.priority,
+        )
     return MapProjectRead(
         id=project.id,
         name=project.name,
         client_name=project.client_name,
+        pm_person_id=project.pm_person_id,
         pm_display_name=project.pm.display_name if project.pm else None,
-        status=summary.status,
+        status=entry.task_summary.status,
         lat=project.lat,
         lon=project.lon,
         power_kwp=project.power_kwp,
         open_tasks_count=entry.open_tasks_count,
         issues_count=entry.issues_count,
+        attention=entry.attention,
+        operational_tasks_count=entry.operational_tasks_count,
+        overdue_operational_tasks_count=entry.overdue_operational_tasks_count,
+        blocked_operational_tasks_count=entry.blocked_operational_tasks_count,
+        urgent_operational_tasks_count=entry.urgent_operational_tasks_count,
+        next_operational_task=next_task,
+        material_visible=entry.material_visible,
+        has_material_on_site=entry.has_material_on_site,
+        material_sku_count=entry.material_sku_count,
     )
 
 
@@ -90,17 +110,30 @@ def get_map_data_endpoint(
         data.project_name = issue.project.name if issue.project else None
         issue_reads.append(data)
 
+    summary = compute_map_summary(with_coords, without_coords)
+
     return MapDataResponse(
         config=MapConfig(
             provider_enabled=settings.map_provider_enabled,
             tile_url=settings.map_tile_url,
             tile_attribution=settings.map_tile_attribution,
         ),
-        projects=[_map_project_read(db, e) for e in with_coords],
-        projects_without_coordinates=[_map_project_read(db, e) for e in without_coords],
+        projects=[_map_project_read(e) for e in with_coords],
+        projects_without_coordinates=[_map_project_read(e) for e in without_coords],
         suppliers=[MapSupplierRead.model_validate(s) for s in get_visible_suppliers(db)],
         pickup_points=[MapPickupPointRead.model_validate(p) for p in get_visible_pickup_points(db)],
         issues=issue_reads,
+        summary=MapSummaryRead(
+            visible_active_projects=summary.visible_active_projects,
+            mapped_projects=summary.mapped_projects,
+            unmapped_projects=summary.unmapped_projects,
+            map_coverage_percent=summary.map_coverage_percent,
+            green_projects=summary.green_projects,
+            yellow_projects=summary.yellow_projects,
+            red_projects=summary.red_projects,
+            operational_clean_percent=summary.operational_clean_percent,
+            projects_with_material=summary.projects_with_material,
+        ),
     )
 
 

@@ -54,6 +54,9 @@ from app.models.task import (
     STATUS_CANCELLED,
     STATUS_DONE,
     STATUS_IN_PROGRESS,
+    STATUS_TODO,
+    TASK_CATEGORY_FIELD,
+    TASK_CATEGORY_MATERIAL,
     TASK_TYPE_COMISSIONAMENTO,
     TASK_TYPE_FOTOS_DRIVE,
     TASK_TYPE_INSTALACAO,
@@ -279,7 +282,22 @@ def seed_sample_projects(db: Session) -> None:
     app/services/tasks.py:ensure_default_tasks_for_project) em estados
     diferentes, para a página inicial ficar demonstrável logo depois de
     correr o seed (todos os indicadores do dashboard têm pelo menos um
-    resultado)."""
+    resultado).
+
+    Cobre também os 5 cenários do mapa operacional (attention — ver
+    docs/DECISIONS.md D-058), sem projetos dedicados extra:
+    - green: "Instalação Sintética F — PM Legado" (sem tarefa field/
+      material aberta).
+    - yellow (tarefa operacional): "Instalação Sintética A — Início
+      Próximo" (tarefa category=field aberta, sem atraso).
+    - red (tarefa operacional atrasada): "Instalação Sintética B —
+      Atrasada" (tarefa category=material, aberta e atrasada).
+    - yellow (material físico, sem tarefa operacional):
+      "Instalação Sintética de Demonstração" (reserva de cabo já
+      existente via seed_map_and_inventory — só visível com
+      inventory.view).
+    - sem coordenadas: "Instalação Sintética Incompleta" (lat/lon=None).
+    """
     if db.query(Project).count() > 0:
         return
     today = dt.date.today()
@@ -424,6 +442,23 @@ def seed_sample_projects(db: Session) -> None:
     starting_soon_tasks = _tasks_by_type(ensure_default_tasks_for_project(db, starting_soon))
     starting_soon_tasks[TASK_TYPE_VISITA_TECNICA].due_date = today + dt.timedelta(days=18)
     starting_soon_tasks[TASK_TYPE_VISITA_TECNICA].assigned_to_person_id = pm_um.id
+    # Tarefa operacional (category=field) aberta, sem atraso/bloqueio/
+    # urgência — demonstra attention='yellow' no mapa operacional (D-058)
+    # só por existir dívida de campo, distinta do cenário de material.
+    db.add(
+        Task(
+            project_id=starting_soon.id,
+            title="Verificar acesso ao telhado antes da visita técnica",
+            task_type="custom",
+            category=TASK_CATEGORY_FIELD,
+            description="Tarefa sintética de campo — confirma attention='yellow' no mapa (D-058).",
+            status=STATUS_TODO,
+            priority="medium",
+            due_date=today + dt.timedelta(days=20),
+            assigned_to_person_id=pm_um.id,
+            created_by_person_id=chefe.id,
+        )
+    )
 
     overdue_tasks = _tasks_by_type(ensure_default_tasks_for_project(db, overdue_project))
     overdue_tasks[TASK_TYPE_VISITA_TECNICA].status = STATUS_DONE
@@ -433,6 +468,25 @@ def seed_sample_projects(db: Session) -> None:
     overdue_tasks[TASK_TYPE_PREPARACAO_INSTALACAO].assigned_to_person_id = pm_um.id
     overdue_tasks[TASK_TYPE_INSTALACAO].status = STATUS_BLOCKED
     overdue_tasks[TASK_TYPE_INSTALACAO].notes = "Bloqueado à espera de material sintético."
+    # Tarefa operacional (category=material) atrasada — demonstra
+    # attention='red' no mapa operacional (D-058): tarefa field/material
+    # aberta e atrasada (Europe/Lisbon). A tarefa de workflow acima
+    # (INSTALACAO, bloqueada) nunca conta para attention por desenho —
+    # só field/material contam.
+    db.add(
+        Task(
+            project_id=overdue_project.id,
+            title="Recolher módulos sintéticos em falta no armazém",
+            task_type="custom",
+            category=TASK_CATEGORY_MATERIAL,
+            description="Tarefa sintética de material, atrasada — confirma attention='red' no mapa (D-058).",
+            status=STATUS_TODO,
+            priority="high",
+            due_date=today - dt.timedelta(days=3),
+            assigned_to_person_id=pm_um.id,
+            created_by_person_id=chefe.id,
+        )
+    )
 
     photos_tasks = _tasks_by_type(ensure_default_tasks_for_project(db, photos_pending_project))
     for task_type in (TASK_TYPE_VISITA_TECNICA, TASK_TYPE_PREPARACAO_INSTALACAO, TASK_TYPE_INSTALACAO):

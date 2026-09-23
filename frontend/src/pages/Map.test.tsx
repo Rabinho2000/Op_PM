@@ -28,6 +28,7 @@ function mapData(overrides: Partial<MapData> = {}): MapData {
         id: "proj-1",
         name: "Instalação Sintética Um",
         client_name: "Cliente Sintético",
+        pm_person_id: "pm-1",
         pm_display_name: "PM Sintético",
         status: "em_curso",
         lat: 38.7,
@@ -35,6 +36,15 @@ function mapData(overrides: Partial<MapData> = {}): MapData {
         power_kwp: 10,
         open_tasks_count: 2,
         issues_count: 1,
+        attention: "yellow",
+        operational_tasks_count: 1,
+        overdue_operational_tasks_count: 0,
+        blocked_operational_tasks_count: 0,
+        urgent_operational_tasks_count: 0,
+        next_operational_task: { id: "task-1", title: "Recolher material sintético", due_date: "2026-10-01", priority: "medium" },
+        material_visible: true,
+        has_material_on_site: false,
+        material_sku_count: 0,
       },
     ],
     projects_without_coordinates: [
@@ -42,6 +52,7 @@ function mapData(overrides: Partial<MapData> = {}): MapData {
         id: "proj-2",
         name: "Instalação Sem Coordenadas",
         client_name: null,
+        pm_person_id: null,
         pm_display_name: null,
         status: "planeado",
         lat: null,
@@ -49,6 +60,15 @@ function mapData(overrides: Partial<MapData> = {}): MapData {
         power_kwp: null,
         open_tasks_count: 0,
         issues_count: 0,
+        attention: "green",
+        operational_tasks_count: 0,
+        overdue_operational_tasks_count: 0,
+        blocked_operational_tasks_count: 0,
+        urgent_operational_tasks_count: 0,
+        next_operational_task: null,
+        material_visible: true,
+        has_material_on_site: false,
+        material_sku_count: 0,
       },
     ],
     suppliers: [
@@ -102,6 +122,17 @@ function mapData(overrides: Partial<MapData> = {}): MapData {
         project_name: "Instalação Sintética Um",
       },
     ],
+    summary: {
+      visible_active_projects: 4,
+      mapped_projects: 3,
+      unmapped_projects: 1,
+      map_coverage_percent: 75,
+      green_projects: 2,
+      yellow_projects: 1,
+      red_projects: 1,
+      operational_clean_percent: 50,
+      projects_with_material: 0,
+    },
     ...overrides,
   };
 }
@@ -119,6 +150,16 @@ describe("Mapa operacional", () => {
     expect(screen.getByRole("button", { name: /^Fornecedor Sintético/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Ponto de Recolha Sintético/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Acesso bloqueado ao telhado/ })).toBeInTheDocument();
+  });
+
+  it("mostra o resumo (summary) e o estado de attention de cada projeto, sem recalcular no frontend", async () => {
+    renderWithProviders(<MapPage />, { me: makeMe({ permissions: ["map.view"] }) });
+    await screen.findByRole("button", { name: "Instalação Sintética Um" });
+
+    // Resumo vem sempre de data.summary — nunca calculado a partir das listas.
+    expect(screen.getByText("75%", { selector: ".stat__value" })).toBeInTheDocument();
+    expect(screen.getByText("50%", { selector: ".stat__value" })).toBeInTheDocument();
+    expect(screen.getAllByText(/^Atenção$|^Crítico$/).length).toBeGreaterThan(0);
   });
 
   it("filtra instalações por pesquisa", async () => {
