@@ -53,8 +53,8 @@ trabalhos urgentes), entidade `Task` genérica (checklist padrão de 5 tarefas p
 projeto + tarefas ad-hoc, máquina de estados, histórico), férias/ausências
 (`Absence`), e o aviso persistente de fotos por colocar na Drive quando visita
 técnica/comissionamento é concluído — ver `docs/DECISIONS.md` D-039 a D-047.
-436 testes automatizados de backend a passar (+2 skipped) em SQLite (e em
-PostgreSQL, ver abaixo) + 117 testes Vitest no frontend. Sem integrações
+465 testes automatizados de backend a passar (+2 skipped) em SQLite (e em
+PostgreSQL, ver abaixo) + 124 testes Vitest no frontend. Sem integrações
 externas reais ligadas (Claude, Microsoft
 Graph, ClickUp, Financial); sem migração de dados reais (os 295 projetos reais
 continuam por migrar); sem envio de email ou criação de eventos reais; sem
@@ -131,8 +131,8 @@ de notas iniciais (arrastar HTML/JSON, preview, conflitos por campo,
 confirmação, auditoria — `/projects/import`) e importador de
 licenciamento via Excel (`python -m app.cli.import_licensing`,
 `--dry-run`/`--apply`/`--rollback`, nunca via UI), ver
-[`docs/DATA_IMPORTS.md`](docs/DATA_IMPORTS.md). 436 testes de backend
-(+2 skipped) e 117 testes Vitest no frontend.
+[`docs/DATA_IMPORTS.md`](docs/DATA_IMPORTS.md). 465 testes de backend
+(+2 skipped) e 124 testes Vitest no frontend.
 
 Documentação:
 
@@ -275,8 +275,9 @@ omissão) — depois:
   projeto — ver `docs/INVENTORY_RULES.md`.
 - **Mapa** (`/map`): instalações, fornecedores, pontos de recolha e
   pendências — mapa visual (Leaflet) quando há um provider de tiles
-  configurado, ou lista funcional sempre que não há; seleção múltipla + link
-  de rota externa, sem otimização automática — ver `docs/MAP_AND_PLANNING.md`.
+  configurado, ou lista funcional sempre que não há; seleção múltipla, link
+  de rota externa e **otimização da ordem das paragens** (distância em linha
+  reta, sem serviço externo — D-065) — ver `docs/MAP_AND_PLANNING.md`.
 - **Planeamento** (`/planning`): calendário de visitas/comissionamentos —
   vistas de semana/mês/lista, filtros todos/meus/por PM/por projeto/por
   responsável, aviso (não bloqueante) de sobreposição de horário — sempre

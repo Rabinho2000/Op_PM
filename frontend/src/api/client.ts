@@ -1127,6 +1127,35 @@ export interface MapData {
 
 export const getMapData = () => apiGet<MapData>("/api/map/data");
 
+// Otimização da ordem de paragens (D-065). Distância em LINHA RETA (grande
+// círculo) — aproximação, nunca quilómetros de condução. A primeira paragem é
+// o ponto de partida; o servidor resolve coordenadas e visibilidade.
+export type RouteStopKind = "project" | "supplier" | "pickup";
+
+export interface RouteStop {
+  kind: RouteStopKind;
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  leg_km: number;
+  cumulative_km: number;
+}
+
+export interface RouteOptimization {
+  stops: RouteStop[];
+  return_leg_km: number | null;
+  round_trip: boolean;
+  total_km: number;
+  requested_order_km: number;
+  saved_km: number;
+  method: "exact" | "heuristic";
+  distance_model: "great_circle";
+}
+
+export const optimizeRoute = (stops: { kind: RouteStopKind; id: string }[], roundTrip: boolean) =>
+  apiPost<RouteOptimization>("/api/map/optimize-route", { stops, round_trip: roundTrip });
+
 export const listSuppliers = () => apiGet<MapSupplier[]>("/api/suppliers");
 export const createSupplier = (payload: Partial<MapSupplier> & { name: string }) =>
   apiPost<MapSupplier>("/api/suppliers", payload);

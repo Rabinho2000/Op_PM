@@ -22,7 +22,10 @@ import {
   MapPickupPoint,
   MapProject,
   MapSupplier,
+  optimizeRoute,
   ProjectIssue,
+  RouteOptimization,
+  RouteStopKind,
   TASK_CATEGORY_LABELS,
   TASK_PRIORITY_LABELS,
   TaskCategory,
@@ -667,6 +670,16 @@ export default function MapPage() {
   });
   const [selected, setSelected] = useState<SelectedItem | null>(null);
   const [selectedForRoute, setSelectedForRoute] = useState<Set<string>>(new Set());
+  const [routeRoundTrip, setRouteRoundTrip] = useState(false);
+  const [optimizedRoute, setOptimizedRoute] = useState<RouteOptimization | null>(null);
+  const [optimizingRoute, setOptimizingRoute] = useState(false);
+  const [routeError, setRouteError] = useState<string | null>(null);
+
+  // Uma rota otimizada só vale para a seleção e a opção com que foi calculada.
+  useEffect(() => {
+    setOptimizedRoute(null);
+    setRouteError(null);
+  }, [selectedForRoute, routeRoundTrip]);
   const [editingCoordinates, setEditingCoordinates] = useState<MapProject | null>(null);
   const [creatingTaskFor, setCreatingTaskFor] = useState<MapProject | null>(null);
   const [schedulingFor, setSchedulingFor] = useState<MapProject | null>(null);
@@ -757,9 +770,30 @@ export default function MapPage() {
     });
   }
 
+  async function handleOptimizeRoute() {
+    setOptimizingRoute(true);
+    setRouteError(null);
+    try {
+      // A ordem de seleção é a ordem pedida; a primeira paragem é a partida.
+      const stops = Array.from(selectedForRoute).map((key) => {
+        const [kind, id] = key.split(":");
+        return { kind: kind as RouteStopKind, id };
+      });
+      setOptimizedRoute(await optimizeRoute(stops, routeRoundTrip));
+    } catch (err) {
+      setRouteError(err instanceof ApiError ? err.detail : "Não foi possível otimizar a rota.");
+    } finally {
+      setOptimizingRoute(false);
+    }
+  }
+
   function openExternalRoute() {
     const coords: string[] = [];
-    for (const key of selectedForRoute) {
+    if (optimizedRoute) {
+      // Usa exatamente a ordem calculada pelo servidor.
+      for (const stop of optimizedRoute.stops) coords.push(`${stop.lat},${stop.lon}`);
+    }
+    for (const key of optimizedRoute ? [] : selectedForRoute) {
       const [type, id] = key.split(":");
       if (type === "project") {
         const p = data?.projects.find((x) => x.id === id);
@@ -776,6 +810,8 @@ export default function MapPage() {
       notify("Selecione pelo menos dois locais para abrir uma rota.", "error");
       return;
     }
+    // Com regresso, a rota fecha no ponto de partida.
+    if (routeRoundTrip) coords.push(coords[0]);
     const destination = coords[coords.length - 1];
     const waypoints = coords.slice(0, -1).join("|");
     const url = `https://www.google.com/maps/dir/?api=1&destination=${destination}&waypoints=${encodeURIComponent(waypoints)}`;
@@ -1001,12 +1037,50 @@ export default function MapPage() {
           <Card title="Rota externa" icon="mapPin" tone="violet" flush>
             <div style={{ padding: 16 }}>
               <p className="small muted" style={{ marginTop: 0 }}>
-                Selecione locais na lista (caixas de verificação) e abra a rota num serviço externo. Sem otimização
-                automática — a ordem escolhida é a ordem de seleção.
+                Selecione locais na lista (caixas de verificação). A <strong>primeira</strong> paragem selecionada é o
+                ponto de partida. Pode abrir a rota num serviço externo pela ordem escolhida, ou otimizar a ordem primeiro.
               </p>
-              <button type="button" className="btn btn--sm" onClick={openExternalRoute} disabled={selectedForRoute.size < 2}>
-                <Icon name="mapPin" size={14} /> Abrir rota ({selectedForRoute.size})
-              </button>
+              <label className="checkbox small" style={{ marginBottom: 8 }}>
+                <input type="checkbox" checked={routeRoundTrip} onChange={(e) => setRouteRoundTrip(e.target.checked)} />
+                Voltar ao ponto de partida
+              </label>
+              {routeError && <Alert tone="danger">{routeError}</Alert>}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  onClick={handleOptimizeRoute}
+                  disabled={selectedForRoute.size < 2 || optimizingRoute}
+                >
+                  <Icon name="refresh" size={14} /> {optimizingRoute ? "A otimizar…" : "Otimizar ordem"}
+                </button>
+                <button type="button" className="btn btn--sm" onClick={openExternalRoute} disabled={selectedForRoute.size < 2}>
+                  <Icon name="mapPin" size={14} /> Abrir rota ({selectedForRoute.size})
+                </button>
+              </div>
+              {optimizedRoute && (
+                <div style={{ marginTop: 12 }} aria-label="Rota otimizada">
+                  <p className="small" style={{ margin: "0 0 6px" }}>
+                    <strong>{optimizedRoute.total_km} km</strong> em linha reta
+                    {optimizedRoute.saved_km > 0
+                      ? ` — menos ${optimizedRoute.saved_km} km do que a ordem escolhida (${optimizedRoute.requested_order_km} km).`
+                      : " — a ordem escolhida já era a mais curta."}{" "}
+                    {optimizedRoute.method === "exact" ? "Ordem ótima." : "Boa ordem, mas não garantidamente a ótima."}
+                  </p>
+                  <ol className="small" style={{ margin: 0, paddingLeft: 18 }}>
+                    {optimizedRoute.stops.map((stop, index) => (
+                      <li key={`${stop.kind}:${stop.id}`}>
+                        {stop.name}
+                        {index === 0 ? " (partida)" : ` — +${stop.leg_km} km`}
+                      </li>
+                    ))}
+                    {optimizedRoute.return_leg_km !== null && <li>Regresso à partida — +{optimizedRoute.return_leg_km} km</li>}
+                  </ol>
+                  <p className="small muted" style={{ margin: "6px 0 0" }}>
+                    Distâncias em linha reta (aproximação) — não são quilómetros de condução.
+                  </p>
+                </div>
+              )}
             </div>
           </Card>
 
