@@ -1649,3 +1649,328 @@ sintaticamente (`ci.yml` e `docker-compose.staging.example.yml`
 carregados com PyYAML sem erro); o novo job `docker-build` do CI corre
 isto a sério no GitHub Actions (que tem Docker disponível), a confirmar
 quando o CI remoto correr.
+
+## D-051 — MVP de demonstração: interface nova, arranque num comando, modo demo só em `local`
+
+**Pedido:** uma demonstração visualmente desenvolvida, em português de
+Portugal, que qualquer pessoa consiga levantar com um comando e dados
+sintéticos, sem Entra ID, alojamento, Graph, Claude, Financial nem dados
+reais. Guia operacional: `docs/MVP_DEMO.md`.
+
+**Decisões:**
+
+1. **Interface sem biblioteca de UI externa.** Design system próprio em
+   `frontend/src/styles/app.css` (tokens de cor com contraste AA, sidebar,
+   cartões, tabelas, badges, barras de progresso, alertas, estados de
+   carregamento/vazio/erro, modais, notificações) e ícones SVG inline
+   (`src/components/Icon.tsx`). Nenhuma dependência nova no
+   `package.json` — menos superfície de ataque, funciona offline, sem
+   fontes remotas. Responsivo: sidebar completa em desktop, compacta
+   (só ícones) em tablet, gaveta em ecrãs estreitos; ligação "saltar para
+   o conteúdo", foco visível, separadores com setas, modais com Escape e
+   foco contido.
+2. **Indicadores sempre da API.** O painel apresenta só o que
+   `GET /api/dashboard/summary` devolve. Dois campos aditivos no
+   servidor: `projects_photos_pending` (mesma regra de D-043, via
+   `compute_project_task_summary`) e `week_overview` (por dia da semana
+   em Europe/Lisbon: tarefas abertas com prazo, tarefas concluídas,
+   pessoas ausentes). "Ausentes hoje"/"próximas" na página de férias
+   também vêm do dashboard.
+3. **Permissões efetivas expostas por recurso, não deduzidas no
+   cliente.** `ProjectRead.editable_fields` (mesma regra de D-028/D-035:
+   todos os campos com `project.edit_all`, só a allowlist PM com
+   `project.edit_own_progress` no próprio projeto, nada caso contrário),
+   `ProjectRead.can_manage_tasks`, `TaskRead.can_edit` e
+   `AbsenceRead.can_cancel`. A UI só mostra o que estes campos permitem;
+   o servidor continua a validar cada escrita (nenhuma regra de
+   autorização mudou). `/me` ganha `display_name` e `role_labels`.
+4. **Filtros novos no servidor, não no cliente:** `GET /api/projects`
+   aceita `status` (derivado das tarefas, filtrado depois do cálculo —
+   nunca uma segunda regra), `start_from`, `start_to`;
+   `GET /api/tasks` aceita `priority`.
+5. **`DEMO_MODE` (omissão `false`)** — informativo (banner na UI,
+   `/health.demo_mode`), mas **bloqueia o arranque em staging/produção**
+   (`_enforce_hardening_in_non_local_envs`), tal como `AUTH_ENABLED=false`
+   ou SQLite. `/health` expõe também `dev_login_available`
+   (`APP_ENV` local/test e `AUTH_ENABLED=false`); o ecrã de login só
+   mostra os utilizadores de demonstração quando o build o permite
+   (`devLoginEnabled`) **e** o servidor o confirma — contra staging/
+   produção a secção nunca aparece, e uma sessão de demonstração antiga é
+   descartada.
+6. **Seed de demonstração separado do seed de desenvolvimento.**
+   `app/migration/seed_demo.py` só acrescenta (14 projetos, 2 técnicos
+   sem login, ausências, histórico), nunca altera os dados de
+   `seed_dev.py` de que os testes dependem, nunca cria `User` (continuam
+   5 — D-003), é idempotente (projeto marcador) e gera datas relativas a
+   hoje. `app/cli/demo.py` (`setup` = `alembic upgrade head` + seeds;
+   `reset --yes` = `downgrade base` + `upgrade head` + seeds) recusa
+   qualquer `APP_ENV` que não seja `local` — mais restrito do que o seed
+   de desenvolvimento (que também aceita `test`), antes de tocar na base
+   de dados. Nunca imprime a password do `DATABASE_URL`.
+7. **Docker da demo sem tocar nas imagens de staging.**
+   `docker-compose.demo.yml` reutiliza `backend/Dockerfile` (migrações e
+   seed num serviço `demo-setup` explícito que termina antes de o
+   `backend` arrancar — mesmo princípio de D-050: migrações nunca no
+   arranque da app) e usa um `frontend/Dockerfile.demo` próprio
+   (`VITE_ENABLE_DEV_LOGIN=true`, API na mesma origem via
+   `docker/nginx.demo.conf`). `frontend/Dockerfile` continua a fixar
+   `VITE_ENABLE_DEV_LOGIN=false`. SQLite num volume próprio — PostgreSQL
+   não é necessário para a demonstração. Portas publicadas só em
+   `127.0.0.1`. Alternativa sem Docker: `scripts/demo_local.py`
+   (Windows/Linux/macOS).
+8. **CI:** `docker-build` constrói também `Dockerfile.demo`; job novo
+   `demo-smoke` arranca a composição e verifica frontend, `/health`,
+   painel com dados sintéticos, 401 sem sessão e idempotência do seed ao
+   recriar os containers.
+
+**Validado nesta máquina:** backend 291 passed + 2 skipped (SQLite, 25
+testes novos em `tests/test_demo_mvp.py`); frontend `npm run lint`,
+`npm test` (53 testes, 35 novos) e `npm run build`; migrações
+round-trip (`upgrade head` → `downgrade base` → `upgrade head`) e
+`alembic check` sem diferenças; `app.cli.demo setup/reset`; aplicação
+percorrida no browser como Chefe, PM e Comercial (desktop e tablet);
+build "mesma origem" do `Dockerfile.demo` servido por um proxy local
+equivalente ao nginx. **Não validado localmente (sem Docker nesta
+máquina):** `docker build`/`docker compose` — ficam a cargo dos jobs
+`docker-build` e `demo-smoke` do CI.
+
+# Fase 2 — MVP de Operações
+
+As decisões D-052 a D-056 documentam a fatia 1 do MVP de Operações
+(inventário com reservas, dados satélite de projeto, mapa, calendário
+ligado a tarefas, permissões de tarefas revistas, metas e indicadores
+fundidos com o histórico) — ver `docs/PLAN_OPERATIONS_MVP.md` para o
+desenho completo. D-057 documenta a fatia 2, que fecha o que tinha
+ficado para depois: importadores implementados (não só desenhados), UI
+de mapa/planeamento/dados de projeto, e a tab de inventário por projeto.
+Nenhuma integração externa real foi ligada (Graph/ClickUp/Financial/
+Claude continuam mock/fallback); nenhum dado real entrou no repositório.
+
+## D-052 — Tarefas: visibilidade global do PM, escrita por identidade (criador/atribuído), nunca por ser o PM do projeto
+
+**Decisão:** `task.view_all` passa a ser concedida também ao papel PM
+(mantendo `task.edit_own`) — um PM vê tarefas de todos os projetos, não só
+os seus (`can_view_task`/`visible_tasks_query`). Em contrapartida,
+`can_edit_task`/`can_create_task` deixam de usar
+`task.project.pm_person_id == ctx.person_id` como critério de posse para
+quem só tem `task.edit_own`: passa a ser
+`task.created_by_person_id == ctx.person_id OR
+task.assigned_to_person_id == ctx.person_id`. `create_task` força
+`assigned_to_person_id = ctx.person_id` quando o ator só tem
+`task.edit_own` e rejeita (400) qualquer tentativa de indicar outra
+pessoa; `update_task` rejeita (400) por inteiro qualquer pedido que toque
+`assigned_to_person_id` vindo desse mesmo ator — nunca reatribuição,
+mesmo para si próprio.
+
+**Porquê:** pedido explícito da secção de tarefas do MVP de Operações —
+um PM deixa de estar limitado aos seus projetos para *ver* o que se
+passa na operação (coordenação entre equipas), mas continua sem poder
+alterar o trabalho de outra pessoa só por ser o PM do projeto onde essa
+tarefa vive. `task.edit_all` (Chefe/Administrador) não muda.
+
+**Testes:** `tests/test_tasks_api.py` — visibilidade global confirmada
+(`test_pm_sees_tasks_from_every_project`), edição só por
+criador/atribuído mesmo dentro do próprio projeto
+(`test_pm_cannot_edit_task_of_own_project_not_created_by_or_assigned_to_them`),
+nunca reatribuição (`test_pm_cannot_reassign_task_even_one_they_created`),
+criação só atribuída a si mesmo
+(`test_pm_can_only_create_task_assigned_to_self`), Chefe continua a
+reatribuir livremente (`test_chefe_can_reassign_any_task`).
+
+## D-053 — Inventário: reserva/consumo/libertação/devolução como operações distintas; Admin, Chefe e PM partilham o stock físico central
+
+**Decisão:** `app/services/inventory.py` implementa as quatro operações
+do pedido como funções distintas e transacionais sobre
+`InventoryMovement` — nunca um total editável. `InventoryItem.min_stock`,
+`InventoryMovement.quantity` e `MaterialRequestItem.quantity` passam de
+`Float` para `Numeric(14,3)` (pedido explícito desta fase, alargando a
+regra já aplicada a dinheiro desde D-018).
+`InventoryLocation` (novo) modela `central`/`project`/`vehicle`/
+`supplier`; o seed cria uma única localização central
+(`code="IDEALMINDE"`), nunca usada para decidir lógica de negócio por
+comparação de texto.
+
+`reserve_for_project` nunca deixa o disponível negativo;
+`consume_from_project` exige reserva ativa suficiente no projeto (decisão
+assumida — o pedido não define "consumo sem reserva", ver
+`docs/OPEN_QUESTIONS.md` pergunta 29); `return_to_stock` aumenta o físico
+central sem reabrir a reserva de origem (pergunta 30). Todas as operações
+aceitam `idempotency_key` opcional — repetir a mesma chave devolve o
+movimento já existente em vez de duplicar.
+
+**Revisto depois do relatório inicial — PM recebe `inventory.manage_central`.**
+A primeira versão desta decisão excluía o PM de `inventory.manage_central`
+("opção mais segura" perante uma aparente contradição no pedido entre
+secções). **O negócio confirmou explicitamente que essa leitura estava
+errada:** Administrador, Chefe de Operações e PM podem todos gerir o
+inventário central (entrada/ajuste), sem distinção — só
+`allocate_project`/`consume_project`/`release_project` continuam
+compostas com o âmbito de projeto já existente via `can_edit_project`
+(reservar/consumir/libertar continuam limitados aos projetos que o PM
+gere; entrada/ajuste não são um recurso por projeto). Corrigido em
+`app/security/catalog.py` (`ROLE_PM` ganha `inventory.manage_central`) —
+ver `docs/OPEN_QUESTIONS.md` pergunta 28 (resolvida).
+
+**Testes:** `tests/test_inventory_ledger.py` (11, incluindo o exemplo
+exato do pedido — 100 km entram, reserva 20, consome 5, liberta 10 ⇒
+físico 95/disponível 90/reservado 5/consumido 5), `tests/test_inventory_api.py`
+(11, permissões por perfil e por âmbito de projeto, incluindo a prova
+ponta-a-ponta das seis operações que o PM tem de conseguir fazer).
+
+## D-054 — Dados satélite de projeto (instalação/licenciamento/comunicação): três tabelas 1:1, nunca campos novos em `Project`
+
+**Decisão:** `ProjectInstallationData`, `ProjectLicensingData`,
+`ProjectCommunicationData` (novas, 1:1 com `Project`) em vez de alargar
+`Project` — evita transformá-lo numa tabela com centenas de campos
+opcionais. Uma única tabela de histórico partilhada,
+`ProjectDataHistory` (`entity_type` distingue qual das três), em vez de
+três tabelas de histórico quase idênticas. `PATCH` cria o registo na
+primeira edição — nunca exige um passo de "criar" separado.
+
+Permissões por domínio (`project.view_installation_data`,
+`project.edit_communication_data`, etc.) compõem-se sempre com o âmbito
+de projeto já existente (`can_view_project`/`can_edit_project`) — nunca
+uma segunda lógica de "próprio projeto" duplicada por domínio.
+`ProjectCommunicationData` nunca tem campos para PIN/PUK/password/login/
+token — por desenho, não por validação de conteúdo (que não seria
+fiável).
+
+**Testes:** `tests/test_project_data_api.py` (9) — permissões por perfil
+e por âmbito de projeto, criação na primeira edição, histórico por campo
+alterado, nenhuma entrada duplicada quando o valor não muda.
+
+## D-055 — Mapa, calendário ligado a tarefas: backend completo (UI implementada depois, ver D-057)
+
+**Decisão:** `GET /api/map/data` devolve um único payload já filtrado
+pela visibilidade do utilizador (projetos com/sem coordenadas,
+fornecedores, pontos de recolha, pendências) — nunca listas completas
+para o cliente filtrar. `ProjectIssue` pode ser convertida numa `Task`
+(`related_task_id` liga as duas, nunca duplica a entidade).
+`MAP_PROVIDER_ENABLED`/`MAP_TILE_URL`/`MAP_TILE_ATTRIBUTION` (novos,
+`app/config.py`) tornam o provider de tiles configurável e opcional — sem
+ele, o endpoint continua a funcionar, sem depender de um serviço externo.
+
+`CalendarEvent` ganha `task_id`/`assigned_to_person_id`; a camada de
+serviço valida sempre `task.project_id == event.project_id` antes de
+gravar, em criação e edição — nunca confiado ao cliente. Continua
+inteiramente local, sem Microsoft Graph (`graph_event_id` nunca
+preenchido — D-010 mantém-se).
+
+**Sem otimização automática de rotas**, por pedido explícito — a UI
+implementada em D-057 só oferece seleção/ordenação manual e um link para
+rota externa (Google Maps), nunca um cálculo de rota próprio.
+
+**UI destas duas áreas, e das tabs de dados de projeto no detalhe do
+projeto, implementadas numa fatia seguinte — ver D-057.**
+
+**Testes:** `tests/test_map_api.py` (7), `tests/test_planning_api.py` (9)
+— incluindo o bloqueio de uma tarefa de projeto diferente do evento.
+
+## D-056 — Metas e indicadores: página única, reaproveita a definição de "instalação concluída" do dashboard
+
+**Decisão:** `GoalPeriod` (+ `GoalPeriodHistory`) por trás de uma única
+página "Metas e indicadores" — nunca duas entradas de menu separadas
+("Metas"/"Dashboards"). Progresso (`realizado`/`percent`/`falta`/
+`ritmo_esperado`/`projeção`) sempre calculado no servidor (mesma regra já
+aplicada ao dashboard, D-041), nunca no frontend a partir de listas
+completas. `expected_pace`/`projection` são quantizados a 3 casas
+decimais — sem isto, divisão de `Decimal` produz dízimas com dezenas de
+casas.
+
+"Instalação concluída" reaproveita tal e qual a definição já usada pelo
+dashboard (`Task.task_type == "comissionamento"` e `status == "done"`,
+na data de `completed_at`) — nunca uma segunda definição divergente,
+conforme o próprio pedido instrui explicitamente ("se o código existente
+tiver fonte de verdade mais adequada, reutilizá-la e documentar").
+`installations`/`projects_completed` e `kwp`/`power_installed`/
+`power_delivered` produzem hoje o mesmo valor, por falta de dados para as
+distinguir de facto — ver `docs/OPEN_QUESTIONS.md` pergunta 31.
+
+**Testes:** `tests/test_performance_api.py` (8) — permissões, cálculo de
+progresso a partir de tarefas reais, âmbito por PM vs. empresa inteira.
+
+## D-057 — MVP de Operações, fatia 2: UI do mapa/planeamento, importadores implementados, tab de inventário por projeto
+
+**Contexto:** uma auditoria contra o pedido original, feita depois do
+relatório da fatia 1, apontou que várias peças descritas como "desenho
+completo" ou "backend completo, sem UI" ainda não tinham interface nem
+estavam realmente implementadas — nomeadamente o importador de notas
+iniciais (documentado, não codificado), o mapa e o calendário de
+planeamento (só API), e a ausência de qualquer forma de reservar/consumir
+material por projeto a partir do browser. Esta decisão fecha essas
+lacunas.
+
+**Importador de notas iniciais — implementado (não só desenhado):**
+`app/services/imports_notes.py` (extração de `<script type="application/
+json" id="notas-iniciais-data">` de HTML via `html.parser`, nunca
+`eval`/motor de JS; versão lida de `payload.formVersion`, nunca do nome
+do ficheiro — testado explicitamente com um ficheiro chamado
+`notas-iniciais-v11.html` cujo conteúdo é v12), `app/models/imports.py`
+(`FieldImportBatch`/`Record`/`Conflict`), 4 endpoints
+(`app/api/routes_imports.py`): preview (idempotente por hash),
+`GET /{batch_id}`, listar/resolver conflitos, `apply` (exige confirmação
+explícita e todos os conflitos resolvidos). UI em
+`frontend/src/pages/ImportNotes.tsx` (arrastar ficheiro, preview,
+resolução de conflitos, confirmação). Ver `docs/DATA_IMPORTS.md`.
+
+**Documento original preservado, não só o payload extraído.** A primeira
+versão desta funcionalidade guardava apenas `raw_payload_json` (o JSON já
+normalizado) — uma auditoria de "criar auditoria"/"guardar o documento
+original" confirmou que o ficheiro tal como foi submetido nunca ficava
+persistido, impossibilitando confirmar uma importação contra a fonte
+original. Corrigido com `FieldImportBatch.raw_document_text` (o texto
+completo do ficheiro carregado) e `GET /api/imports/{batch_id}/document`
+para o consultar — migração `f1134f80f657`.
+
+**Importador de licenciamento (Excel) — confirmado implementado:**
+`app/services/imports_licensing.py` + `app/cli/import_licensing.py`
+(`--dry-run`/`--apply`/`--rollback`), nunca uma UI — decisão de segurança
+mantida (ficheiro real nunca commitado, só a fixture sintética).
+
+**Mapa (`/map`) e Planeamento (`/planning`) — UI implementada.**
+`frontend/src/pages/Map.tsx`: Leaflet quando há `MAP_TILE_URL`
+configurado, lista funcional sempre que não há (nunca depende de um
+serviço externo para o resto da app funcionar); filtros, painel "sem
+coordenadas" com edição manual, seleção múltipla + link de rota externa
+(sem otimização automática, por pedido explícito), formulários de
+fornecedor/ponto de recolha, pendências com conversão em tarefa.
+`frontend/src/pages/Planning.tsx`: vistas de semana/mês/lista; filtros
+todos/meus/por PM/por projeto/por responsável; criar e reagendar pelo
+mesmo formulário; **deteção de conflitos de horário só no cliente**, a
+partir dos eventos já carregados para o período visível — avisa
+sobreposições para o mesmo responsável e exige confirmação explícita
+antes de gravar, mas não bloqueia nem valida no servidor (o pedido não
+especificava bloqueio rígido; o backend não tem essa restrição — ver
+`docs/OPEN_QUESTIONS.md` pergunta 34).
+
+**Tab "Inventário" no detalhe do projeto (nova).** Não existia nenhuma
+forma de reservar/consumir/libertar/devolver material a partir do
+browser — só `/inventory` (stock central) tinha UI. Adicionada uma tab
+que mostra as necessidades de material do projeto e os seus movimentos,
+com um formulário para as quatro operações — reaproveita os endpoints já
+existentes e testados de `app/api/routes_inventory.py`
+(`inventory.allocate_project`/`consume_project`/`release_project`,
+validados sempre no servidor).
+
+**Tarefas: cenário de dois PMs explicitamente testado.** Os testes já
+cobriam "PM não edita tarefa de projeto sem PM" e "PM não edita tarefa de
+outra pessoa no seu próprio projeto", mas não o caso pedido
+explicitamente — uma tarefa de um projeto gerido por **outro PM**.
+Adicionado `test_pm_can_view_but_not_edit_or_reassign_task_of_another_pms_project`
+em `tests/test_tasks_api.py`, confirmando visibilidade (`task.view_all`)
+sem direito de escrita nem de reatribuição.
+
+**Seed:** `seed_dev.py:seed_calendar_events` acrescenta 3 `CalendarEvent`
+sintéticos ligados a projetos/tarefas/pessoas reais, para `/planning` não
+abrir vazio — mesma convenção das outras áreas do MVP (mapa, inventário,
+metas).
+
+**Testes:** +2 no backend (documento original preservado; cenário de
+dois PMs) — 380 no total (+2 skipped); `tests/test_imports_notes.py` (16),
+`tests/test_import_licensing_cli.py` (10), `tests/test_map_api.py` (7),
+`tests/test_planning_api.py` (9) confirmados a passar. Frontend: +12
+testes novos (`Map.test.tsx`, `Planning.test.tsx`) — 85 no total.
+Validação visual manual de 22 cenários (login por perfil, todas as tabs
+do projeto, mapa, planeamento, inventário por projeto, metas com todos
+os filtros) contra dados de demonstração reais, incluindo o ciclo
+completo notas→projeto→mapa→pendência→tarefa→calendário→inventário→metas.

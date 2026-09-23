@@ -413,6 +413,29 @@ para o procedimento operacional completo.
   alojamento — sem eles, staging não pode ser levantado de facto, só
   preparado.
 
+## Fase 1.7 — MVP de demonstração (IMPLEMENTADA)
+
+Ver `docs/MVP_DEMO.md` (guia operacional) e `docs/DECISIONS.md` D-051.
+
+- **Objetivo:** demonstração visualmente convincente para clientes/equipa,
+  levantada com um comando e só com dados sintéticos.
+- **O que ficou feito:** interface nova (layout com sidebar, painel com
+  resumo da semana e aviso de fotografias, projetos com filtros e detalhe
+  em separadores, tarefas em lista/Kanban, calendário de férias e
+  aniversários, login com modo demo separado do Microsoft);
+  extensões aditivas da API (indicadores e filtros novos, permissões
+  efetivas por recurso, `DEMO_MODE` bloqueado fora de `local`);
+  `app.cli.demo` + seed de demonstração só em `APP_ENV=local`;
+  `docker-compose.demo.yml`, `frontend/Dockerfile.demo`,
+  `scripts/demo_local.py`; job `demo-smoke` no CI.
+- **Entidades:** sem alteração de schema (nenhuma migração nova).
+- **Integrações:** nenhuma — continuam todas desligadas.
+- **Testes:** `tests/test_demo_mvp.py` (25); frontend 53 testes Vitest
+  (35 novos: painel, estados, filtros, estado de tarefa, fotografias,
+  navegação, permissões).
+- **Rollback:** aditivo — reverter a branch remove a interface nova e os
+  ficheiros de demo sem afetar dados, autenticação ou migração.
+
 ## Fase 2 — Dashboard inicial
 
 **Estado: IMPLEMENTADA — ver Fase 1.5 acima.** O roadmap original desta

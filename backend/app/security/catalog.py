@@ -50,11 +50,39 @@ PERMISSIONS: dict[str, str] = {
     "task.view_all": "Ver tarefas de qualquer projeto",
     "task.view_own": "Ver tarefas dos projetos próprios (como PM) e tarefas atribuídas a si",
     "task.edit_all": "Criar/editar/atribuir/concluir tarefas de qualquer projeto",
-    "task.edit_own": "Criar/editar/atribuir/concluir tarefas dos projetos próprios (como PM)",
+    "task.edit_own": (
+        "Criar tarefas atribuídas a si mesmo e editar tarefas que criou ou que lhe "
+        "estão atribuídas — nunca atribuir/reatribuir a outra pessoa (ver "
+        "app/security/permissions.py:can_edit_task/can_create_task)"
+    ),
     "absence.view_all": "Ver férias/ausências de todas as pessoas",
     "absence.view_own": "Ver as próprias férias/ausências",
     "absence.manage_all": "Registar/cancelar férias de qualquer pessoa",
     "absence.manage_own": "Registar/cancelar as próprias férias",
+    # --- MVP de Operações (ver docs/PLAN_OPERATIONS_MVP.md) ---
+    "inventory.manage_central": "Registar entradas/ajustes no stock físico central (armazém IdealMinde)",
+    "inventory.allocate_project": "Reservar material do stock central para um projeto",
+    "inventory.consume_project": "Consumir material reservado de um projeto",
+    "inventory.release_project": "Libertar uma reserva de material de um projeto",
+    "inventory.manage_requirements": "Criar/editar necessidades de material de um projeto",
+    "project.view_installation_data": "Ver dados de instalação do projeto",
+    "project.edit_installation_data": "Editar dados de instalação do projeto (combinado com o âmbito de project.edit_*)",
+    "project.view_licensing_data": "Ver dados de licenciamento do projeto",
+    "project.edit_licensing_data": "Editar dados de licenciamento do projeto (combinado com o âmbito de project.edit_*)",
+    "project.view_communication_data": "Ver dados de comunicação/M2M do projeto (nunca inclui credenciais)",
+    "project.edit_communication_data": "Editar dados de comunicação/M2M do projeto",
+    "map.view": "Ver o mapa operacional (projetos, fornecedores, recolhas, pendências)",
+    "supplier.manage": "Criar/editar fornecedores",
+    "pickup_point.manage": "Criar/editar pontos de recolha",
+    "project_issue.view": "Ver pendências de obra",
+    "project_issue.manage": "Criar/editar pendências de obra e convertê-las em tarefa",
+    "calendar.view": "Ver eventos de calendário/planeamento",
+    "calendar.manage": "Criar/editar/cancelar eventos de calendário/planeamento",
+    "performance.view_all": "Ver metas e indicadores de toda a operação",
+    "performance.view_own": "Ver metas e indicadores próprios (como PM)",
+    "performance.manage_goals": "Criar/editar metas (GoalPeriod)",
+    "import.notes": "Importar notas iniciais (pré-visualizar, resolver conflitos, aplicar)",
+    "import.licensing": "Importar o Excel de licenciamento (dry-run/aplicar/reverter)",
 }
 
 # Matriz papel -> permissões concedidas por omissão.
@@ -82,6 +110,29 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "task.edit_all",
         "absence.view_all",
         "absence.manage_all",
+        # MVP de Operações — Chefe opera qualquer projeto/inventário/mapa.
+        "inventory.manage_central",
+        "inventory.allocate_project",
+        "inventory.consume_project",
+        "inventory.release_project",
+        "inventory.manage_requirements",
+        "project.view_installation_data",
+        "project.edit_installation_data",
+        "project.view_licensing_data",
+        "project.edit_licensing_data",
+        "project.view_communication_data",
+        "project.edit_communication_data",
+        "map.view",
+        "supplier.manage",
+        "pickup_point.manage",
+        "project_issue.view",
+        "project_issue.manage",
+        "calendar.view",
+        "calendar.manage",
+        "performance.view_all",
+        "performance.manage_goals",
+        "import.notes",
+        "import.licensing",
     ],
     ROLE_PM: [
         "project.view_own",
@@ -94,10 +145,38 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "calendar.propose",
         "calendar.approve_send",
         "ai.use_tools",
-        "task.view_own",
+        # PM vê tarefas de todos os projetos (visibilidade global), mas só
+        # pode criar/editar as suas (ver task.edit_own e
+        # app/security/permissions.py:can_edit_task/can_create_task) — a
+        # separação entre "ver" e "escrever" é o que torna isto seguro.
+        "task.view_all",
         "task.edit_own",
         "absence.view_own",
         "absence.manage_own",
+        # MVP de Operações — decisão de negócio confirmada: Administrador,
+        # Chefe de Operações e PM podem todos gerir o inventário central
+        # (entrada/ajuste), além de reservar/consumir/libertar material dos
+        # projetos que gerem (ver docs/PLAN_OPERATIONS_MVP.md secção 4,
+        # revista — a versão anterior deste catálogo excluía PM de
+        # inventory.manage_central; corrigido a pedido explícito do
+        # negócio).
+        "inventory.manage_central",
+        "inventory.allocate_project",
+        "inventory.consume_project",
+        "inventory.release_project",
+        "inventory.manage_requirements",
+        "project.view_installation_data",
+        "project.edit_installation_data",
+        "project.view_licensing_data",
+        "project.edit_licensing_data",
+        "project.view_communication_data",
+        "project.edit_communication_data",
+        "map.view",
+        "project_issue.view",
+        "project_issue.manage",
+        "calendar.view",
+        "calendar.manage",
+        "performance.view_own",
     ],
     ROLE_COMERCIAL: [
         "project.view_all",
@@ -106,6 +185,15 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "task.view_all",
         "absence.view_own",
         "absence.manage_own",
+        "project.view_installation_data",
+        "project.view_licensing_data",
+        "map.view",
+        "project_issue.view",
+        "calendar.view",
+        "performance.view_all",
+        # O formulário de notas iniciais é usado pelo Comercial/Sales
+        # Support (papel não modelado à parte — reaproveita Comercial).
+        "import.notes",
     ],
     ROLE_FINANCEIRO: [
         "project.view_all",
@@ -115,5 +203,11 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "task.view_all",
         "absence.view_own",
         "absence.manage_own",
+        "project.view_installation_data",
+        "project.view_licensing_data",
+        "map.view",
+        "project_issue.view",
+        "calendar.view",
+        "performance.view_all",
     ],
 }

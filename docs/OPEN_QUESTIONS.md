@@ -436,6 +436,106 @@ para o provisionamento manual ser um fardo, e a ligação automática
 remove a barreira humana que confirma que o `entra_object_id` certo foi
 associado à pessoa certa.
 
+## MVP de Operações
+
+Perguntas levantadas ao implementar inventário/dados de projeto/mapa/
+calendário/metas (ver `docs/PLAN_OPERATIONS_MVP.md`). Nenhuma bloqueou o
+desenvolvimento — todas resolvidas pela opção mais segura, reversível,
+documentada aqui e no código.
+
+### 28. PM deve ter `inventory.manage_central`? — **RESOLVIDA**
+
+**Impacto:** o pedido original parecia contradizer-se entre a secção 2
+("Podem alterar o inventário central: Administrador; Chefe de Operações;
+Project Managers") e a secção de permissões ("PM: pode alterar stock
+central e operar os seus próprios projetos") vs. o resto do pedido, que
+trata o stock central como um recurso partilhado por toda a operação,
+não por projeto.
+
+**Resolvida — decisão de negócio confirmada explicitamente:**
+Administrador, Chefe de Operações **e PM** podem todos gerir o
+inventário central (entrada/ajuste), sem distinção. A leitura anterior
+("opção mais segura" perante uma aparente contradição) estava errada.
+`app/security/catalog.py` (`ROLE_PM` ganhou `inventory.manage_central`)
+e `app/migration/seed_dev.py` (via `ROLE_PERMISSIONS`) já refletem isto;
+testado em `tests/test_inventory_api.py::test_pm_can_do_every_inventory_operation_end_to_end`.
+As restrições de projeto mantêm-se para reservar/consumir/libertar
+(`allocate_project`/`consume_project`/`release_project`) — um PM continua
+sem poder operar o inventário de um projeto que não gere.
+
+### 29. Consumo de inventário sem reserva prévia
+
+**Impacto:** o pedido não define o que acontece ao tentar consumir
+material que não foi reservado antes.
+
+**Decisão assumida:** `consume_from_project` exige reserva ativa
+suficiente no projeto — rejeita com erro caso contrário. Reversível em
+`app/services/inventory.py:consume_from_project` se o negócio preferir
+permitir consumo direto (com ou sem criar a reserva implicitamente).
+
+### 30. Devolução de material: reabre a reserva de origem?
+
+**Decisão assumida:** não — `return_to_stock` aumenta o stock físico
+central "livre para reservar de novo", nunca reabre automaticamente a
+reserva do projeto que consumiu. Documentado em
+`docs/INVENTORY_RULES.md`.
+
+### 31. Distinção entre métricas de "Metas e indicadores"
+
+**Impacto:** o pedido lista `installations`, `projects_completed`, `kwp`,
+`power_installed` e `power_delivered` como métricas distintas, mas o
+modelo de dados atual não tem dados para as distinguir de facto (ex.
+produção real vs. potência nominal instalada).
+
+**Decisão necessária:** confirmar se/quando estas métricas devem divergir
+(ex. `power_delivered` vir de `ProjectLicensingData.annual_production_kwh`
+em vez de `Project.power_kwp`).
+
+**Decisão assumida:** todas usam hoje o mesmo cálculo (potência nominal
+dos projetos com comissionamento concluído no período) — ver
+`docs/PERFORMANCE_METRICS.md`. Revisível numa função isolada
+(`app/services/performance.py:_realized_value`) quando confirmado.
+
+### 32. UI do mapa, calendário, e das tabs de dados de projeto — **RESOLVIDA**
+
+**Resolvida:** implementadas nesta revisão — `/map`
+(`frontend/src/pages/Map.tsx`), `/planning`
+(`frontend/src/pages/Planning.tsx`), e as tabs "Dados da instalação"/
+"Licenciamento"/Comunicação no detalhe do projeto
+(`ProjectDetail.tsx`). Ver `docs/MAP_AND_PLANNING.md` para o detalhe de
+cada página. Uma decisão de desenho ficou por confirmar dentro deste
+trabalho — ver pergunta 34 (deteção de conflitos no calendário).
+
+### 33. Importadores de notas iniciais e Excel de licenciamento — **RESOLVIDA**
+
+**Resolvida:** implementados nesta revisão — importador de notas
+iniciais (`app/services/imports_notes.py`, UI em
+`frontend/src/pages/ImportNotes.tsx`) e importador de licenciamento via
+CLI (`app/cli/import_licensing.py`, `--dry-run`/`--apply`/`--rollback`).
+Ver `docs/DATA_IMPORTS.md` para o desenho e o fluxo completos.
+
+### 34. Deteção de conflitos de horário no calendário: só aviso, ou bloqueio rígido?
+
+**Impacto:** o pedido original pede "deteção de conflitos" na UI de
+planeamento, mas o backend (`app/services/planning.py`) não tem nenhuma
+validação de sobreposição de horário para a mesma pessoa — cria/atualiza
+qualquer evento, mesmo sobreposto a outro do mesmo responsável.
+
+**Decisão assumida:** deteção só no cliente
+(`frontend/src/pages/Planning.tsx:findConflicts`, a partir dos eventos já
+carregados para o período visível), como aviso não bloqueante — exige
+uma confirmação explícita ("Guardar mesmo assim") antes de gravar, mas
+nunca impede uma sobreposição intencional (ex. duas pessoas na mesma
+visita, ou uma reunião curta dentro de uma janela maior). Reversível:
+mover esta validação para o servidor
+(`create_calendar_event`/`update_calendar_event`) é uma alteração aditiva
+se o negócio preferir um bloqueio rígido, ou preferir detetar conflitos
+fora do período atualmente visível na UI.
+
+**Decisão necessária:** confirmar se este comportamento (aviso,
+client-side, só no período visível) é suficiente, ou se é preciso um
+bloqueio rígido/validação também no servidor.
+
 ## Podem ser decididas mais tarde
 
 - **Atualização major de `react-router-dom` (6→7) e `vitest`/

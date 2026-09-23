@@ -19,3 +19,9 @@ pyjwt[crypto]>=2.9,<3.0
 # dashboard usar sempre Europe/Lisbon, independentemente do fuso do
 # servidor onde a app corre.
 tzdata>=2024.1
+# Upload de ficheiros (FastAPI/Starlette exige isto para UploadFile) —
+# usado pela importação de notas iniciais (app/api/routes_imports.py).
+python-multipart>=0.0.12,<1.0
+# Leitura do Excel de licenciamento (app/cli/import_licensing.py) — nunca
+# escreve, só lê (`read_only=True` em app/services/imports_licensing.py).
+openpyxl>=3.1,<4.0

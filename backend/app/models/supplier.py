@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Float, String
+from sqlalchemy import Float, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -19,3 +19,7 @@ class Supplier(UUIDPk, TimestampMixin, Base):
     lon: Mapped[float | None] = mapped_column(Float, nullable=True)
     is_preferred: Mapped[bool] = mapped_column(default=False, nullable=False)
     lead_time_days: Mapped[int | None] = mapped_column(nullable=True)
+    # Lista livre de materiais fornecidos (texto, sem tabela de associação
+    # nesta fase — ver docs/PLAN_OPERATIONS_MVP.md secção 11, decisão assumida).
+    materials: Mapped[str] = mapped_column(Text, default="")
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)

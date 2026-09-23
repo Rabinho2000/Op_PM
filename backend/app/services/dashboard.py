@@ -23,16 +23,17 @@ from app.models.project import Project
 from app.models.task import (
     OPEN_TASK_STATUSES,
     PRIORITY_URGENT,
+    STATUS_DONE,
     TASK_TYPE_COMISSIONAMENTO,
     TASK_TYPE_VISITA_TECNICA,
     Task,
 )
-from app.schemas.dashboard import AbsenceMini, BirthdayMini, DashboardSummary, ProjectMini, TaskMini
+from app.schemas.dashboard import AbsenceMini, BirthdayMini, DashboardSummary, ProjectMini, TaskMini, WeekDaySummary
 from app.security.permissions import AuthContext
 from app.services.absences import visible_absences_query
-from app.services.projects import visible_projects_query
+from app.services.projects import compute_project_task_summary, visible_projects_query
 from app.services.tasks import visible_tasks_query
-from app.utils.timezones import today_lisbon, week_range_lisbon
+from app.utils.timezones import LISBON_TZ, today_lisbon, week_range_lisbon
 
 PROJECT_STARTING_WINDOW_DAYS = 30
 UPCOMING_ABSENCE_WINDOW_DAYS = 30
@@ -112,6 +113,34 @@ def _birthday_scoped_people_query(db: Session, ctx: AuthContext):
     return db.query(Person).filter(False)
 
 
+def _week_overview(
+    week_start: dt.date, open_tasks: list[Task], tasks: list[Task], absences: list[Absence]
+) -> list[WeekDaySummary]:
+    """Contagens por dia da semana corrente (segunda a domingo, Europe/Lisbon):
+    tarefas abertas com prazo nesse dia, tarefas concluídas nesse dia, e
+    pessoas ausentes (ausências aprovadas visíveis ao utilizador)."""
+    # SQLite devolve DateTime sem fuso (gravado em UTC) — tratado como UTC.
+    completed_dates = [
+        (t.completed_at if t.completed_at.tzinfo else t.completed_at.replace(tzinfo=dt.timezone.utc))
+        .astimezone(LISBON_TZ)
+        .date()
+        for t in tasks
+        if t.status == STATUS_DONE and t.completed_at is not None
+    ]
+    days = []
+    for offset in range(7):
+        day = week_start + dt.timedelta(days=offset)
+        days.append(
+            WeekDaySummary(
+                date=day,
+                tasks_due_count=sum(1 for t in open_tasks if t.due_date == day),
+                tasks_completed_count=sum(1 for d in completed_dates if d == day),
+                people_absent_count=len({a.person_id for a in absences if a.start_date <= day <= a.end_date}),
+            )
+        )
+    return days
+
+
 def compute_dashboard_summary(db: Session, ctx: AuthContext) -> DashboardSummary:
     today = today_lisbon()
     week_start, week_end = week_range_lisbon(today)
@@ -165,6 +194,12 @@ def compute_dashboard_summary(db: Session, ctx: AuthContext) -> DashboardSummary
         if a.start_date > today and a.start_date <= today + dt.timedelta(days=UPCOMING_ABSENCE_WINDOW_DAYS)
     ]
 
+    # Aviso de fotografias (D-043) agregado no dashboard — mesma regra da
+    # lista/detalhe de projetos, nunca uma segunda lógica divergente.
+    projects_photos_pending = [
+        p for p in active_projects if compute_project_task_summary(db, p.id).photos_pending_warning
+    ]
+
     birthday_people = _birthday_scoped_people_query(db, ctx).all()
     upcoming_birthdays = []
     for person in birthday_people:
@@ -197,4 +232,6 @@ def compute_dashboard_summary(db: Session, ctx: AuthContext) -> DashboardSummary
         upcoming_absences=[_absence_mini(a) for a in upcoming_absences[:MAX_LIST_ITEMS]],
         upcoming_birthdays=upcoming_birthdays[:MAX_LIST_ITEMS],
         urgent_tasks=[_task_mini(t) for t in urgent_tasks[:MAX_LIST_ITEMS]],
+        projects_photos_pending=[_project_mini(p) for p in projects_photos_pending[:MAX_LIST_ITEMS]],
+        week_overview=_week_overview(week_start, open_tasks, tasks, absences),
     )

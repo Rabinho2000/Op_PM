@@ -1,0 +1,91 @@
+# DEMONSTRAÇÃO LOCAL da Op_PM com dados 100% sintéticos (D-051).
+#
+#   docker compose -f docker-compose.demo.yml up --build
+#   -> abrir http://localhost:8080 e escolher um utilizador de demonstração
+#
+# Parar:             Ctrl+C  (ou: docker compose -f docker-compose.demo.yml down)
+# Repor os dados:    docker compose -f docker-compose.demo.yml down -v
+#                    docker compose -f docker-compose.demo.yml up --build
+#
+# NUNCA usar isto para staging/produção (ver docker-compose.staging.example.yml
+# e docs/STAGING_RUNBOOK.md). Barreiras independentes:
+# - o backend corre com APP_ENV=local; em staging/produção a app recusa-se
+#   a arrancar com AUTH_ENABLED=false, SQLite ou DEMO_MODE=true
+#   (app/config.py);
+# - o seed de demonstração (`app.cli.demo`) recusa qualquer APP_ENV que não
+#   seja `local`;
+# - o login de desenvolvimento (X-Dev-User-Email) só é aceite em local/test
+#   (app/security/current_user.py) e o frontend só o oferece quando o
+#   backend o confirma em /health.
+#
+# Não precisa de PostgreSQL, Entra ID nem de nenhuma credencial externa:
+# usa SQLite num volume Docker próprio (`op_pm_demo_data`). As portas só
+# ficam acessíveis nesta máquina (127.0.0.1).
+
+name: op-pm-demo
+
+x-demo-backend-env: &demo-backend-env
+  APP_ENV: local
+  DEMO_MODE: "true"
+  AUTH_ENABLED: "false"
+  DATABASE_URL: sqlite:////app/data/op_pm_demo.db
+  GRAPH_FALLBACK_DIR: /app/data/outbox
+  CORS_ALLOWED_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
+  DEMO_APP_URL: http://localhost:8080
+  # Integrações externas explicitamente desligadas.
+  GRAPH_ENABLED: "false"
+  CLICKUP_ENABLED: "false"
+  FINANCIAL_ENABLED: "false"
+  CLAUDE_ENABLED: "false"
+
+services:
+  # Passo único e explícito: migrações (alembic upgrade head) + seed
+  # sintético. Termina e só depois o backend arranca.
+  demo-setup:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: op-pm-demo-backend
+    environment: *demo-backend-env
+    command: ["python", "-m", "app.cli.demo", "setup"]
+    volumes:
+      - op_pm_demo_data:/app/data
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: op-pm-demo-backend
+    environment: *demo-backend-env
+    # Um único worker: SQLite local, poucos utilizadores de demonstração.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - op_pm_demo_data:/app/data
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      start_period: 5s
+      retries: 12
+    depends_on:
+      demo-setup:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.demo
+    image: op-pm-demo-frontend
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  op_pm_demo_data:

@@ -21,6 +21,13 @@ def _other_project(db):
     return db.query(Project).filter(Project.name == "Instalação Sintética Incompleta").one()
 
 
+def _project_of_other_pm(db):
+    """Projeto com PM atribuído, mas gerido por um PM diferente do
+    `pm.um.sintetico@example.invalid` usado nos outros testes — distinto
+    de `_other_project` (que não tem PM nenhum)."""
+    return db.query(Project).filter(Project.name == "Instalação Sintética F — PM Legado").one()
+
+
 def test_pm_can_create_task_on_own_project(db_session, api_client):
     db = db_session
     project = _own_project(db)
@@ -189,13 +196,16 @@ def test_reopening_done_task_clears_completed_at(db_session, api_client):
     assert resp.json()["completed_at"] is None
 
 
-def test_pm_can_only_edit_tasks_on_own_project(db_session, api_client):
+def test_pm_can_edit_task_created_by_self_even_off_their_project(db_session, api_client):
+    """PM edita tarefas que criou, independentemente do projeto — a posse
+    é por identidade (criador/atribuído), não por ser o PM do projeto (ver
+    docs/DECISIONS.md, secção de tarefas)."""
     db = db_session
-    own = _own_project(db)
     other = _other_project(db)
-    own_task = Task(project_id=own.id, title="Tarefa do projeto do PM")
-    other_task = Task(project_id=other.id, title="Tarefa de outro projeto")
-    db.add_all([own_task, other_task])
+    pm = db.query(Person).filter(Person.display_name == "PM Sintético Um").one()
+    own_task = Task(project_id=other.id, title="Tarefa criada pelo PM", created_by_person_id=pm.id)
+    unrelated_task = Task(project_id=other.id, title="Tarefa de outra pessoa")
+    db.add_all([own_task, unrelated_task])
     db.commit()
 
     resp_own = api_client.patch(
@@ -206,11 +216,90 @@ def test_pm_can_only_edit_tasks_on_own_project(db_session, api_client):
     assert resp_own.status_code == 200
 
     resp_other = api_client.patch(
-        f"/api/tasks/{other_task.id}",
+        f"/api/tasks/{unrelated_task.id}",
         json={"notes": "Tentativa indevida"},
         headers=_headers("pm.um.sintetico@example.invalid"),
     )
     assert resp_other.status_code == 403
+
+
+def test_pm_cannot_edit_task_of_own_project_not_created_by_or_assigned_to_them(db_session, api_client):
+    """Um PM já não herda direito de edição só por ser o PM do projeto —
+    uma tarefa criada/atribuída a outra pessoa no seu próprio projeto
+    continua fora do seu alcance de escrita (só de leitura, via
+    task.view_all)."""
+    db = db_session
+    own = _own_project(db)
+    task = Task(project_id=own.id, title="Tarefa de outra pessoa no projeto do PM")
+    db.add(task)
+    db.commit()
+
+    resp = api_client.patch(
+        f"/api/tasks/{task.id}",
+        json={"notes": "Tentativa indevida"},
+        headers=_headers("pm.um.sintetico@example.invalid"),
+    )
+    assert resp.status_code == 403
+
+
+def test_pm_cannot_reassign_task_even_one_they_created(db_session, api_client):
+    db = db_session
+    project = _own_project(db)
+    pm = db.query(Person).filter(Person.display_name == "PM Sintético Um").one()
+    other_person = db.query(Person).filter(Person.display_name != "PM Sintético Um").first()
+    task = Task(project_id=project.id, title="Tarefa do PM", created_by_person_id=pm.id)
+    db.add(task)
+    db.commit()
+
+    resp = api_client.patch(
+        f"/api/tasks/{task.id}",
+        json={"assigned_to_person_id": str(other_person.id)},
+        headers=_headers("pm.um.sintetico@example.invalid"),
+    )
+    assert resp.status_code == 400
+
+
+def test_chefe_can_reassign_any_task(db_session, api_client):
+    db = db_session
+    project = _own_project(db)
+    other_person = db.query(Person).filter(Person.display_name != "PM Sintético Um").first()
+    task = Task(project_id=project.id, title="Tarefa para reatribuir")
+    db.add(task)
+    db.commit()
+
+    resp = api_client.patch(
+        f"/api/tasks/{task.id}",
+        json={"assigned_to_person_id": str(other_person.id)},
+        headers=_headers("chefe.sintetico@example.invalid"),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["assigned_to_person_id"] == str(other_person.id)
+
+
+def test_pm_can_only_create_task_assigned_to_self(db_session, api_client):
+    db = db_session
+    project = _own_project(db)
+    other_person = db.query(Person).filter(Person.display_name != "PM Sintético Um").first()
+
+    resp_bad = api_client.post(
+        "/api/tasks",
+        json={
+            "project_id": str(project.id),
+            "title": "Tentativa de atribuir a outra pessoa",
+            "assigned_to_person_id": str(other_person.id),
+        },
+        headers=_headers("pm.um.sintetico@example.invalid"),
+    )
+    assert resp_bad.status_code == 400
+
+    resp_ok = api_client.post(
+        "/api/tasks",
+        json={"project_id": str(project.id), "title": "Tarefa ad-hoc do PM, sem responsável indicado"},
+        headers=_headers("pm.um.sintetico@example.invalid"),
+    )
+    assert resp_ok.status_code == 201
+    pm = db.query(Person).filter(Person.display_name == "PM Sintético Um").one()
+    assert resp_ok.json()["assigned_to_person_id"] == str(pm.id)
 
 
 def test_pm_can_edit_task_assigned_to_them_even_off_their_project(db_session, api_client):
@@ -250,17 +339,70 @@ def test_comercial_is_read_only_on_tasks(db_session, api_client):
     assert resp_patch.status_code == 403
 
 
-def test_pm_list_only_sees_tasks_on_own_projects_or_assigned_to_self(db_session, api_client):
+def test_pm_sees_tasks_from_every_project(db_session, api_client):
+    """PM tem visibilidade global de tarefas (task.view_all) — só a
+    escrita continua restrita a criador/atribuído (ver testes de edição
+    acima)."""
     db = db_session
     other = _other_project(db)
-    other_task = Task(project_id=other.id, title="Tarefa fora do âmbito do PM")
+    other_task = Task(project_id=other.id, title="Tarefa de outro projeto, visível ao PM")
     db.add(other_task)
     db.commit()
 
     resp = api_client.get("/api/tasks", headers=_headers("pm.um.sintetico@example.invalid"))
     assert resp.status_code == 200
     ids = {t["id"] for t in resp.json()}
-    assert str(other_task.id) not in ids
+    assert str(other_task.id) in ids
+
+    detail = api_client.get(
+        f"/api/tasks/{other_task.id}", headers=_headers("pm.um.sintetico@example.invalid")
+    )
+    assert detail.status_code == 200
+    assert detail.json()["can_edit"] is False
+
+
+def test_pm_can_view_but_not_edit_or_reassign_task_of_another_pms_project(db_session, api_client):
+    """Cenário pedido explicitamente: uma tarefa de um projeto gerido por
+    OUTRO PM (não um projeto sem PM nenhum) — tem de aparecer para
+    consulta a qualquer PM (task.view_all), mas nunca pode ser editada
+    nem reatribuída por quem não a criou nem lhe está atribuída."""
+    db = db_session
+    other_pm_project = _project_of_other_pm(db)
+    other_pm = db.query(Person).filter(Person.display_name == "PM Sintético Legado Dois").one()
+    assert other_pm_project.pm_person_id == other_pm.id
+
+    task = Task(
+        project_id=other_pm_project.id,
+        title="Tarefa do projeto de outro PM",
+        created_by_person_id=other_pm.id,
+        assigned_to_person_id=other_pm.id,
+    )
+    db.add(task)
+    db.commit()
+
+    pm_um_headers = _headers("pm.um.sintetico@example.invalid")
+
+    # Aparece para consulta (lista e detalhe).
+    resp_list = api_client.get("/api/tasks", headers=pm_um_headers)
+    assert resp_list.status_code == 200
+    assert str(task.id) in {t["id"] for t in resp_list.json()}
+
+    resp_detail = api_client.get(f"/api/tasks/{task.id}", headers=pm_um_headers)
+    assert resp_detail.status_code == 200
+    assert resp_detail.json()["can_edit"] is False
+
+    # Não pode ser editada.
+    resp_edit = api_client.patch(
+        f"/api/tasks/{task.id}", json={"notes": "Tentativa indevida de outro PM"}, headers=pm_um_headers
+    )
+    assert resp_edit.status_code == 403
+
+    # Não pode ser reatribuída (nem sequer tentar mudar o responsável).
+    pm_um = db.query(Person).filter(Person.display_name == "PM Sintético Um").one()
+    resp_reassign = api_client.patch(
+        f"/api/tasks/{task.id}", json={"assigned_to_person_id": str(pm_um.id)}, headers=pm_um_headers
+    )
+    assert resp_reassign.status_code in (400, 403)
 
 
 def test_filter_tasks_by_project_and_status(db_session, api_client):

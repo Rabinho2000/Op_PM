@@ -1,0 +1,7 @@
+# Ficheiros copiados para imagens Linux mantêm sempre LF, mesmo num clone
+# Windows com core.autocrlf=true (D-051).
+Dockerfile* text eol=lf
+*.conf text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.py text eol=lf

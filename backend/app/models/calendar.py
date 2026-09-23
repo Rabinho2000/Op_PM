@@ -42,14 +42,23 @@ class CalendarEvent(UUIDPk, TimestampMixin, Base):
 
     visit_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("visits.id"), nullable=True)
     project_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("projects.id"), nullable=True)
+    # Quando presente, a camada de serviço valida sempre task.project_id ==
+    # project_id antes de gravar — nunca liga um evento a uma tarefa de
+    # outro projeto (ver app/services/planning.py, docs/MAP_AND_PLANNING.md).
+    task_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("tasks.id"), nullable=True)
+    assigned_to_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("people.id"), nullable=True
+    )
     title: Mapped[str] = mapped_column(String(256), nullable=False)
     starts_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ends_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(
         String(32), default="rascunho", nullable=False
-    )  # rascunho | aprovado | publicado
+    )  # rascunho | aprovado | publicado | cancelado
     graph_event_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     # caminho local do fallback .ics enquanto o Graph não está configurado
     ics_fallback_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     visit: Mapped["Visit | None"] = relationship(back_populates="events")
+    project: Mapped["Project | None"] = relationship()
+    task: Mapped["Task | None"] = relationship()

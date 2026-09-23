@@ -49,6 +49,11 @@ class Settings(BaseSettings):
         description="Nunca usar o valor por omissão fora de 'local'/'test'.",
     )
 
+    # Modo demonstração (D-051): só informativo para o frontend (banner
+    # "Dados sintéticos") e para o arranque demo (`app.cli.demo`). Nunca
+    # aceite em staging/produção — ver _enforce_hardening_in_non_local_envs.
+    demo_mode: bool = Field(default=False, alias="DEMO_MODE")
+
     # --- Base de dados ---
     # Produção/staging: PostgreSQL (fonte de verdade operacional única).
     # Local/test por omissão: SQLite em ficheiro, para arrancar sem serviços
@@ -133,6 +138,15 @@ class Settings(BaseSettings):
     claude_api_key: str = Field(default="", alias="CLAUDE_API_KEY")
     claude_model: str = Field(default="claude-sonnet-5", alias="CLAUDE_MODEL")
 
+    # --- Mapa operacional (ver docs/MAP_AND_PLANNING.md) ---
+    # Sem provider configurado, GET /api/map/data continua a devolver os
+    # dados (projetos/fornecedores/recolhas/pendências) — o frontend mostra
+    # um aviso claro em vez de tiles, e a lista de locais como alternativa;
+    # nunca dependemos de um serviço externo para o resto da app funcionar.
+    map_provider_enabled: bool = Field(default=False, alias="MAP_PROVIDER_ENABLED")
+    map_tile_url: str = Field(default="", alias="MAP_TILE_URL")
+    map_tile_attribution: str = Field(default="", alias="MAP_TILE_ATTRIBUTION")
+
     # --- CORS (frontend a falar com esta API) ---
     # Em 'local'/'test', o servidor liberta sempre localhost em qualquer
     # porta (conveniência de desenvolvimento — `npm run dev` muda de porta
@@ -173,6 +187,8 @@ class Settings(BaseSettings):
           de quem está a configurar isto, por isso falha já no arranque em
           vez de deixar a API silenciosamente inacessível a qualquer
           frontend (D-032);
+        - DEMO_MODE não pode estar ligado — a demonstração com dados
+          sintéticos só existe em 'local' (D-051);
         - se algum de ENTRA_ISSUER/ENTRA_JWKS_URL/ENTRA_AUDIENCE for
           definido explicitamente, os três têm de estar (um override
           parcial deixaria os campos não definidos a cair para o valor
@@ -202,6 +218,8 @@ class Settings(BaseSettings):
             problems.append("ENTRA_REQUIRED_SCOPE tem de estar preenchido")
         if not self.cors_allowed_origins.strip():
             problems.append("CORS_ALLOWED_ORIGINS tem de ter pelo menos uma origem")
+        if self.demo_mode:
+            problems.append("DEMO_MODE tem de ser 'false' (o modo demonstração só existe em local)")
 
         explicit_entra_overrides = {
             "ENTRA_ISSUER": self.entra_issuer.strip(),

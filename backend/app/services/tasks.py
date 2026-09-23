@@ -90,8 +90,11 @@ def list_tasks(
     overdue_only: bool = False,
     due_before: dt.date | None = None,
     due_after: dt.date | None = None,
+    priority: str | None = None,
 ) -> list[Task]:
     query = visible_tasks_query(db, ctx)
+    if priority is not None:
+        query = query.filter(Task.priority == priority)
     if project_id is not None:
         query = query.filter(Task.project_id == project_id)
     if status is not None:
@@ -126,9 +129,17 @@ def create_task(db: Session, *, changes: TaskCreate, ctx: AuthContext) -> Task:
         raise PermissionDenied("task.edit_all|task.edit_own")
     if changes.priority not in TASK_PRIORITIES:
         raise ValueError(f"Prioridade inválida: {changes.priority!r}")
-    if changes.assigned_to_person_id is not None:
-        if db.get(Person, changes.assigned_to_person_id) is None:
+
+    assigned_to_person_id = changes.assigned_to_person_id
+    if ctx.has_permission("task.edit_all"):
+        if assigned_to_person_id is not None and db.get(Person, assigned_to_person_id) is None:
             raise InvalidTaskAssignment("Responsável atribuído não existe.")
+    else:
+        # Só task.edit_own (PM): só pode criar tarefas atribuídas a si
+        # mesmo — nunca a outra pessoa (ver docs/DECISIONS.md, tarefas).
+        if assigned_to_person_id is not None and assigned_to_person_id != ctx.person_id:
+            raise InvalidTaskAssignment("Só pode criar tarefas atribuídas a si mesmo.")
+        assigned_to_person_id = ctx.person_id
 
     task = Task(
         project_id=changes.project_id,
@@ -136,7 +147,7 @@ def create_task(db: Session, *, changes: TaskCreate, ctx: AuthContext) -> Task:
         task_type=changes.task_type,
         description=changes.description,
         priority=changes.priority,
-        assigned_to_person_id=changes.assigned_to_person_id,
+        assigned_to_person_id=assigned_to_person_id,
         due_date=changes.due_date,
         notes=changes.notes,
         status=STATUS_TODO,
@@ -153,6 +164,12 @@ def update_task(db: Session, *, task: Task, changes: TaskUpdate, ctx: AuthContex
         raise PermissionDenied("task.edit_all|task.edit_own")
 
     changed_fields = changes.model_dump(exclude_unset=True)
+
+    if not ctx.has_permission("task.edit_all") and "assigned_to_person_id" in changed_fields:
+        # PM (só task.edit_own) nunca pode reatribuir uma tarefa — nem para
+        # si mesmo nem para outra pessoa; rejeita o pedido inteiro, sem
+        # escrita parcial (mesmo princípio de D-028).
+        raise InvalidTaskAssignment("Não tem permissão para reatribuir esta tarefa.")
 
     if "priority" in changed_fields and changed_fields["priority"] not in TASK_PRIORITIES:
         raise ValueError(f"Prioridade inválida: {changed_fields['priority']!r}")

@@ -1,41 +1,93 @@
-import { useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { setDevUser } from "../api/client";
+import { getHealth, HealthResponse, setDevUser } from "../api/client";
 import { devLoginEnabled, isEntraConfigured, loginWithMicrosoft } from "../auth/msal";
+import Icon from "../components/Icon";
+import { Alert, Avatar } from "../components/ui";
+import { SolcorLogo } from "../components/SolcorLogo";
 
 // Fase 1 (D-031): login real via Microsoft Entra ID com MSAL —
 // Authorization Code + PKCE, access token dedicado à API (nunca o ID
-// token), renovação silenciosa e logout (ver src/auth/msal.ts,
-// src/api/client.ts). Sem um tenant/app registration reais configurados
-// (VITE_ENTRA_CLIENT_ID/VITE_ENTRA_TENANT_ID/VITE_ENTRA_API_SCOPE — ver
-// docs/OPEN_QUESTIONS.md, pergunta 1), o botão fica desativado com uma
-// explicação, nunca tenta autenticar com credenciais inventadas.
+// token). Sem tenant configurado (VITE_ENTRA_*), o botão fica desativado
+// com uma explicação.
 //
-// O login de desenvolvimento (X-Dev-User-Email) fica claramente separado
-// abaixo e só é renderizado quando devLoginEnabled é true — por omissão,
-// ligado em `vite dev`/testes, desligado num build de produção.
+// Modo demonstração (D-051): a secção de utilizadores sintéticos só existe
+// quando `devLoginEnabled` (build de desenvolvimento/demo) E o backend
+// confirma em /health que aceita o login de desenvolvimento (só
+// local/test). Em staging/produção nunca aparece — e o backend recusa o
+// cabeçalho X-Dev-User-Email de qualquer forma.
+
+export const DEMO_USERS = [
+  {
+    email: "chefe.sintetico@example.invalid",
+    name: "Chefe Sintético",
+    role: "Chefe de Operações",
+    description: "Vê e gere toda a operação, tarefas e férias da equipa.",
+  },
+  {
+    email: "pm.um.sintetico@example.invalid",
+    name: "PM Sintético Um",
+    role: "Project Manager",
+    description: "Vê apenas os seus projetos; edita notas e as suas tarefas.",
+  },
+  {
+    email: "admin.sintetico@example.invalid",
+    name: "Admin Sintético",
+    role: "Administrador",
+    description: "Todas as permissões, incluindo reconciliação de PM.",
+  },
+  {
+    email: "comercial.sintetico@example.invalid",
+    name: "Comercial Sintético",
+    role: "Comercial",
+    description: "Consulta projetos e tarefas, sem editar.",
+  },
+  {
+    email: "financeiro.sintetico@example.invalid",
+    name: "Financeiro Sintético",
+    role: "Financeiro",
+    description: "Consulta projetos e tarefas, sem editar.",
+  },
+];
+
 export default function Login() {
   const [email, setEmail] = useState("");
   const [msalError, setMsalError] = useState<string | null>(null);
   const [redirecting, setRedirecting] = useState(false);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [healthError, setHealthError] = useState(false);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const sessionExpired = searchParams.get("sessionExpired") === "1";
+  const demoUnavailable = searchParams.get("demoUnavailable") === "1";
 
-  function handleDevSubmit(e: React.FormEvent) {
+  useEffect(() => {
+    document.title = "Entrar · Solcor Operações";
+    if (!devLoginEnabled) return;
+    getHealth()
+      .then(setHealth)
+      .catch(() => setHealthError(true));
+  }, []);
+
+  // Só depois de o servidor confirmar — nunca por omissão.
+  const serverAcceptsDemo = health?.dev_login_available === true;
+  const showDemo = devLoginEnabled && serverAcceptsDemo;
+
+  function enterAs(address: string) {
+    setDevUser(address.trim());
+    navigate("/");
+  }
+
+  function handleDevSubmit(e: FormEvent) {
     e.preventDefault();
     if (!email.trim()) return;
-    setDevUser(email.trim());
-    navigate("/projects");
+    enterAs(email);
   }
 
   async function handleMicrosoftLogin() {
     setMsalError(null);
     setRedirecting(true);
     try {
-      // loginRedirect navega para fora da app (Authorization Code + PKCE);
-      // o regresso é tratado em src/auth/msal.ts:ensureMsalReady, chamado
-      // em main.tsx antes da app voltar a renderizar.
       await loginWithMicrosoft();
     } catch (err) {
       setRedirecting(false);
@@ -44,103 +96,130 @@ export default function Login() {
   }
 
   return (
-    <div style={{ fontFamily: "system-ui, sans-serif", maxWidth: 420, margin: "4rem auto", padding: "0 1rem" }}>
-      <h1>Op_PM</h1>
-
-      {sessionExpired && (
-        <div
-          style={{
-            background: "#fdecea",
-            border: "1px solid #e0a29a",
-            borderRadius: 6,
-            padding: "0.75rem 1rem",
-            fontSize: "0.9rem",
-            marginBottom: "1.5rem",
-          }}
-        >
-          A sua sessão expirou. Inicie sessão novamente.
-        </div>
-      )}
-
-      <section style={{ marginBottom: "2rem" }}>
-        <button
-          type="button"
-          onClick={handleMicrosoftLogin}
-          disabled={!isEntraConfigured || redirecting}
-          style={{
-            width: "100%",
-            padding: "0.65rem 1rem",
-            fontSize: "1rem",
-            cursor: isEntraConfigured ? "pointer" : "not-allowed",
-          }}
-        >
-          {redirecting ? "A redirecionar para a Microsoft…" : "Entrar com Microsoft"}
-        </button>
-        {!isEntraConfigured && (
-          <p style={{ fontSize: "0.85rem", color: "#666", marginTop: "0.5rem" }}>
-            Login Microsoft ainda não configurado nesta instalação — faltam{" "}
-            <code>VITE_ENTRA_CLIENT_ID</code>, <code>VITE_ENTRA_TENANT_ID</code> e{" "}
-            <code>VITE_ENTRA_API_SCOPE</code> (ver <code>frontend/.env.example</code> e{" "}
-            <code>docs/OPEN_QUESTIONS.md</code>, pergunta 1). O backend já valida tokens
-            Entra ID reais quando isto estiver disponível.
+    <div className="login">
+      <section className="login__brand" aria-label="Apresentação">
+        <div>
+          <SolcorLogo height={40} />
+          <h1>Gestão de Operações</h1>
+          <p>
+            Plataforma de gestão de operações: projetos, tarefas, visitas técnicas, comissionamentos e a disponibilidade da
+            equipa — num só lugar.
           </p>
-        )}
-        {msalError && (
-          <p style={{ fontSize: "0.85rem", color: "#b3261e", marginTop: "0.5rem" }}>{msalError}</p>
-        )}
+          <ul className="login__features">
+            <li>
+              <Icon name="dashboard" /> Painel com os indicadores da semana
+            </li>
+            <li>
+              <Icon name="folder" /> Estado e progresso de cada projeto
+            </li>
+            <li>
+              <Icon name="columns" /> Tarefas em lista ou Kanban, com prazos e prioridades
+            </li>
+            <li>
+              <Icon name="calendar" /> Férias, ausências e aniversários da equipa
+            </li>
+          </ul>
+        </div>
+        <p className="small" style={{ margin: 0 }}>
+          Acesso reservado a colaboradores. Permissões aplicadas pelo servidor em cada pedido.
+        </p>
       </section>
 
-      {devLoginEnabled && (
-        <section
-          style={{
-            borderTop: "1px dashed #ccc",
-            paddingTop: "1.25rem",
-          }}
-        >
-          <div
-            style={{
-              background: "#fff8e1",
-              border: "1px solid #e0c46a",
-              borderRadius: 6,
-              padding: "0.75rem 1rem",
-              fontSize: "0.85rem",
-              marginBottom: "1rem",
-            }}
-          >
-            <strong>Apenas desenvolvimento/testes.</strong> O backend só aceita este
-            mecanismo com <code>AUTH_ENABLED=false</code> em <code>local</code>/<code>test</code> —
-            nunca disponível em staging/produção.
-          </div>
-
-          <form onSubmit={handleDevSubmit}>
-            <label htmlFor="email" style={{ display: "block", marginBottom: "0.25rem" }}>
-              Email (utilizador de desenvolvimento)
-            </label>
-            <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="chefe.sintetico@example.invalid"
-              style={{ width: "100%", padding: "0.5rem", boxSizing: "border-box", marginBottom: "0.75rem" }}
-            />
-            <button type="submit" style={{ padding: "0.5rem 1rem" }}>
-              Entrar (desenvolvimento)
-            </button>
-          </form>
-
-          <p style={{ fontSize: "0.85rem", color: "#666", marginTop: "1.5rem" }}>
-            Utilizadores sintéticos do seed (ver <code>backend/app/migration/seed_dev.py</code>):
+      <main className="login__panel">
+        <div className="login__card">
+          <h2>Iniciar sessão</h2>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Use a sua conta Microsoft da organização.
           </p>
-          <ul style={{ fontSize: "0.85rem", color: "#666" }}>
-            <li>chefe.sintetico@example.invalid — Chefe de Operações</li>
-            <li>pm.um.sintetico@example.invalid — Project Manager</li>
-            <li>comercial.sintetico@example.invalid — Comercial (só leitura)</li>
-            <li>financeiro.sintetico@example.invalid — Financeiro</li>
-            <li>admin.sintetico@example.invalid — Administrador</li>
-          </ul>
-        </section>
-      )}
+
+          {sessionExpired && <Alert tone="warning">A sua sessão expirou. Inicie sessão novamente.</Alert>}
+          {demoUnavailable && (
+            <Alert tone="danger">O modo demonstração não está disponível neste servidor. Use a conta Microsoft.</Alert>
+          )}
+
+          <button
+            type="button"
+            className="btn btn--primary btn--block"
+            style={{ minHeight: 46 }}
+            onClick={handleMicrosoftLogin}
+            disabled={!isEntraConfigured || redirecting}
+          >
+            <Icon name="microsoft" />
+            {redirecting ? "A redirecionar para a Microsoft…" : "Entrar com Microsoft"}
+          </button>
+          {!isEntraConfigured && (
+            <p className="small muted" style={{ marginTop: 8 }}>
+              O login Microsoft ainda não está configurado nesta instalação (faltam <code>VITE_ENTRA_CLIENT_ID</code>,{" "}
+              <code>VITE_ENTRA_TENANT_ID</code> e <code>VITE_ENTRA_API_SCOPE</code>). Não é necessário para a
+              demonstração.
+            </p>
+          )}
+          {msalError && (
+            <p className="small text-danger" role="alert" style={{ marginTop: 8 }}>
+              {msalError}
+            </p>
+          )}
+
+          {devLoginEnabled && !showDemo && (
+            <p className="small muted" style={{ marginTop: 24 }} role="status">
+              {healthError
+                ? "Não foi possível contactar o servidor — o modo demonstração fica indisponível até o backend responder."
+                : health
+                  ? "Este servidor não aceita o modo demonstração."
+                  : "A verificar se o servidor aceita o modo demonstração…"}
+            </p>
+          )}
+
+          {showDemo && (
+            <section aria-labelledby="demo-title">
+              <div className="divider">ou</div>
+              <Alert tone="warning" title="Modo demonstração (apenas local)">
+                Utilizadores e dados 100% sintéticos. Este acesso só funciona com o servidor em <code>APP_ENV=local</code>{" "}
+                e nunca está disponível em staging ou produção.
+              </Alert>
+              <h3 id="demo-title" style={{ fontSize: "0.95rem", margin: "0 0 10px" }}>
+                Entrar como utilizador de demonstração
+              </h3>
+              <div className="stack">
+                {DEMO_USERS.map((u) => (
+                  <button key={u.email} type="button" className="user-pick" onClick={() => enterAs(u.email)}>
+                    <Avatar name={u.name} />
+                    <span>
+                      <span className="user-pick__name" style={{ display: "block" }}>
+                        {u.role}
+                      </span>
+                      <span className="user-pick__desc">{u.description}</span>
+                    </span>
+                    <Icon name="chevronRight" className="user-pick__arrow" />
+                  </button>
+                ))}
+              </div>
+
+              <details style={{ marginTop: 16 }}>
+                <summary className="small" style={{ cursor: "pointer" }}>
+                  Entrar com outro email sintético
+                </summary>
+                <form onSubmit={handleDevSubmit} style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                  <label htmlFor="email" className="sr-only">
+                    Email do utilizador de demonstração
+                  </label>
+                  <input
+                    id="email"
+                    className="input"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="nome@example.invalid"
+                  />
+                  <button type="submit" className="btn">
+                    Entrar
+                  </button>
+                </form>
+              </details>
+            </section>
+          )}
+        </div>
+      </main>
     </div>
   );
 }
