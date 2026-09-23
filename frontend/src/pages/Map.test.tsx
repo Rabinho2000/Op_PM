@@ -13,6 +13,7 @@ const api = vi.hoisted(() => ({
   createSupplier: vi.fn(),
   createPickupPoint: vi.fn(),
   updateProject: vi.fn(),
+  createTask: vi.fn(),
 }));
 
 vi.mock("../api/client", async () => {
@@ -176,6 +177,47 @@ describe("Mapa operacional", () => {
 
     fireEvent.click(screen.getByLabelText("Com pendências"));
     expect(screen.getByRole("button", { name: "Instalação Sintética Um" })).toBeInTheDocument();
+  });
+
+  it("não oferece 'Criar tarefa' sem permissão de tarefas", async () => {
+    renderWithProviders(<MapPage />, { me: makeMe({ permissions: ["map.view"] }) });
+    fireEvent.click(await screen.findByRole("button", { name: "Instalação Sintética Um" }));
+    await screen.findByText("Detalhe");
+    expect(screen.queryByRole("button", { name: /criar tarefa/i })).not.toBeInTheDocument();
+  });
+
+  it("cria uma tarefa a partir da instalação selecionada e recarrega o mapa", async () => {
+    renderWithProviders(<MapPage />, { me: makeMe({ permissions: ["map.view", "task.edit_all"] }) });
+    fireEvent.click(await screen.findByRole("button", { name: "Instalação Sintética Um" }));
+    fireEvent.click(await screen.findByRole("button", { name: /criar tarefa/i }));
+
+    fireEvent.change(await screen.findByLabelText("Título *"), { target: { value: "Recolher módulos" } });
+    fireEvent.change(screen.getByLabelText("Categoria"), { target: { value: "material" } });
+    fireEvent.change(screen.getByLabelText("Prioridade"), { target: { value: "urgent" } });
+
+    api.createTask.mockResolvedValue({});
+    api.getMapData.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /^criar tarefa$/i }));
+
+    await waitFor(() =>
+      expect(api.createTask).toHaveBeenCalledWith({
+        project_id: "proj-1",
+        title: "Recolher módulos",
+        category: "material",
+        priority: "urgent",
+        due_date: null,
+      })
+    );
+    await waitFor(() => expect(api.getMapData).toHaveBeenCalled()); // attention pode ter mudado
+  });
+
+  it("exige título para criar a tarefa", async () => {
+    renderWithProviders(<MapPage />, { me: makeMe({ permissions: ["map.view", "task.edit_own"] }) });
+    fireEvent.click(await screen.findByRole("button", { name: "Instalação Sintética Um" }));
+    fireEvent.click(await screen.findByRole("button", { name: /criar tarefa/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^criar tarefa$/i }));
+    expect(await screen.findByText("Indique o título da tarefa.")).toBeInTheDocument();
+    expect(api.createTask).not.toHaveBeenCalled();
   });
 
   it("filtra instalações por pesquisa", async () => {

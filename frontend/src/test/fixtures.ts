@@ -102,6 +102,7 @@ export function makeTask(overrides: Partial<Task> = {}): Task {
     description: "",
     status: "todo",
     priority: "medium",
+    category: "workflow",
     assigned_to_person_id: null,
     due_date: "2026-09-18",
     completed_at: null,

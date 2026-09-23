@@ -403,6 +403,19 @@ export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   cancelled: "Cancelada",
 };
 
+// Categoria operacional (D-058) — só field/material contam para o attention
+// do mapa; o servidor valida sempre o valor (TASK_CATEGORIES).
+export type TaskCategory = "workflow" | "field" | "material" | "documentation" | "commercial" | "other";
+
+export const TASK_CATEGORY_LABELS: Record<TaskCategory, string> = {
+  workflow: "Workflow",
+  field: "Campo",
+  material: "Material",
+  documentation: "Documentação",
+  commercial: "Comercial",
+  other: "Outra",
+};
+
 export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = {
   low: "Baixa",
   medium: "Média",
@@ -438,6 +451,7 @@ export interface Task {
   description: string;
   status: TaskStatus;
   priority: TaskPriority;
+  category: TaskCategory;
   assigned_to_person_id: string | null;
   due_date: string | null;
   completed_at: string | null;
@@ -496,6 +510,7 @@ export interface TaskCreatePayload {
   task_type?: string;
   description?: string;
   priority?: TaskPriority;
+  category?: TaskCategory;
   assigned_to_person_id?: string | null;
   due_date?: string | null;
   notes?: string;

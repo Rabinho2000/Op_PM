@@ -2165,3 +2165,38 @@ cor de atenção; pins individuais nas cores do semáforo).
 
 Fora do MVP, por decisão do plano original (Fase F), mantém-se: criar
 tarefas a partir do mapa, movimentos de stock, visitas, otimização de rotas.
+
+## D-061 — Mapa operacional, Fase F (1/n): criar tarefa a partir da instalação selecionada
+
+Primeira funcionalidade da Fase F do plano original, que só podia começar
+depois de o mapa read-only e o contrato do backend estarem estáveis
+(D-058 a D-060, todos integrados em `main`). A Fase F é feita **uma
+funcionalidade por PR**, da de menor risco para a de maior.
+
+**O que é:** o painel de detalhe de uma instalação (`Map.tsx`) ganha o botão
+**Criar tarefa** (só visível com `task.edit_all` ou `task.edit_own`), que abre
+`CreateTaskModal` (título, categoria — omissão `field` —, prioridade, prazo).
+Depois de criar, o mapa é recarregado, porque o `attention` do projeto pode ter
+mudado.
+
+**Sem backend novo:** reaproveita `POST /api/tasks`. O servidor continua a ser a
+única autoridade — um PM só cria no seu projeto e só atribuída a si (D-052),
+categoria e prioridade são validadas contra `TASK_CATEGORIES`/`TASK_PRIORITIES`;
+o botão escondido na UI é conveniência, nunca segurança. Um erro do servidor
+(403/400) aparece no modal.
+
+`frontend/src/api/client.ts` ganhou `TaskCategory`/`TASK_CATEGORY_LABELS` e o
+campo `category` em `Task`/`TaskCreatePayload` (o backend já o devolvia desde
+D-058, mas o tipo do frontend ainda não o conhecia).
+
+**Testes:** +3 em `Map.test.tsx` (botão escondido sem permissão; criação com o
+`project_id`/categoria/prioridade certos e recarga do mapa; título obrigatório)
+— 98 Vitest no total. Validado no browser contra o seed real: uma tarefa
+`material` urgente criada em "F — PM Legado" fez o projeto passar de verde a
+"Crítico" e o resumo de 62.5% para 50% limpo / 1 para 2 críticos.
+
+**Fica para as fatias seguintes da Fase F** (cada uma exige decisões próprias,
+sobretudo as que mexem em stock): registar entrega/recolha de material (o ledger
+físico ainda não distingue "reservado" de "entregue no local" — dívida de D-058),
+visitas futuras, fornecedores no mapa com pedido, combinar vários trabalhos numa
+deslocação e otimização de rota. Gamificação fica fora.
