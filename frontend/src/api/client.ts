@@ -1156,6 +1156,65 @@ export interface RouteOptimization {
 export const optimizeRoute = (stops: { kind: RouteStopKind; id: string }[], roundTrip: boolean) =>
   apiPost<RouteOptimization>("/api/map/optimize-route", { stops, round_trip: roundTrip });
 
+// Plano de deslocação (D-066): a rota otimizada mais o que há para fazer em
+// cada instalação. Só leitura. Cada secção é `null` quando o utilizador não
+// tem a permissão para a ver — nunca uma lista vazia (que diria "nada a fazer").
+export interface TripTask {
+  id: string;
+  title: string;
+  category: string;
+  priority: string;
+  status: string;
+  due_date: string | null;
+  is_overdue: boolean;
+}
+
+export interface TripIssue {
+  id: string;
+  description: string;
+  category: string;
+  priority: string;
+  due_date: string | null;
+}
+
+export interface TripCollect {
+  item_id: string;
+  item_name: string | null;
+  item_unit: string | null;
+  quantity: string;
+}
+
+export interface TripStopJobs {
+  tasks: TripTask[] | null;
+  issues: TripIssue[] | null;
+  collect: TripCollect[] | null;
+  next_visit: MapNextVisit | null;
+}
+
+export interface TripStop extends RouteStop {
+  info: string | null;
+  jobs: TripStopJobs | null;
+}
+
+export interface TripSummary {
+  projects: number;
+  suppliers: number;
+  pickup_points: number;
+  operational_tasks: number | null;
+  overdue_tasks: number | null;
+  issues: number | null;
+  items_to_collect: number | null;
+}
+
+export interface TripPlan extends Omit<RouteOptimization, "stops"> {
+  stops: TripStop[];
+  summary: TripSummary;
+  visibility: { tasks: boolean; issues: boolean; material: boolean; visits: boolean };
+}
+
+export const planTrip = (stops: { kind: RouteStopKind; id: string }[], roundTrip: boolean) =>
+  apiPost<TripPlan>("/api/map/trip-plan", { stops, round_trip: roundTrip });
+
 export const listSuppliers = () => apiGet<MapSupplier[]>("/api/suppliers");
 export const createSupplier = (payload: Partial<MapSupplier> & { name: string }) =>
   apiPost<MapSupplier>("/api/suppliers", payload);

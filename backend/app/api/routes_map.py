@@ -33,6 +33,7 @@ from app.schemas.map import (
     RouteStopRead,
     SupplierCreate,
     SupplierUpdate,
+    TripPlanResponse,
 )
 from app.schemas.tasks import TaskRead
 from app.security.current_user import get_auth_context
@@ -56,13 +57,8 @@ from app.services.map import (
     update_project_issue,
 )
 from app.services.projects import get_visible_project
-from app.services.route_optimization import (
-    RouteError,
-    haversine_km,
-    optimize_order,
-    resolve_stops,
-    route_length_km,
-)
+from app.services.route_optimization import RouteError, compute_route, resolve_stops
+from app.services.trip_planning import plan_trip
 
 router = APIRouter(tags=["map"])
 
@@ -345,40 +341,42 @@ def optimize_route_endpoint(
     Só lê — não grava nada. A primeira paragem é o ponto de partida."""
     _require_map_view(ctx)
     try:
-        stops = resolve_stops(db, ctx, [(s.kind, s.id) for s in body.stops])
-        points = [(s.lat, s.lon) for s in stops]
-        order, method = optimize_order(points, body.round_trip)
+        route = compute_route(resolve_stops(db, ctx, [(s.kind, s.id) for s in body.stops]), body.round_trip)
     except RouteError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-
-    requested = route_length_km(points, list(range(len(points))), body.round_trip)
-    total = route_length_km(points, order, body.round_trip)
-
-    ordered = [stops[i] for i in order]
-    result: list[RouteStopRead] = []
-    cumulative = 0.0
-    for index, stop in enumerate(ordered):
-        leg = haversine_km((ordered[index - 1].lat, ordered[index - 1].lon), (stop.lat, stop.lon)) if index else 0.0
-        cumulative += leg
-        result.append(
-            RouteStopRead(
-                kind=stop.kind,
-                id=stop.id,
-                name=stop.name,
-                lat=stop.lat,
-                lon=stop.lon,
-                leg_km=round(leg, 2),
-                cumulative_km=round(cumulative, 2),
-            )
-        )
-    first, last = ordered[0], ordered[-1]
-    return_leg = haversine_km((last.lat, last.lon), (first.lat, first.lon)) if body.round_trip else None
     return RouteOptimizationResponse(
-        stops=result,
-        return_leg_km=round(return_leg, 2) if return_leg is not None else None,
-        round_trip=body.round_trip,
-        total_km=round(total, 2),
-        requested_order_km=round(requested, 2),
-        saved_km=round(max(requested - total, 0.0), 2),
-        method=method,
+        stops=[
+            RouteStopRead(
+                kind=leg.stop.kind,
+                id=leg.stop.id,
+                name=leg.stop.name,
+                lat=leg.stop.lat,
+                lon=leg.stop.lon,
+                leg_km=leg.leg_km,
+                cumulative_km=leg.cumulative_km,
+            )
+            for leg in route.legs
+        ],
+        return_leg_km=route.return_leg_km,
+        round_trip=route.round_trip,
+        total_km=route.total_km,
+        requested_order_km=route.requested_order_km,
+        saved_km=route.saved_km,
+        method=route.method,
     )
+
+
+@router.post("/api/map/trip-plan", response_model=TripPlanResponse)
+def trip_plan_endpoint(
+    body: RouteOptimizationRequest,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> TripPlanResponse:
+    """Plano de deslocação (D-066): a rota otimizada mais o que há para fazer em
+    cada instalação. Só lê — não cria tarefas, eventos nem movimentos. Cada
+    secção respeita a sua permissão e é `null` quando o utilizador não a tem."""
+    _require_map_view(ctx)
+    try:
+        return plan_trip(db, ctx, [(s.kind, s.id) for s in body.stops], body.round_trip)
+    except RouteError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))

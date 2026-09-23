@@ -23,9 +23,11 @@ import {
   MapProject,
   MapSupplier,
   optimizeRoute,
+  planTrip,
   ProjectIssue,
   RouteOptimization,
   RouteStopKind,
+  TripPlan,
   TASK_CATEGORY_LABELS,
   TASK_PRIORITY_LABELS,
   TaskCategory,
@@ -33,6 +35,7 @@ import {
   updateProject,
 } from "../api/client";
 import Icon, { IconName } from "../components/Icon";
+import TripPlanModal from "../components/TripPlanModal";
 import { useToast } from "../components/Toast";
 import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHeader, Tone } from "../components/ui";
 import { useSession } from "../session/SessionContext";
@@ -674,6 +677,8 @@ export default function MapPage() {
   const [optimizedRoute, setOptimizedRoute] = useState<RouteOptimization | null>(null);
   const [optimizingRoute, setOptimizingRoute] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
+  const [tripPlan, setTripPlan] = useState<TripPlan | null>(null);
+  const [planningTrip, setPlanningTrip] = useState(false);
 
   // Uma rota otimizada só vale para a seleção e a opção com que foi calculada.
   useEffect(() => {
@@ -787,6 +792,31 @@ export default function MapPage() {
     }
   }
 
+  function openInMaps(coords: string[], roundTrip: boolean = routeRoundTrip) {
+    // Com regresso, a rota fecha no ponto de partida.
+    const all = roundTrip ? [...coords, coords[0]] : coords;
+    const destination = all[all.length - 1];
+    const waypoints = all.slice(0, -1).join("|");
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${destination}&waypoints=${encodeURIComponent(waypoints)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  async function handlePlanTrip() {
+    setPlanningTrip(true);
+    setRouteError(null);
+    try {
+      const stops = Array.from(selectedForRoute).map((key) => {
+        const [kind, id] = key.split(":");
+        return { kind: kind as RouteStopKind, id };
+      });
+      setTripPlan(await planTrip(stops, routeRoundTrip));
+    } catch (err) {
+      setRouteError(err instanceof ApiError ? err.detail : "Não foi possível planear a deslocação.");
+    } finally {
+      setPlanningTrip(false);
+    }
+  }
+
   function openExternalRoute() {
     const coords: string[] = [];
     if (optimizedRoute) {
@@ -810,12 +840,7 @@ export default function MapPage() {
       notify("Selecione pelo menos dois locais para abrir uma rota.", "error");
       return;
     }
-    // Com regresso, a rota fecha no ponto de partida.
-    if (routeRoundTrip) coords.push(coords[0]);
-    const destination = coords[coords.length - 1];
-    const waypoints = coords.slice(0, -1).join("|");
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${destination}&waypoints=${encodeURIComponent(waypoints)}`;
-    window.open(url, "_blank", "noopener,noreferrer");
+    openInMaps(coords);
   }
 
   if (error) {
@@ -1053,6 +1078,14 @@ export default function MapPage() {
                   disabled={selectedForRoute.size < 2 || optimizingRoute}
                 >
                   <Icon name="refresh" size={14} /> {optimizingRoute ? "A otimizar…" : "Otimizar ordem"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  onClick={handlePlanTrip}
+                  disabled={selectedForRoute.size < 2 || planningTrip}
+                >
+                  <Icon name="list" size={14} /> {planningTrip ? "A planear…" : "Planear deslocação"}
                 </button>
                 <button type="button" className="btn btn--sm" onClick={openExternalRoute} disabled={selectedForRoute.size < 2}>
                   <Icon name="mapPin" size={14} /> Abrir rota ({selectedForRoute.size})
@@ -1316,6 +1349,15 @@ export default function MapPage() {
             notify("Tarefa criada.", "success");
             load(); // o attention do projeto pode ter mudado
           }}
+        />
+      )}
+
+      {tripPlan && (
+        <TripPlanModal
+          plan={tripPlan}
+          onClose={() => setTripPlan(null)}
+          onOpenRoute={() => openInMaps(tripPlan.stops.map((stop) => `${stop.lat},${stop.lon}`), tripPlan.round_trip)}
+          onCopied={(ok) => notify(ok ? "Resumo copiado." : "Não foi possível copiar o resumo.", ok ? "success" : "error")}
         />
       )}
 

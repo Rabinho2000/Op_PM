@@ -87,6 +87,15 @@ distância em **linha reta** (aproximação, não quilómetros de condução).
 **Nenhum pedido a um serviço de routing** nem geocoding; estradas, portagens e
 tempos continuam fora de âmbito. Ver `docs/DECISIONS.md` D-065.
 
+**Plano de deslocação (D-066).** "Planear deslocação" chama
+`POST /api/map/trip-plan` (mesmo corpo, `map.view`): devolve a rota otimizada e,
+por instalação, o que há a fazer — tarefas operacionais abertas, pendências
+abertas, material no local a recolher e a próxima visita agendada. Só leitura
+(não cria nada). Cada secção é `null` quando o utilizador não tem a permissão
+respetiva (`task.view_*`, `project_issue.view`, `inventory.view`,
+`calendar.view`), nunca uma lista vazia. A UI permite abrir a rota pela ordem
+calculada e copiar um resumo em texto.
+
 ### UI (`frontend/src/pages/Map.tsx`)
 
 - Mapa visual com Leaflet quando `config.provider_enabled` é verdadeiro
