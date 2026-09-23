@@ -21,7 +21,7 @@ import {
 import Icon from "../components/Icon";
 import { useToast } from "../components/Toast";
 import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHeader, Tone } from "../components/ui";
-import { todayIsoLisbon } from "../utils/dates";
+import { lisbonWallClockToIso, todayIsoLisbon } from "../utils/dates";
 
 type ViewMode = "list" | "week" | "month";
 type Scope = "all" | "mine" | "pm" | "project" | "responsible";
@@ -208,8 +208,10 @@ function EventModal({
 
   const conflicts = useMemo(() => {
     if (!form.assigned_to_person_id || !form.starts_at || !form.ends_at) return [];
-    const startsIso = `${form.starts_at}:00`;
-    const endsIso = `${form.ends_at}:00`;
+    // Instantes reais (hora de Lisboa -> ISO com offset), nunca strings sem
+    // offset, que o JS interpretaria na hora local de quem executa.
+    const startsIso = lisbonWallClockToIso(form.starts_at);
+    const endsIso = lisbonWallClockToIso(form.ends_at);
     return findConflicts(allEvents, {
       id: event?.id,
       assigned_to_person_id: form.assigned_to_person_id,
@@ -241,8 +243,8 @@ function EventModal({
     try {
       const payload = {
         title: form.title.trim(),
-        starts_at: `${form.starts_at}:00`,
-        ends_at: `${form.ends_at}:00`,
+        starts_at: lisbonWallClockToIso(form.starts_at),
+        ends_at: lisbonWallClockToIso(form.ends_at),
         project_id: form.project_id || null,
         task_id: form.task_id || null,
         assigned_to_person_id: form.assigned_to_person_id || null,
@@ -421,8 +423,8 @@ export default function Planning() {
   function load() {
     setError(null);
     listCalendarEvents({
-      starts_from: `${range.startIso}T00:00:00`,
-      starts_to: `${range.endIso}T23:59:59`,
+      starts_from: lisbonWallClockToIso(`${range.startIso}T00:00`),
+      starts_to: lisbonWallClockToIso(`${range.endIso}T23:59`),
       mine_only: scope === "mine",
       project_id: scope === "project" && scopeProjectId ? scopeProjectId : undefined,
       assigned_to_person_id: scope === "responsible" && scopeResponsibleId ? scopeResponsibleId : undefined,
