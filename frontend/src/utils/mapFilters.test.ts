@@ -59,6 +59,11 @@ describe("filterMapProjects", () => {
     expect(filterMapProjects([hidden], { ...EMPTY_MAP_FILTERS, onlyWithMaterial: true })).toHaveLength(0);
   });
 
+  it("filtra por cliente (correspondência exata)", () => {
+    expect(filterMapProjects(all, { ...EMPTY_MAP_FILTERS, client: "Cliente B" }).map((p) => p.id)).toEqual(["r"]);
+    expect(filterMapProjects(all, { ...EMPTY_MAP_FILTERS, client: "Cliente" })).toHaveLength(0);
+  });
+
   it("combina pesquisa (nome/cliente), PM e estado", () => {
     expect(filterMapProjects(all, { ...EMPTY_MAP_FILTERS, search: "cliente b" }).map((p) => p.id)).toEqual(["r"]);
     expect(filterMapProjects(all, { ...EMPTY_MAP_FILTERS, pm: "Outro" })).toHaveLength(0);

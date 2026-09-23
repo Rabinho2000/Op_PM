@@ -6,6 +6,8 @@
 // pedido explícito — só seleção manual + link para uma rota externa.
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import "leaflet.markercluster";
+import "leaflet.markercluster/dist/MarkerCluster.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -340,12 +342,32 @@ type MapItem = {
   // Só definido para projetos — sobrepõe a cor por omissão da camada com
   // a cor do `attention` (ver ATTENTION_COLORS acima).
   color?: string;
+  // Só definido para projetos — usado para colorir os clusters pela pior
+  // attention dos pins agrupados (ver clusterIcon).
+  attention?: MapAttention;
 };
+
+const ATTENTION_RANK: Record<MapAttention, number> = { green: 0, yellow: 1, red: 2 };
+
+// Ícone do cluster de instalações: cor pela PIOR attention dos filhos (nunca
+// pelas cores por omissão do plugin, que se confundiriam com o semáforo).
+function clusterIcon(cluster: L.MarkerCluster): L.DivIcon {
+  let worst: MapAttention = "green";
+  for (const marker of cluster.getAllChildMarkers()) {
+    const a = (marker.options as { attention?: MapAttention }).attention ?? "green";
+    if (ATTENTION_RANK[a] > ATTENTION_RANK[worst]) worst = a;
+  }
+  return L.divIcon({
+    className: "",
+    html: `<span style="display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;background:${ATTENTION_COLORS[worst]};color:#fff;font-weight:700;border:3px solid white;box-shadow:0 0 3px rgba(0,0,0,0.5);">${cluster.getChildCount()}</span>`,
+    iconSize: [34, 34],
+  });
+}
 
 function LeafletMap({ items }: { items: MapItem[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
-  const markersRef = useRef<L.Marker[]>([]);
+  const layersRef = useRef<L.Layer[]>([]);
   const { config } = useMapConfigContext();
 
   useEffect(() => {
@@ -363,17 +385,28 @@ function LeafletMap({ items }: { items: MapItem[] }) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    markersRef.current.forEach((m) => m.remove());
-    markersRef.current = [];
+    layersRef.current.forEach((l) => l.remove());
+    layersRef.current = [];
+    // Só as instalações são agrupadas; fornecedores/recolhas/pendências
+    // ficam soltos (significados diferentes, poucos pontos).
+    const clusters = L.markerClusterGroup({ iconCreateFunction: clusterIcon, maxClusterRadius: 50 });
     const bounds: L.LatLngExpression[] = [];
     for (const item of items) {
-      const marker = L.marker([item.lat, item.lon], { icon: makeDivIcon(item.color ?? MARKER_COLORS[item.layer]) })
-        .addTo(map)
+      const marker = L.marker([item.lat, item.lon], {
+        icon: makeDivIcon(item.color ?? MARKER_COLORS[item.layer]),
+        attention: item.attention,
+      } as L.MarkerOptions)
         .bindTooltip(item.title)
         .on("click", item.onClick);
-      markersRef.current.push(marker);
+      if (item.layer === "projects") clusters.addLayer(marker);
+      else {
+        marker.addTo(map);
+        layersRef.current.push(marker);
+      }
       bounds.push([item.lat, item.lon]);
     }
+    clusters.addTo(map);
+    layersRef.current.push(clusters);
     if (bounds.length > 0) {
       map.fitBounds(bounds as L.LatLngBoundsExpression, { padding: [30, 30], maxZoom: 14 });
     }
@@ -475,6 +508,11 @@ export default function MapPage() {
     return Array.from(new Set(data.projects.map((p) => p.pm_display_name).filter((x): x is string => Boolean(x))));
   }, [data]);
 
+  const clientOptions = useMemo(() => {
+    if (!data) return [];
+    return Array.from(new Set(data.projects.map((p) => p.client_name).filter((x): x is string => Boolean(x)))).sort();
+  }, [data]);
+
   const mapItems = useMemo(() => {
     if (!data) return [];
     const items: MapItem[] = [];
@@ -489,6 +527,7 @@ export default function MapPage() {
             title: `${p.name} — ${ATTENTION_LABELS[p.attention]}`,
             onClick: () => setSelected({ kind: "project", item: p }),
             color: ATTENTION_COLORS[p.attention],
+            attention: p.attention,
           });
         }
       }
@@ -618,6 +657,17 @@ export default function MapPage() {
             {pmOptions.map((pm) => (
               <option key={pm} value={pm}>
                 {pm}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="map-client">Cliente</label>
+          <select id="map-client" className="select" value={filters.client} onChange={(e) => setFilters({ ...filters, client: e.target.value })}>
+            <option value="">Todos</option>
+            {clientOptions.map((c) => (
+              <option key={c} value={c}>
+                {c}
               </option>
             ))}
           </select>

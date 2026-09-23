@@ -6,6 +6,7 @@ import type { MapAttention, MapProject } from "../api/client";
 export interface MapFilters {
   search: string;
   pm: string;
+  client: string;
   status: string;
   attention: MapAttention | "";
   onlyWithPending: boolean; // pendências abertas OU tarefas operacionais abertas
@@ -15,6 +16,7 @@ export interface MapFilters {
 export const EMPTY_MAP_FILTERS: MapFilters = {
   search: "",
   pm: "",
+  client: "",
   status: "",
   attention: "",
   onlyWithPending: false,
@@ -28,6 +30,7 @@ export function filterMapProjects(projects: MapProject[], filters: MapFilters): 
       return false;
     }
     if (filters.pm && p.pm_display_name !== filters.pm) return false;
+    if (filters.client && p.client_name !== filters.client) return false;
     if (filters.status && p.status !== filters.status) return false;
     if (filters.attention && p.attention !== filters.attention) return false;
     if (filters.onlyWithPending && p.issues_count === 0 && p.operational_tasks_count === 0) return false;
