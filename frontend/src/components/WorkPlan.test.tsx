@@ -18,7 +18,7 @@ vi.mock("../api/client", async () => {
 const INSTALLERS: Installer[] = [
   {
     id: "i-vm",
-    name: "Verde Milenar",
+    name: "Instalador A",
     is_active: true,
     project_count: 3,
     teams: [
@@ -35,7 +35,7 @@ const planned = () =>
   makeProject({
     can_plan_work: true,
     installer_id: "i-vm",
-    installer_name: "Verde Milenar",
+    installer_name: "Instalador A",
     installer_team_id: "t-1",
     installer_team_name: "Equipa 1",
     installer_team_leader_name: "Chefe Um",
@@ -52,7 +52,7 @@ describe("WorkPlanCard", () => {
 
   it("mostra instalador, equipa com o chefe e as datas", () => {
     renderWithProviders(<WorkPlanCard project={planned()} onChanged={vi.fn()} />);
-    expect(screen.getByText("Verde Milenar")).toBeInTheDocument();
+    expect(screen.getByText("Instalador A")).toBeInTheDocument();
     expect(screen.getByText("Equipa 1")).toBeInTheDocument();
     expect(screen.getByText(/chefe Chefe Um/)).toBeInTheDocument();
     expect(screen.getByText("05/10/2026")).toBeInTheDocument();
@@ -128,7 +128,7 @@ describe("WorkPlanCard", () => {
     const project = makeProject({
       can_plan_work: true,
       installer_id: "i-vm",
-      installer_name: "Verde Milenar",
+      installer_name: "Instalador A",
       work_start_date: "2026-05-12",
       work_end_date: "2026-05-22",
       work_dates_estimated: true,

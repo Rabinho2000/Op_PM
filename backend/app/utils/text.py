@@ -1,6 +1,6 @@
 """Normalização de texto partilhada (nomes de fornecedores, tipos de material,
 instaladores…): minúsculas, sem acentos e com espaços colapsados, para que
-"  Verde  Milenar " e "verde milenar" sejam o mesmo nome."""
+"  Instalador  A " e "instalador a" sejam o mesmo nome."""
 from __future__ import annotations
 
 import unicodedata

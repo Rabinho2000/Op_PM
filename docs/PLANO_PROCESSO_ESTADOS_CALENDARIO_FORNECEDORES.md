@@ -58,7 +58,7 @@ subtarefas), com progresso, responsável e prazos.
   subtarefas. Os responsáveis do legado que são nomes de pessoas (o chefe do
   departamento e a pessoa de Suporte) ou externos (VM, CE) têm o tratamento
   definido em D5: o primeiro é o chefe do departamento; o segundo é a pessoa de
-  Suporte; VM é o subempreiteiro Verde Milenar; CE = chefe de equipa, que passa a resolver-se
+  Suporte; VM é o subempreiteiro Instalador A; CE = chefe de equipa, que passa a resolver-se
   para o chefe da **equipa atribuída ao projeto** (ver feature 3).
 - **API** (leitura + escrita, sempre no âmbito do projeto — 404 fora dele):
   `GET /api/projects/{id}/workflow` (fases → etapas → subtarefas com o estado de
@@ -105,7 +105,7 @@ feature).
 **Pré-requisitos (PR próprio):**
 1. **Instalador como entidade, com equipas** (D11):
    - `installers` (nome, ativo) e `installer_teams` (instalador, nome da equipa,
-     chefe de equipa, ativa). A Verde Milenar tem **3 equipas**, cada uma com o
+     chefe de equipa, ativa). O Instalador A tem **3 equipas**, cada uma com o
      seu chefe; os outros instaladores podem ter zero, uma ou mais.
    - `Project.installer_id` e `Project.installer_team_id` (opcional; a equipa tem
      de pertencer ao instalador — validado na API e com restrição na base de
@@ -129,7 +129,7 @@ feature).
   `visible_projects_query` (mesmo âmbito de permissões do resto da app), com
   número de queries limitado e testado.
 - **Página `/works`:** linhas = instaladores e, dentro de cada um, as suas
-  **equipas** (ex.: Verde Milenar → Equipa 1, 2, 3, "Sem equipa"); instaladores
+  **equipas** (ex.: Instalador A → Equipa 1, 2, 3, "Sem equipa"); instaladores
   sem equipas têm uma só linha; mais "Sem instalador". Eixo do
   tempo horizontal com zoom semana/mês/trimestre, barras coloridas por estado,
   linha de "hoje", sobreposição em faixas (várias obras do mesmo instalador em
@@ -148,14 +148,14 @@ feature).
 |---|---|---|
 | **D1** | Quem manda no estado: o Op_PM ou o ClickUp? | **DECIDIDO: Op_PM.** Campo próprio; o ClickUp fica como espelho até a Fase 8 decidir a sincronização. |
 | **D2** | Os 2 projetos que não cabem nos 6 estados ("vendido" e vazio). | **DECIDIDO:** ficam em **On hold pelo cliente**. |
-| **D3** | Instalador: entidade própria ou texto livre normalizado? | **Entidade** (`installers`), inicializada com os 9 nomes do export. Evita "GPS Energia"/"gps energia" como instaladores diferentes. |
+| **D3** | Instalador: entidade própria ou texto livre normalizado? | **Entidade** (`installers`), inicializada com os 9 nomes do export. Evita "Instalador B"/"instalador b" como instaladores diferentes. |
 | **D4** | Datas da obra: derivadas do processo ou introduzidas à mão? | **Campos explícitos**, preenchidos por derivação e editáveis. **Verificado no export:** `shift` só existe em 2 dos 295 projetos, por isso a derivação é `startDate` + dias úteis do modelo base (obra = dia útil 41 a 49, cerca de 9 dias úteis). Nos projetos ainda ativos essas datas já passaram (ex.: obras "em construção" com a janela derivada em fevereiro–agosto), ou seja, **a derivação reflete o modelo, não a realidade**. Ficam marcadas como *estimadas* e é preciso rever à mão as datas dos ~31 projetos não concluídos. |
-| **D5** | Responsáveis do processo (chefe do departamento, Suporte, VM, CE). | **PARCIALMENTE DECIDIDO.** O primeiro é o chefe do departamento. O segundo é a pessoa de Suporte: as etapas em que consta como responsável (registos de licenciamento, projeto eletrotécnico) ficam com ela, e os projetos antigos em que era PM continuam associados a ela. VM = Verde Milenar (subempreiteiro). CE = **chefe de equipa** (confirmado): na etapa "Acompanhamento da obra" resolve-se para o chefe da equipa atribuída ao projeto. **Regra final (Suporte):** a pessoa de Suporte trabalha hoje no departamento de suporte e faz os licenciamentos (registos de entidade e UPAC, pedidos de inspeção) e os projetos eletrotécnicos, **só nos projetos do PM A e do PM B**; nos projetos do PM C essas tarefas são feitas por ele (o PM). |
+| **D5** | Responsáveis do processo (chefe do departamento, Suporte, VM, CE). | **PARCIALMENTE DECIDIDO.** O primeiro é o chefe do departamento. O segundo é a pessoa de Suporte: as etapas em que consta como responsável (registos de licenciamento, projeto eletrotécnico) ficam com ela, e os projetos antigos em que era PM continuam associados a ela. VM = Instalador A (subempreiteiro). CE = **chefe de equipa** (confirmado): na etapa "Acompanhamento da obra" resolve-se para o chefe da equipa atribuída ao projeto. **Regra final (Suporte):** a pessoa de Suporte trabalha hoje no departamento de suporte e faz os licenciamentos (registos de entidade e UPAC, pedidos de inspeção) e os projetos eletrotécnicos, **só nos projetos do PM A e do PM B**; nos projetos do PM C essas tarefas são feitas por ele (o PM). |
 | **D6** | Transições de estado livres ou por ordem? | **Livres**, com histórico (o ClickUp de hoje é manual). Um aviso, não um bloqueio, se saltar etapas. |
 | **D7** | Fornecedores: "contacto telefónico" é campo novo? Vários tipos de material? | **DECIDIDO:** `phone` novo (o `contact` passa a "pessoa de contacto") e **um fornecedor tem vários tipos de material** (tabela de tipos + associação, filtrável). |
 | **D8** | Fornecedores: lista inicial? | **DECIDIDO:** lista criada a partir dos sites dos fornecedores que indicaste (16). Fica num ficheiro **local, fora do git**, e é carregada no PR 2. |
 | **D9** | Quem pode ver/editar fornecedores? | Ver: quem já vê o inventário/pedidos; editar: `supplier.manage` (já existe). |
-| **D11** | Equipas do instalador. | **DECIDIDO:** a Verde Milenar tem 3 equipas, cada uma com o seu chefe (nomes fornecidos; guardados só na base de dados, não no repositório). Falta saber se os outros subempreiteiros têm equipas. |
+| **D11** | Equipas do instalador. | **DECIDIDO:** o Instalador A tem 3 equipas, cada uma com o seu chefe (nomes fornecidos; guardados só na base de dados, não no repositório). Falta saber se os outros subempreiteiros têm equipas. |
 | **D10** | Que obras mostra o calendário por omissão? | Janela de −3 a +6 meses, **todos os estados**, com o filtro de estado à mão (212 obras já certificadas encheriam o ecrã). |
 
 ## 7. Feature 4 — Lista de fornecedores
@@ -178,7 +178,7 @@ Contacto telefónico (**novo** `phone`) · Email (`email`) · Localização
 - **Lista inicial (16 fornecedores):** recolhida dos sites públicos e guardada
   num JSON **local fora do repositório** (é informação comercial da Solcor).
   Um comando administrativo carrega-a (idempotente por nome). Nem todos os sites
-  expõem contactos: 4 ficaram sem alguns campos e 1 (Mauser) sem nenhum, a
+  expõem contactos: 4 ficaram sem alguns campos e 1 (Fornecedor C) sem nenhum, a
   preencher à mão. Os dados foram lidos automaticamente das páginas e **têm de
   ser confirmados** antes de os usares (telefones, emails e moradas).
 - **Vocabulário de tipos** proposto (editável): painéis fotovoltaicos,

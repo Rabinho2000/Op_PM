@@ -21,7 +21,7 @@ vi.mock("../api/client", async () => {
 const DATA: Installer[] = [
   {
     id: "i-vm",
-    name: "Verde Milenar",
+    name: "Instalador A",
     is_active: true,
     project_count: 1,
     teams: [
@@ -42,7 +42,7 @@ describe("Installers", () => {
 
   it("lista instaladores, equipas, chefes e nº de obras", async () => {
     renderWithProviders(<Installers />, { me: manager() });
-    expect(await screen.findByText("Verde Milenar")).toBeInTheDocument();
+    expect(await screen.findByText("Instalador A")).toBeInTheDocument();
     expect(screen.getByText("1 obra ativa")).toBeInTheDocument();
     expect(screen.getByText("Chefe Um")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "+351 910 000 001" })).toHaveAttribute("href", "tel:+351910000001");
@@ -53,7 +53,7 @@ describe("Installers", () => {
 
   it("sem permissão de gestão não mostra criar nem editar", async () => {
     renderWithProviders(<Installers />, { me: makeMe({ permissions: ["project.view_all"] }) });
-    await screen.findByText("Verde Milenar");
+    await screen.findByText("Instalador A");
     expect(screen.queryByRole("button", { name: /Novo instalador/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Editar/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Nova equipa/ })).not.toBeInTheDocument();
@@ -62,7 +62,7 @@ describe("Installers", () => {
   it("cria um instalador e recarrega a lista", async () => {
     createInstaller.mockResolvedValue({ ...DATA[1], id: "i-new", name: "Novo Instalador" });
     renderWithProviders(<Installers />, { me: manager() });
-    await screen.findByText("Verde Milenar");
+    await screen.findByText("Instalador A");
 
     fireEvent.click(screen.getByRole("button", { name: /Novo instalador/ }));
     const dialog = await screen.findByRole("dialog");
@@ -79,7 +79,7 @@ describe("Installers", () => {
   it("cria uma equipa com chefe e valida o telefone", async () => {
     createInstallerTeam.mockResolvedValue(DATA[0]);
     renderWithProviders(<Installers />, { me: manager() });
-    await screen.findByText("Verde Milenar");
+    await screen.findByText("Instalador A");
 
     fireEvent.click(screen.getAllByRole("button", { name: "Nova equipa" })[0]);
     const dialog = await screen.findByRole("dialog");
@@ -101,9 +101,9 @@ describe("Installers", () => {
   it("edita e desativa uma equipa", async () => {
     updateInstallerTeam.mockResolvedValue(DATA[0]);
     renderWithProviders(<Installers />, { me: manager() });
-    await screen.findByText("Verde Milenar");
+    await screen.findByText("Instalador A");
 
-    fireEvent.click(screen.getByRole("button", { name: "Editar Equipa 1 de Verde Milenar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Editar Equipa 1 de Instalador A" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByLabelText("Chefe de equipa")).toHaveValue("Chefe Um");
     fireEvent.click(within(dialog).getByLabelText(/Equipa ativa/));
@@ -121,7 +121,7 @@ describe("Installers", () => {
   it("desativa e reativa um instalador", async () => {
     updateInstaller.mockResolvedValue(DATA[0]);
     renderWithProviders(<Installers />, { me: manager() });
-    await screen.findByText("Verde Milenar");
+    await screen.findByText("Instalador A");
     fireEvent.click(screen.getByRole("button", { name: "Desativar" }));
     await waitFor(() => expect(updateInstaller).toHaveBeenCalledWith("i-vm", { is_active: false }));
     fireEvent.click(screen.getByRole("button", { name: "Reativar" }));

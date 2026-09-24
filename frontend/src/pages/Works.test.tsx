@@ -28,7 +28,7 @@ const STATUSES = [
 const INSTALLERS: Installer[] = [
   {
     id: "i-vm",
-    name: "Verde Milenar",
+    name: "Instalador A",
     is_active: true,
     project_count: 2,
     teams: [
@@ -36,7 +36,7 @@ const INSTALLERS: Installer[] = [
       { id: "t-2", name: "Equipa 2", leader_name: null, leader_phone: null, is_active: true, project_count: 0 },
     ],
   },
-  { id: "i-gps", name: "GPS Energia", is_active: true, project_count: 1, teams: [] },
+  { id: "i-gps", name: "Instalador B", is_active: true, project_count: 1, teams: [] },
 ];
 
 function work(id: string, start: string, end: string, extra: Partial<WorkItem> = {}): WorkItem {
@@ -48,7 +48,7 @@ function work(id: string, start: string, end: string, extra: Partial<WorkItem> =
     pm_display_name: "PM Um",
     lifecycle_status: "construcao",
     installer_id: "i-vm",
-    installer_name: "Verde Milenar",
+    installer_name: "Instalador A",
     installer_team_id: "t-1",
     installer_team_name: "Equipa 1",
     work_start_date: start,
@@ -91,7 +91,7 @@ describe("Works (calendário de obras)", () => {
       calendar([
         work("a", today, today, { name: "Obra Alfa", conflict: true }),
         work("b", today, today, { name: "Obra Beta", conflict: true }),
-        work("c", today, today, { name: "Obra Gama", installer_id: "i-gps", installer_name: "GPS Energia", installer_team_id: null, installer_team_name: null, work_dates_estimated: true, lifecycle_status: "preparacao" }),
+        work("c", today, today, { name: "Obra Gama", installer_id: "i-gps", installer_name: "Instalador B", installer_team_id: null, installer_team_name: null, work_dates_estimated: true, lifecycle_status: "preparacao" }),
         work("d", today, today, { name: "Obra Delta", installer_id: null, installer_name: null, installer_team_id: null, installer_team_name: null, pm_display_name: null }),
       ])
     );
@@ -119,7 +119,7 @@ describe("Works (calendário de obras)", () => {
     await screen.findByText("Obra Alfa");
     const region = screen.getByRole("region", { name: /Calendário de obras por instalador/ });
     const labels = [...region.querySelectorAll(".works__label")].map((el) => el.querySelector("span")?.textContent);
-    expect(labels).toEqual(["Verde Milenar", "Equipa 1", "GPS Energia", "Sem instalador"]);
+    expect(labels).toEqual(["Instalador A", "Equipa 1", "Instalador B", "Sem instalador"]);
   });
 
   it("cada obra é uma ligação para o projeto, descrita por extenso, com conflito e estimativa assinalados", async () => {
@@ -127,7 +127,7 @@ describe("Works (calendário de obras)", () => {
     const alfa = await screen.findByRole("link", { name: /Obra Alfa/ });
     expect(alfa).toHaveAttribute("href", "/projects/a");
     expect(alfa).toHaveClass("works__bar--conflict");
-    expect(alfa.getAttribute("aria-label")).toMatch(/Verde Milenar \/ Equipa 1/);
+    expect(alfa.getAttribute("aria-label")).toMatch(/Instalador A \/ Equipa 1/);
     expect(alfa.getAttribute("aria-label")).toMatch(/Conflito: a equipa tem outra obra sobreposta/);
     expect(alfa.getAttribute("aria-label")).toMatch(/PM PM Um/);
 
@@ -243,7 +243,7 @@ describe("Works (calendário de obras)", () => {
     getWorksCalendar.mockResolvedValue(
       calendar([], {
         unscheduled: [
-          { project_id: "u1", name: "Sem datas", pm_display_name: "PM Um", lifecycle_status: "preparacao", installer_name: "Verde Milenar", installer_team_name: null, work_start_date: null, work_end_date: null },
+          { project_id: "u1", name: "Sem datas", pm_display_name: "PM Um", lifecycle_status: "preparacao", installer_name: "Instalador A", installer_team_name: null, work_start_date: null, work_end_date: null },
           { project_id: "u2", name: "Só início", pm_display_name: null, lifecycle_status: "construcao", installer_name: null, installer_team_name: null, work_start_date: "2026-10-05", work_end_date: null },
         ],
         summary: { works: 0, conflicts: 0, estimated: 0, unscheduled: 2 },

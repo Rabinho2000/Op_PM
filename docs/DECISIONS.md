@@ -2730,8 +2730,8 @@ confirmação fica no histórico. Os ~31 projetos não concluídos têm de ser
 revistos à mão.
 
 **Importação do legado:** o `subcontractor` do export (que nunca era lido)
-passa a criar/encontrar o instalador pelo nome normalizado ("  Verde  Milenar " e
-"verde milenar" são o mesmo); vazio → sem instalador. **O legado não diz a
+passa a criar/encontrar o instalador pelo nome normalizado ("  Instalador  A " e
+"instalador a" são o mesmo); vazio → sem instalador. **O legado não diz a
 equipa**: todas as obras ficam "sem equipa" até serem atribuídas. Reimportar
 **nunca sobrescreve** um instalador nem datas já atribuídos (o Op_PM manda, como
 no estado do projeto, D-069); o rollback de uma promoção repõe o vazio.
@@ -2998,10 +2998,10 @@ ativos em `entregue_cliente`. Garantias, todas com testes:
 É uma **limpeza pontual**, não uma regra permanente: um projeto que passe a "Entregue ao cliente"
 daqui em diante não conclui etapas sozinho (decide-se se isso é desejável).
 
-**3. Duplicado do legado (Ribermold):** o legado tinha dois projetos "Ribermold" — um em
-Preparação com o PM certo e datas, outro em On hold, sem data de início e com outro PM. Ficou o
-primeiro; o segundo foi **desativado** pela API (nunca apagado), com o histórico registado. Uma
-reimportação não o reativa (a importação não escreve `is_active`).
+**3. Duplicado do legado (projeto 298):** o legado tinha dois projetos para o mesmo cliente — o
+`298`, em Preparação com o PM certo e datas, e outro sem número, em On hold, sem data de início e
+com outro PM. Ficou o `298`; o outro foi **desativado** pela API (nunca apagado), com o histórico
+registado. Uma reimportação não o reativa (a importação não escreve `is_active`).
 
 **Verificado:** 717 testes de backend (21 novos) e 233 Vitest; `tsc` e build. Contra a base local:
 50 projetos entregues, 44 alterados (2 521 subtarefas e 389 contactos concluídos por regra), os 6
