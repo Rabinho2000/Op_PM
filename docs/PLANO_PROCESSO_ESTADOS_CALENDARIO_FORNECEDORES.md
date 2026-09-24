@@ -38,7 +38,7 @@ Do export dos 295 projetos:
   (`"2.0"`, `"2.1"`…). 33 têm `commissionedAt`.
 - **Processo legado:** 6 fases, **18 etapas, 77 subtarefas**, 12 pontos de
   contacto. Responsáveis: Comercial, Sales Support, PM, Duarte, Bárbara,
-  VM (subempreiteiro), CE (provavelmente chefe de equipa — ver D5).
+  VM (subempreiteiro), CE (chefe de equipa — confirmado).
 
 > **Confidencialidade.** Este repositório é público e o texto das 18 etapas e 77
 > subtarefas é o processo interno da Solcor. O `seed_dev` usa deliberadamente um
@@ -58,7 +58,8 @@ subtarefas), com progresso, responsável e prazos.
   subtarefas. Os responsáveis do legado que são nomes de pessoas (Duarte,
   Bárbara) ou externos (VM, CE) têm o tratamento definido em D5: Duarte é o
   Duarte Batista (chefe do departamento); Bárbara é a Bárbara Ferreira; VM é o
-  subempreiteiro Verde Milenar; CE = chefe de equipa (a confirmar).
+  subempreiteiro Verde Milenar; CE = chefe de equipa, que passa a resolver-se
+  para o chefe da **equipa atribuída ao projeto** (ver feature 3).
 - **API** (leitura + escrita, sempre no âmbito do projeto — 404 fora dele):
   `GET /api/projects/{id}/workflow` (fases → etapas → subtarefas com o estado de
   cada uma, datas planeadas, atraso) e
@@ -102,27 +103,42 @@ feature).
 ## 5. Feature 3 — Calendário de obras por instalador
 
 **Pré-requisitos (PR próprio):**
-1. **Instalador como entidade** (`installers`: nome, ativo) com
-   `Project.installer_id`; ingestão do `subcontractor` e normalização dos nomes
-   (D3). O texto livre atual mantém-se só como histórico.
+1. **Instalador como entidade, com equipas** (D11):
+   - `installers` (nome, ativo) e `installer_teams` (instalador, nome da equipa,
+     chefe de equipa, ativa). A Verde Milenar tem **3 equipas**, cada uma com o
+     seu chefe; os outros instaladores podem ter zero, uma ou mais.
+   - `Project.installer_id` e `Project.installer_team_id` (opcional; a equipa tem
+     de pertencer ao instalador — validado na API e com restrição na base de
+     dados).
+   - Ingestão do `subcontractor` (só dá o instalador; **o export não diz a
+     equipa**, por isso todas as obras existentes ficam "sem equipa" até serem
+     atribuídas) e normalização dos nomes (D3). O texto livre atual mantém-se só
+     como histórico.
+   - O chefe de equipa é uma pessoa **externa** (subempreiteiro): guarda-se
+     nome e telefone, sem login nem `Person` da Solcor.
+   - Atribuir a equipa a uma obra é uma ação simples na lista e no detalhe do
+     projeto, com histórico.
 2. **Datas da obra** `work_start_date` / `work_end_date` em `Project`,
    editáveis. Preenchimento inicial: `startDate` + offset da etapa de início de
    obra até ao fim da última etapa da fase "Obra", com `shift` (D4). Projetos
    sem datas ficam fora do calendário e numa lista "por planear".
 
 **Calendário**
-- `GET /api/works/calendar?from&to&pm_person_id&status&installer_id` → obras
+- `GET /api/works/calendar?from&to&pm_person_id&status&installer_id&team_id` → obras
   (projeto, PM, estado, instalador, datas), filtradas por
   `visible_projects_query` (mesmo âmbito de permissões do resto da app), com
   número de queries limitado e testado.
-- **Página `/works`:** linhas = instaladores (mais "Sem instalador"), eixo do
+- **Página `/works`:** linhas = instaladores e, dentro de cada um, as suas
+  **equipas** (ex.: Verde Milenar → Equipa 1, 2, 3, "Sem equipa"); instaladores
+  sem equipas têm uma só linha; mais "Sem instalador". Eixo do
   tempo horizontal com zoom semana/mês/trimestre, barras coloridas por estado,
   linha de "hoje", sobreposição em faixas (várias obras do mesmo instalador em
   simultâneo não se escondem umas às outras). Clicar numa barra abre o projeto.
 - **Filtros:** PM e estado (multi-seleção, como pedido) + instalador e janela de
   datas. Estado dos filtros no URL (partilhável).
-- **Extra barato (proposto, não pedido):** marcar a vermelho quando o mesmo
-  instalador tem duas obras sobrepostas.
+- **Extra barato (proposto, não pedido):** marcar a vermelho quando a **mesma
+  equipa** tem duas obras sobrepostas (uma equipa não está em dois sítios).
+  Entre equipas diferentes do mesmo instalador não é conflito.
 - Sem biblioteca externa nova: o Gantt é simples (posicionamento por datas) e o
   projeto já evita dependências pesadas.
 
@@ -134,11 +150,12 @@ feature).
 | **D2** | Os 2 projetos que não cabem nos 6 estados ("vendido" e vazio). | **DECIDIDO:** ficam em **On hold pelo cliente**. |
 | **D3** | Instalador: entidade própria ou texto livre normalizado? | **Entidade** (`installers`), inicializada com os 9 nomes do export. Evita "GPS Energia"/"gps energia" como instaladores diferentes. |
 | **D4** | Datas da obra: derivadas do processo ou introduzidas à mão? | **Campos explícitos**, preenchidos por derivação no arranque e editáveis depois. Preciso de confirmar a fórmula com 2–3 projetos que conheças bem. |
-| **D5** | Responsáveis do processo (Duarte, Bárbara, VM, CE). | **PARCIALMENTE DECIDIDO.** Duarte = Duarte Batista, chefe do departamento. Bárbara = Bárbara Ferreira: as etapas em que consta como responsável (registos de licenciamento, projeto eletrotécnico) ficam com ela, e os projetos antigos em que é PM continuam associados a ela. VM = Verde Milenar (subempreiteiro). CE: no legado é o responsável da etapa "Acompanhamento da obra" e "chefe de equipa" aparece nas mesmas etapas — **a confirmar que CE = chefe de equipa**. Falta: que papel tem hoje a Bárbara no Op_PM (ver nota abaixo). |
+| **D5** | Responsáveis do processo (Duarte, Bárbara, VM, CE). | **PARCIALMENTE DECIDIDO.** Duarte = Duarte Batista, chefe do departamento. Bárbara = Bárbara Ferreira: as etapas em que consta como responsável (registos de licenciamento, projeto eletrotécnico) ficam com ela, e os projetos antigos em que é PM continuam associados a ela. VM = Verde Milenar (subempreiteiro). CE = **chefe de equipa** (confirmado): na etapa "Acompanhamento da obra" resolve-se para o chefe da equipa atribuída ao projeto. Falta: que papel tem hoje a Bárbara no Op_PM (ver nota abaixo). |
 | **D6** | Transições de estado livres ou por ordem? | **Livres**, com histórico (o ClickUp de hoje é manual). Um aviso, não um bloqueio, se saltar etapas. |
 | **D7** | Fornecedores: "contacto telefónico" é campo novo? Vários tipos de material? | **DECIDIDO:** `phone` novo (o `contact` passa a "pessoa de contacto") e **um fornecedor tem vários tipos de material** (tabela de tipos + associação, filtrável). |
 | **D8** | Fornecedores: lista inicial? | **DECIDIDO:** lista criada a partir dos sites dos fornecedores que indicaste (16). Fica num ficheiro **local, fora do git**, e é carregada no PR 2. |
 | **D9** | Quem pode ver/editar fornecedores? | Ver: quem já vê o inventário/pedidos; editar: `supplier.manage` (já existe). |
+| **D11** | Equipas do instalador: nomes e chefes das 3 equipas da Verde Milenar; os outros subempreiteiros também têm equipas? | Preciso dos nomes das equipas e dos chefes (e telefone, se quiseres). Sem resposta, crio "Equipa 1/2/3" vazias e preenches na UI. |
 | **D10** | Que obras mostra o calendário por omissão? | Janela de −3 a +6 meses, **todos os estados**, com o filtro de estado à mão (212 obras já certificadas encheriam o ecrã). |
 
 ## 7. Feature 4 — Lista de fornecedores
