@@ -1,6 +1,6 @@
 # Plano — tarefas fixas, estados de projeto, calendário de obras e fornecedores
 
-> **Estado: proposta para aprovação.** Nada aqui está implementado. Foi escrito
+> **Estado: aprovado (todas as decisões D1–D11 fechadas).** Nada aqui está implementado. Foi escrito
 > depois de ler o `solcor-gestao.html` legado, o export real
 > (`Op_PM_export_projetos.json`, só agregados — nenhum dado de cliente é citado)
 > e o código atual. **Atualizado com as respostas de D1, D2, D5, D7 e D8**; as
@@ -150,7 +150,7 @@ feature).
 | **D2** | Os 2 projetos que não cabem nos 6 estados ("vendido" e vazio). | **DECIDIDO:** ficam em **On hold pelo cliente**. |
 | **D3** | Instalador: entidade própria ou texto livre normalizado? | **Entidade** (`installers`), inicializada com os 9 nomes do export. Evita "GPS Energia"/"gps energia" como instaladores diferentes. |
 | **D4** | Datas da obra: derivadas do processo ou introduzidas à mão? | **Campos explícitos**, preenchidos por derivação e editáveis. **Verificado no export:** `shift` só existe em 2 dos 295 projetos, por isso a derivação é `startDate` + dias úteis do modelo base (obra = dia útil 41 a 49, cerca de 9 dias úteis). Nos projetos ainda ativos essas datas já passaram (ex.: obras "em construção" com a janela derivada em fevereiro–agosto), ou seja, **a derivação reflete o modelo, não a realidade**. Ficam marcadas como *estimadas* e é preciso rever à mão as datas dos ~31 projetos não concluídos. |
-| **D5** | Responsáveis do processo (Duarte, Bárbara, VM, CE). | **PARCIALMENTE DECIDIDO.** Duarte = Duarte Batista, chefe do departamento. Bárbara = Bárbara Ferreira: as etapas em que consta como responsável (registos de licenciamento, projeto eletrotécnico) ficam com ela, e os projetos antigos em que é PM continuam associados a ela. VM = Verde Milenar (subempreiteiro). CE = **chefe de equipa** (confirmado): na etapa "Acompanhamento da obra" resolve-se para o chefe da equipa atribuída ao projeto. Falta: que papel tem hoje a Bárbara no Op_PM (ver nota abaixo). |
+| **D5** | Responsáveis do processo (Duarte, Bárbara, VM, CE). | **PARCIALMENTE DECIDIDO.** Duarte = Duarte Batista, chefe do departamento. Bárbara = Bárbara Ferreira: as etapas em que consta como responsável (registos de licenciamento, projeto eletrotécnico) ficam com ela, e os projetos antigos em que é PM continuam associados a ela. VM = Verde Milenar (subempreiteiro). CE = **chefe de equipa** (confirmado): na etapa "Acompanhamento da obra" resolve-se para o chefe da equipa atribuída ao projeto. **Regra final (Bárbara):** trabalha hoje no departamento de suporte e faz os licenciamentos (registos de entidade e UPAC, pedidos de inspeção) e os projetos eletrotécnicos, **só nos projetos do Ricardo Louro e do Gonçalo Palacino**; nos projetos do João Fernandes essas tarefas são feitas por ele (o PM). |
 | **D6** | Transições de estado livres ou por ordem? | **Livres**, com histórico (o ClickUp de hoje é manual). Um aviso, não um bloqueio, se saltar etapas. |
 | **D7** | Fornecedores: "contacto telefónico" é campo novo? Vários tipos de material? | **DECIDIDO:** `phone` novo (o `contact` passa a "pessoa de contacto") e **um fornecedor tem vários tipos de material** (tabela de tipos + associação, filtrável). |
 | **D8** | Fornecedores: lista inicial? | **DECIDIDO:** lista criada a partir dos sites dos fornecedores que indicaste (16). Fica num ficheiro **local, fora do git**, e é carregada no PR 2. |
@@ -197,10 +197,13 @@ Contacto telefónico (**novo** `phone`) · Email (`email`) · Localização
 | **5** | Catálogo real (CLI local) + API + separador "Processo" | — |
 | **6** | Migração do progresso legado (`done`) + atraso no painel | PR 5 e D4 |
 
-**Nota sobre a Bárbara (D5):** por defeito, as etapas dela ficam atribuídas à
-*pessoa* Bárbara Ferreira (responsável por defeito, editável), e não a um papel
-genérico, porque o papel dela mudou. Se preferires um papel dedicado (por
-exemplo "Licenciamento e projeto"), diz-mo.
+**Responsável das tarefas de suporte (D5, decidido):** as etapas de licenciamento
+(registos de entidade e UPAC, pedidos de inspeção) e de projeto eletrotécnico
+têm o responsável **resolvido por projeto**, não fixo: uma tabela de delegação
+"PM → pessoa de suporte" (Ricardo Louro e Gonçalo Palacino → Bárbara Ferreira).
+Quando o PM do projeto não tem delegação (ex.: João Fernandes) o responsável é o
+próprio PM. Assim, mudar a regra é alterar dados, não código, e os projetos
+antigos da Bárbara como PM continuam associados a ela.
 
 Os PR 1 e 2 são independentes e pequenos; podem ir primeiro e em paralelo. O
 PR 6 é o mais arriscado e fica no fim de propósito.
