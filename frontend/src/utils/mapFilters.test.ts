@@ -43,8 +43,9 @@ describe("filterMapProjects", () => {
     const hold = project({ id: "h", name: "Em espera", lifecycle_status: "on_hold_cliente" });
     const none = project({ id: "n", name: "Sem estado", lifecycle_status: null });
     const list = [green, hold, none];
-    expect(filterMapProjects(list, { ...EMPTY_MAP_FILTERS, lifecycle: "on_hold_cliente" })).toEqual([hold]);
-    expect(filterMapProjects(list, { ...EMPTY_MAP_FILTERS, lifecycle: "construcao" })).toEqual([green]);
+    expect(filterMapProjects(list, { ...EMPTY_MAP_FILTERS, lifecycle: ["on_hold_cliente"] })).toEqual([hold]);
+    expect(filterMapProjects(list, { ...EMPTY_MAP_FILTERS, lifecycle: ["construcao"] })).toEqual([green]);
+    expect(filterMapProjects(list, { ...EMPTY_MAP_FILTERS, lifecycle: ["construcao", "on_hold_cliente"] })).toEqual([green, hold]);
     expect(filterMapProjects(list, EMPTY_MAP_FILTERS)).toHaveLength(3);
   });
 

@@ -11,6 +11,7 @@ import {
   ProjectStatus,
 } from "../api/client";
 import Icon from "../components/Icon";
+import LifecycleMultiSelect from "../components/LifecycleMultiSelect";
 import { LifecycleBadge, useLifecycleStatuses } from "../components/LifecycleStatus";
 import { Avatar, Badge, EmptyState, ErrorState, LoadingState, PageHeader, ProgressBar } from "../components/ui";
 import { useSession } from "../session/SessionContext";
@@ -161,44 +162,7 @@ export default function ProjectsList() {
             ))}
           </select>
         </div>
-        <div className="field">
-          <span id="f-lifecycle-label" className="field__label">
-            Estado do projeto
-          </span>
-          <details className="multiselect">
-            <summary className="select" aria-labelledby="f-lifecycle-label">
-              {view === "in_progress"
-                ? "Em curso"
-                : view === "all"
-                  ? "Todos"
-                  : lifecycle.length === 1
-                    ? (lifecycleStatuses.find((s) => s.code === lifecycle[0])?.label ?? lifecycle[0])
-                    : `${lifecycle.length} estados`}
-            </summary>
-            <div className="multiselect__panel" role="group" aria-labelledby="f-lifecycle-label">
-              <div className="multiselect__quick">
-                <button type="button" className="btn btn--sm btn--ghost" onClick={() => setLifecycle([...IN_PROGRESS_LIFECYCLE])}>
-                  Em curso
-                </button>
-                <button type="button" className="btn btn--sm btn--ghost" onClick={() => setLifecycle([])}>
-                  Todos
-                </button>
-              </div>
-              {lifecycleStatuses.map((s) => (
-                <label key={s.code} className="multiselect__option">
-                  <input
-                    type="checkbox"
-                    checked={lifecycle.includes(s.code)}
-                    onChange={() =>
-                      setLifecycle(lifecycle.includes(s.code) ? lifecycle.filter((c) => c !== s.code) : [...lifecycle, s.code])
-                    }
-                  />
-                  {s.label}
-                </label>
-              ))}
-            </div>
-          </details>
-        </div>
+        <LifecycleMultiSelect id="f-lifecycle" label="Estado do projeto" value={lifecycle} onChange={setLifecycle} statuses={lifecycleStatuses} />
         <div className="field">
           <label htmlFor="f-pm">PM</label>
           <select id="f-pm" className="select" value={filters.pm} onChange={(e) => set("pm", e.target.value)}>

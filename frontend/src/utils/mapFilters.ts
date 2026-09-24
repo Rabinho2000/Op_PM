@@ -8,7 +8,7 @@ export interface MapFilters {
   pm: string;
   client: string;
   status: string;
-  lifecycle: string;
+  lifecycle: string[];
   attention: MapAttention | "";
   onlyWithPending: boolean; // pendências abertas OU tarefas operacionais abertas
   onlyWithMaterial: boolean; // só aplicável quando material_visible
@@ -19,7 +19,7 @@ export const EMPTY_MAP_FILTERS: MapFilters = {
   pm: "",
   client: "",
   status: "",
-  lifecycle: "",
+  lifecycle: [],
   attention: "",
   onlyWithPending: false,
   onlyWithMaterial: false,
@@ -34,7 +34,7 @@ export function filterMapProjects(projects: MapProject[], filters: MapFilters): 
     if (filters.pm && p.pm_display_name !== filters.pm) return false;
     if (filters.client && p.client_name !== filters.client) return false;
     if (filters.status && p.status !== filters.status) return false;
-    if (filters.lifecycle && p.lifecycle_status !== filters.lifecycle) return false;
+    if (filters.lifecycle.length > 0 && !(p.lifecycle_status && filters.lifecycle.includes(p.lifecycle_status))) return false;
     if (filters.attention && p.attention !== filters.attention) return false;
     if (filters.onlyWithPending && p.issues_count === 0 && p.operational_tasks_count === 0) return false;
     // Sem inventory.view `has_material_on_site` é null — nunca tratado como
