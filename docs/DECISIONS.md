@@ -2842,7 +2842,7 @@ desde a Fase 0, sem API nem UI).
 avalia os literais `PHASES`/`STAGES`, com Node) e escreve um JSON **fora do Git**;
 `python -m app.cli.load_process --file <json> [--delegations <json>] [--dry-run]` carrega-o.
 Ambos recusam um caminho que o Git apanharia. O código, o seed e os testes usam um
-**processo sintético com a mesma forma** (`backend/fixtures/synthetic_process.json`:
+**processo sintético com a mesma forma** (`backend/app/migration/synthetic_process.json`, dentro do pacote para seguir na imagem Docker da demonstração:
 mesmas fases, responsáveis, dependências, dias e nº de subtarefas; textos genéricos).
 
 **Catálogo:** carga **idempotente por `code`** e sem apagar; valida o ficheiro inteiro

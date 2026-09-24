@@ -92,9 +92,10 @@ def _relative_birth_date(days_from_today: int) -> dt.date:
         return dt.date(birth_year, target.month, 28)
 
 # O processo sintético (fases/etapas/subtarefas genéricas, com a mesma forma do
-# processo real) vive em `backend/fixtures/synthetic_process.json` — o real é
+# processo real) vive em `app/migration/synthetic_process.json` (dentro do pacote, para seguir
+# na imagem Docker da demonstração) — o real é
 # interno e nunca entra no repositório (D-073).
-SYNTHETIC_PROCESS_PATH = Path(__file__).resolve().parents[2] / "fixtures" / "synthetic_process.json"
+SYNTHETIC_PROCESS_PATH = Path(__file__).resolve().parent / "synthetic_process.json"
 
 SYNTHETIC_ACTIVE_PEOPLE = [
     ("Admin Sintético", "admin.sintetico@example.invalid", "administrador", 5),

@@ -5,7 +5,7 @@ O processo real da Solcor é interno: **não entra no repositório**. O ficheiro
 gerado a partir do `solcor-gestao.html` por `scripts/extract_process_from_legacy.py`
 para uma pasta fora do Git e carregado por `python -m app.cli.load_process`.
 Os testes e o seed usam um processo genérico com a mesma forma
-(`backend/fixtures/synthetic_process.json`).
+(`app/migration/synthetic_process.json`).
 
 Formato do JSON:
     {"phases": [{"code", "name", "color"}, …],
