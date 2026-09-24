@@ -2494,3 +2494,15 @@ a.cell-title:hover {
   color: var(--text-subtle);
   text-decoration: line-through;
 }
+
+.multiselect { position: relative; }
+.multiselect > summary { cursor: pointer; list-style: none; }
+.multiselect > summary::-webkit-details-marker { display: none; }
+.multiselect__panel {
+  position: absolute; z-index: 20; margin-top: 4px; min-width: 100%;
+  display: flex; flex-direction: column; gap: 6px; padding: 10px;
+  background: var(--surface, #fff); border: 1px solid var(--border, #d0d5dd);
+  border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+.multiselect__quick { display: flex; gap: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border, #d0d5dd); }
+.multiselect__option { display: flex; align-items: center; gap: 8px; white-space: nowrap; cursor: pointer; }

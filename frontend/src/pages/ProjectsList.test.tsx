@@ -48,7 +48,7 @@ describe("ProjectsList (filtros)", () => {
 
     expect(await screen.findByText("Projeto Sintético Sem PM")).toBeInTheDocument();
     expect(listProjects).toHaveBeenLastCalledWith(expect.objectContaining({ is_active: true }));
-    expect(screen.getByText("2 projetos")).toBeInTheDocument();
+    expect(screen.getByText("2 projetos em curso")).toBeInTheDocument();
     expect(screen.getByText("Fotos pendentes")).toBeInTheDocument();
     expect(screen.getByText("sem email")).toBeInTheDocument();
     expect(screen.getAllByRole("progressbar")).toHaveLength(2);
@@ -69,6 +69,7 @@ describe("ProjectsList (filtros)", () => {
         q: undefined,
         status: "concluido",
         pm_person_id: "p-pm",
+        lifecycle_status: ["on_hold_cliente", "preparacao", "construcao", "construido"],
         is_active: true,
         start_from: "2026-09-01",
         start_to: "2026-09-30",
@@ -88,6 +89,7 @@ describe("ProjectsList (filtros)", () => {
     expect(await screen.findAllByText("Construção")).not.toHaveLength(0);
     expect(screen.getByText("Sem estado")).toBeInTheDocument();
 
+    fireEvent.click(await screen.findByRole("button", { name: "Todos" }));
     fireEvent.click(await screen.findByLabelText("On hold pelo cliente"));
     fireEvent.click(screen.getByLabelText("Preparação"));
     await waitFor(() =>
@@ -95,11 +97,31 @@ describe("ProjectsList (filtros)", () => {
         expect.objectContaining({ lifecycle_status: ["on_hold_cliente", "preparacao"] })
       )
     );
-
     fireEvent.click(screen.getByLabelText("On hold pelo cliente"));
     await waitFor(() =>
       expect(listProjects).toHaveBeenLastCalledWith(expect.objectContaining({ lifecycle_status: ["preparacao"] }))
     );
+  });
+
+  it("abre nos projetos em curso e o botão Todos tira o filtro de estado (fica no URL)", async () => {
+    renderWithProviders(<ProjectsList />, { me: makeMe() });
+    await screen.findByText("Projeto Sintético Sem PM");
+
+    expect(listProjects).toHaveBeenLastCalledWith(
+      expect.objectContaining({ lifecycle_status: ["on_hold_cliente", "preparacao", "construcao", "construido"] })
+    );
+    expect(screen.getByText("Em curso", { selector: "summary" })).toBeInTheDocument();
+    expect(screen.getByText("2 projetos em curso")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Todos" }));
+    await waitFor(() => expect(listProjects).toHaveBeenLastCalledWith(expect.objectContaining({ lifecycle_status: undefined })));
+    expect(screen.getByText("Todos", { selector: "summary" })).toBeInTheDocument();
+  });
+
+  it("?estado=todos abre sem filtro de estado", async () => {
+    renderWithProviders(<ProjectsList />, { me: makeMe(), route: "/projects?estado=todos" });
+    await screen.findByText("Projeto Sintético Sem PM");
+    expect(listProjects).toHaveBeenLastCalledWith(expect.objectContaining({ lifecycle_status: undefined }));
   });
 
   it("pesquisa por projeto/cliente depois de uma breve pausa", async () => {
