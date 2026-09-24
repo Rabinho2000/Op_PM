@@ -2764,3 +2764,67 @@ Vitest, `tsc` e build; migração para cima e para baixo. Contra a base local
 com os 295 projetos: 239 com instalador (= 295 − 56 sem, como no export), com
 contagens por instalador iguais às do export (79 / 73 / 50 / 18 / 9 / 5 / 2 / 2 / 1);
 estados dos projetos intactos; 294 com janela estimada.
+
+
+## D-072 — Calendário de obras por instalador e equipa (PR 4 do plano)
+
+**Decisão:** página `/works` ("Calendário de obras"): as obras ao longo do tempo,
+agrupadas por **instalador** e, dentro de cada um, por **equipa**, com filtros por
+**PM** e por **estado da obra**. Fecha o plano de tarefas/estados/calendário/
+fornecedores (PR 1 a 4; o processo por projeto, PR 5 e 6, fica para depois).
+
+**API:** `GET /api/works/calendar?from&to[&pm_person_id][&lifecycle_status…]
+[&installer_id][&team_id]` devolve as obras cuja janela (`work_start_date`–
+`work_end_date`, inclusive) intersecta `from`–`to`, com instalador, equipa, PM,
+estado e se as datas são estimadas; mais os projetos **por planear** e um resumo.
+Só projetos **ativos** e **visíveis** (`visible_projects_query`): o Administrador e
+o Chefe veem tudo, um PM só as suas obras — o calendário nunca alarga o âmbito.
+Qualquer papel que veja projetos pode consultar; janela máxima de 800 dias;
+`from` > `to` → 422; estado inválido → 400. Uma ida à base para as obras da
+janela e outra para as por planear (número de queries testado, sem N+1).
+
+**Conflito (o "extra barato" do plano):** a **mesma equipa** com duas obras
+sobrepostas. Regras, todas com testes:
+- as datas são inclusivas: partilhar um dia é sobrepor; a obra que começa no dia
+  seguinte não;
+- só conta entre obras em **preparação** ou **construção** — as acabadas ou em
+  espera não ocupam a equipa, e as datas estimadas das obras antigas gerariam
+  conflitos falsos;
+- equipas diferentes do mesmo instalador não entram em conflito, nem obras sem
+  equipa;
+- calcula-se sobre todas as obras visíveis da janela **antes** dos filtros de PM/
+  estado/instalador, para um filtro não esconder que a obra do outro PM a sobrepõe.
+  (Consequência: um PM só vê conflitos com as obras que também vê.)
+
+**Por planear:** projetos ativos em preparação, construção ou em espera (ou sem
+estado) a que falta uma das datas da obra (limite de 200 na lista; o total vem no
+resumo). Obras já concluídas não aparecem.
+
+**Interface:** linha do tempo com uma linha por instalador (cabeçalho) e por equipa
+(mais "Sem equipa" e "Sem instalador"); barras posicionadas pelas datas, coloridas
+pelo estado da obra; **obras em simultâneo ficam em faixas separadas**; barras
+**tracejadas** = datas estimadas; contorno **vermelho** com aviso = conflito;
+linha de "hoje"; cada barra é uma ligação para o projeto e tem uma descrição por
+extenso (`aria-label`) — a informação não depende só da cor. Escalas
+**Semanas** (10 semanas, −2/+8), **Meses** (10 meses, −3/+6, o valor por omissão de
+D10) e **Trimestres** (19 meses, −6/+12); períodos anterior/seguinte e "Hoje".
+Filtros: PM, instalador, equipa (depende do instalador), estados (vários) e "Mostrar
+equipas sem obras". **Todo o estado vive no URL** (escala, período, filtros): a vista
+é partilhável e sobrevive a um refresh; valores inválidos no URL são ignorados.
+Os instaladores/equipas sem obras no período escondem-se por omissão.
+
+**Lógica pura testada à parte** (`utils/worksTimeline.ts`): datas em UTC (a mudança
+de hora nunca desloca um dia), janelas, geometria e corte das barras, faixas, linhas
+e marcas do eixo. Esta bateria apanhou um erro real: a janela de "Meses" tinha 9
+meses em vez de 10.
+
+**Limitações conhecidas:** as datas atuais dos projetos importados são **estimadas**
+(D-071) e o legado não diz a equipa, por isso o calendário real só fica útil depois
+de os projetos em curso terem equipa e datas confirmadas. Sem arrastar-e-largar
+nem edição no próprio calendário (o plano de obra edita-se no detalhe do projeto).
+
+**Verificado:** 627 testes de backend (14 novos) e 218 Vitest (32 novos), `tsc` e
+build. Contra a base local com os 295 projetos: a janela por omissão devolve 31
+obras (todas estimadas), 24 delas sem instalador (os projetos recentes não têm
+subempreiteiro no legado) e 1 por planear; testado no browser (escalas, filtros,
+URL, título do separador).

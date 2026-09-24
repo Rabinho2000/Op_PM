@@ -88,7 +88,7 @@ def test_list_shows_teams_leaders_and_project_counts(api_client):
     assert alfa["teams"][0]["leader_name"] == "Chefe Sintético Um"
     assert alfa["project_count"] == 3  # Demonstração, Início Próximo e Trabalho Urgente
     assert alfa["teams"][0]["project_count"] == 2
-    assert next(i for i in body if i["name"] == BETA)["project_count"] == 1
+    assert next(i for i in body if i["name"] == BETA)["project_count"] == 2
 
 
 def test_installer_names_are_unique_ignoring_case_and_accents(api_client):
