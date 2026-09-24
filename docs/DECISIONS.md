@@ -3021,3 +3021,9 @@ restantes já estavam completos; repetição sem alterações. Um projeto entreg
 **Decisão.** A lista (`GET /api/projects`) ordena por estado (On hold, Preparação, Construção, Construído, Entregue, Certificado, sem estado) e, dentro de cada estado, por ordem cronológica de entrada no programa (mais antigo primeiro), com desempate pela data de ligação (`upac_connection_date_raw`, ISO) e depois pelo nome. Nova coluna `projects.entered_at`: projetos novos ficam com o momento da criação; os do legado com a data de início (a do ClickUp), porque o export não traz outra data de criação. A migração `b4d8f2a6c1e3` preenche os existentes (data de início, ou a criação do registo se faltar).
 
 **Consequências.** `entered_at` não é editável nem exposto na API. Se surgir a data de criação real do ClickUp, basta reescrever esta coluna.
+
+## D-078 — As tarefas fixas do processo aparecem no separador Tarefas
+
+**Contexto.** O separador Tarefas mostrava "0" em todos os projetos migrados: as tarefas avulsas (`tasks`) não existiam no legado, que só tinha as etapas do processo, que estão no separador Processo (D-073).
+
+**Decisão.** O separador Tarefas passa a mostrar, acima das tarefas avulsas, o cartão "Tarefas do processo": as subtarefas por concluir, agrupadas por etapa, com estado da etapa, responsável e prazo, e uma opção "Mostrar concluídas". Marcar usa o mesmo endpoint e a mesma permissão (`can_update`) do separador Processo. O contador do separador soma as tarefas avulsas e as subtarefas por concluir. Só frontend, sem alterações à API.

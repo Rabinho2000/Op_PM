@@ -9,6 +9,8 @@ import {
   getProject,
   getProjectCommunicationData,
   getProjectHistory,
+  getProjectProcess,
+  ProcessRead,
   getProjectInstallationData,
   getProjectInventory,
   getProjectLicensingData,
@@ -39,6 +41,7 @@ import {
 } from "../api/client";
 import Icon from "../components/Icon";
 import { LifecycleStatusControl, useLifecycleStatuses } from "../components/LifecycleStatus";
+import ProcessOpenTasks, { pendingProcessTasks } from "../components/ProcessOpenTasks";
 import ProjectProcess from "../components/ProjectProcess";
 import WorkPlanCard from "../components/WorkPlan";
 import TaskFormModal from "../components/TaskForm";
@@ -537,6 +540,7 @@ export default function ProjectDetail() {
   const lifecycleStatuses = useLifecycleStatuses();
   const [history, setHistory] = useState<ProjectHistoryEntry[] | null>(null);
   const [tasks, setTasks] = useState<Task[] | null>(null);
+  const [process, setProcess] = useState<ProcessRead | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [installationData, setInstallationData] = useState<ProjectInstallationData | null>(null);
   const [licensingData, setLicensingData] = useState<ProjectLicensingData | null>(null);
@@ -576,6 +580,9 @@ export default function ProjectDetail() {
     listTasks({ project_id: projectId })
       .then(setTasks)
       .catch(() => setTasks([]));
+    getProjectProcess(projectId)
+      .then(setProcess)
+      .catch(() => setProcess(null));
     if (canViewInstallation) {
       getProjectInstallationData(projectId)
         .then(setInstallationData)
@@ -670,7 +677,7 @@ export default function ProjectDetail() {
     { key: "processo", label: "Processo" },
     ...(canViewInstallation ? [{ key: "instalacao" as TabKey, label: "Dados da instalação" }] : []),
     ...(canViewLicensing || canViewCommunication ? [{ key: "licenciamento" as TabKey, label: "Licenciamento" }] : []),
-    { key: "tarefas", label: "Tarefas", count: tasks?.length },
+    { key: "tarefas", label: "Tarefas", count: tasks === undefined || tasks === null ? undefined : tasks.length + pendingProcessTasks(process) },
     ...(canViewInventory ? [{ key: "inventario" as TabKey, label: "Inventário", count: inventory?.reservations.length }] : []),
     { key: "historico", label: "Histórico", count: history?.length },
     { key: "cliente", label: "Cliente" },
@@ -913,6 +920,8 @@ export default function ProjectDetail() {
             />
           </div>
         )}
+
+        {tab === "tarefas" && <ProcessOpenTasks projectId={project.id} process={process} onChange={setProcess} />}
 
         {tab === "tarefas" && (
           <Card
