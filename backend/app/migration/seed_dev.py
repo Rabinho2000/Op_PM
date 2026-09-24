@@ -68,6 +68,7 @@ from app.models.task import (
 from app.models.workflow import Phase, WorkflowStage, WorkflowSubtask
 from app.security.catalog import PERMISSIONS, ROLE_PERMISSIONS, ROLES
 from app.services.tasks import ensure_default_tasks_for_project
+from app.utils.timezones import today_lisbon
 
 
 def _relative_birth_date(days_from_today: int) -> dt.date:
@@ -77,7 +78,7 @@ def _relative_birth_date(days_from_today: int) -> dt.date:
     (ver requisito explícito: "a página inicial deve ficar demonstrável
     logo depois de correr o seed"). O ano é só um valor plausível — nunca
     usado para calcular idade nesta fase (ver app/services/dashboard.py)."""
-    target = dt.date.today() + dt.timedelta(days=days_from_today)
+    target = today_lisbon() + dt.timedelta(days=days_from_today)
     birth_year = target.year - 30
     try:
         return dt.date(birth_year, target.month, target.day)
@@ -301,7 +302,7 @@ def seed_sample_projects(db: Session) -> None:
     """
     if db.query(Project).count() > 0:
         return
-    today = dt.date.today()
+    today = today_lisbon()
     pm_um = db.query(Person).filter(Person.display_name == "PM Sintético Um").one()
     chefe = db.query(Person).filter(Person.display_name == "Chefe Sintético").one()
     pm_legado = db.query(Person).filter(Person.display_name == "PM Sintético Legado Dois").one()
@@ -531,7 +532,7 @@ def seed_sample_projects(db: Session) -> None:
 def seed_absences(db: Session) -> None:
     if db.query(Absence).count() > 0:
         return
-    today = dt.date.today()
+    today = today_lisbon()
     pm_um = db.query(Person).filter(Person.display_name == "PM Sintético Um").one()
     chefe = db.query(Person).filter(Person.display_name == "Chefe Sintético").one()
     comercial = db.query(Person).filter(Person.display_name == "Comercial Sintético").one()
@@ -814,7 +815,7 @@ def seed_map_and_inventory(db: Session) -> None:
             upac_number="UPAC-SINT-0001",
             dgeg_number="DGEG-SINT-0001",
             licensing_status="registado",
-            registration_date=dt.date.today() - dt.timedelta(days=60),
+            registration_date=today_lisbon() - dt.timedelta(days=60),
             installer="Instalador Sintético Lda.",
             annual_production_kwh=14500.0,
             comments="Licenciamento sintético para demonstração.",
@@ -838,7 +839,7 @@ def seed_calendar_events(db: Session) -> None:
     do MVP de Operações."""
     if db.query(CalendarEvent).count() > 0:
         return
-    today = dt.date.today()
+    today = today_lisbon()
     pm_um = db.query(Person).filter(Person.display_name == "PM Sintético Um").one()
     chefe = db.query(Person).filter(Person.display_name == "Chefe Sintético").one()
     demo = db.query(Project).filter(Project.name == "Instalação Sintética de Demonstração").one()
@@ -894,8 +895,8 @@ def seed_performance_goals(db: Session) -> None:
         return
     chefe = db.query(Person).filter(Person.display_name == "Chefe Sintético").one()
     pm_um = db.query(Person).filter(Person.display_name == "PM Sintético Um").one()
-    year = dt.date.today().year
-    quarter = (dt.date.today().month - 1) // 3 + 1
+    year = today_lisbon().year
+    quarter = (today_lisbon().month - 1) // 3 + 1
 
     db.add_all(
         [

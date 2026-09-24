@@ -54,7 +54,7 @@
       correr comandos administrativos (`app/cli/provision_entra_user.py`,
       `app/cli/ingest_staging.py`, `alembic`) — nunca através de um
       endpoint HTTP, por desenho (D-034/D-037).
-- [ ] Python 3.12+ e Node.js 20+ disponíveis na máquina/imagem que vai
+- [ ] Python 3.12+ e Node.js 22.12+ disponíveis na máquina/imagem que vai
       correr o backend/frontend de staging.
 
 Ver a secção 16 para a lista objetiva do que falta fornecer antes de

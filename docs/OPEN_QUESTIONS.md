@@ -586,26 +586,8 @@ documento enviado pelo fornecedor (a biblioteca documental é outra fase).
 
 ## Podem ser decididas mais tarde
 
-- **Atualização major de `react-router-dom` (6→7) e `vitest`/
-  `@vitest/mocker` (3→5).** Resolvido nesta integração (`mvp-ready`,
-  D-048): `vite` já foi atualizado para `6.4.3` (sem precisar de ir a 8),
-  o que eliminou a única vulnerabilidade **alta** (`GHSA-fx2h-pf6j-xcff`).
-  Ficam por resolver 4 vulnerabilidades **moderadas** sem correção dentro
-  do intervalo semver instalado — só resolvidas com um salto de versão
-  maior de cada pacote (D-031, e D-033 que acrescentou `vitest` como
-  primeira dependência de testes do frontend — já atualizado uma vez, de
-  `vitest@2` para `vitest@3.2.7`, especificamente para eliminar uma
-  vulnerabilidade **crítica** do servidor de UI do Vitest,
-  `GHSA-5xrq-8626-4rwp`; a moderada remanescente de `@vitest/mocker`,
-  `GHSA-82fw-gwwq-j7x9`, só se resolve saltando para `vitest@5`). Nenhuma
-  destas é exploratória à distância no código deste repositório tal como
-  está hoje (`vitest`/`@vitest/mocker` — dependências só de
-  desenvolvimento/teste, nunca incluídas no bundle de produção
-  (`vite build`); `react-router-dom` — open-redirect, relevante sobretudo
-  com entrada de utilizador não confiável nas rotas, que esta app não tem
-  ainda). Decidir quando fazer estas migrações (e testar as mudanças de
-  API do `react-router-dom` v7 e do `vitest` v5) antes de um primeiro
-  deployment público.
+- ~~Atualização major de `react-router-dom` (6→7) e `vitest` (3→5).~~
+  **Feita** (D-068): `npm audit` a 0 vulnerabilidades.
 - Fornecedor do serviço de mapas/rotas.
 - Modelo específico do Claude a usar em produção (a interface já é
   agnóstica ao modelo — `Settings.claude_model`).

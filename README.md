@@ -238,7 +238,7 @@ por não ter Docker disponível — reveja antes da primeira utilização.)
 
 ## Frontend — instalação e execução local
 
-Requisitos: Node.js 20+ (testado com Node 24).
+Requisitos: Node.js 22.12+ (testado com Node 24).
 
 ```bash
 cd frontend

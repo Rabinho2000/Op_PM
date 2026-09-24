@@ -17,7 +17,7 @@
 # desliga isto por omissão fora de `vite dev`/testes; isto é só mais uma
 # barreira, redundante de propósito).
 
-FROM node:20-slim AS build
+FROM node:22-slim AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./

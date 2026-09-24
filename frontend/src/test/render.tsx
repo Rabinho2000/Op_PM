@@ -17,7 +17,7 @@ export function renderWithProviders(
   }: { me?: MeResponse | null; health?: HealthResponse | null; route?: string; path?: string } = {}
 ) {
   return render(
-    <MemoryRouter initialEntries={[route]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <MemoryRouter initialEntries={[route]}>
       <StaticSessionProvider me={me} health={health}>
         <ToastProvider>
           {path ? (
