@@ -90,9 +90,20 @@ def _resolve_responsible(
     return ProcessResponsibleRead(rule=rule, label=label, names=[], unresolved=True)
 
 
-def _stage_status(done: bool, start: dt.date | None, end: dt.date | None, today: dt.date) -> str:
+# Projetos já entregues ou certificados: as etapas por fazer não são trabalho em atraso
+# (estão à espera da inspeção/certificado, ou nunca foram registadas) — D-075.
+NO_OVERDUE_STATES = frozenset({"entregue_cliente", "certificado_final"})
+
+
+def _stage_status(
+    done: bool, start: dt.date | None, end: dt.date | None, today: dt.date, hide_overdue: bool = False
+) -> str:
+    """`pending` ("por concluir") no lugar de `overdue`/`active`/`upcoming`/`no_date` quando o
+    projeto já foi entregue: um projeto entregue nunca tem etapas "em atraso"."""
     if done:
         return "done"
+    if hide_overdue:
+        return "pending"
     if start is None or end is None:
         return "no_date"
     if today > end:
@@ -127,6 +138,7 @@ def build_project_process(db: Session, project: Project, ctx: AuthContext, today
             support = db.get(Person, delegation.support_person_id)
             support_name = support.display_name if support else None
 
+    hide_overdue = project.lifecycle_status in NO_OVERDUE_STATES
     total_done = total_all = stages_done = stages_total = overdue_stages = overdue_contacts = 0
     phase_reads: list[ProcessPhaseRead] = []
     for phase in phases:
@@ -155,14 +167,14 @@ def build_project_process(db: Session, project: Project, ctx: AuthContext, today
             if project.start_date is not None and stage.planned_start_offset_days and stage.planned_end_offset_days:
                 start = business_day(project.start_date, stage.planned_start_offset_days)
                 end = business_day(project.start_date, stage.planned_end_offset_days)
-            status = _stage_status(stage_done, start, end, today)
+            status = _stage_status(stage_done, start, end, today, hide_overdue)
 
             contact = None
             if stage.has_contact_checkpoint and stage.contact_day:
                 cp = stage_progress.get(stage.id)
                 contact_done = bool(cp and cp.contact_done)
                 planned = business_day(project.start_date, stage.contact_day) if project.start_date else None
-                contact_overdue = not contact_done and planned is not None and planned < today
+                contact_overdue = not hide_overdue and not contact_done and planned is not None and planned < today
                 overdue_contacts += contact_overdue
                 contact = ProcessContactRead(
                     day=stage.contact_day,

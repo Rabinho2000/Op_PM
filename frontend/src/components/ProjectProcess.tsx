@@ -19,6 +19,7 @@ const STATUS_LABELS: Record<string, string> = {
   active: "Em curso",
   upcoming: "Por começar",
   no_date: "Sem data",
+  pending: "Por concluir",
 };
 
 const STATUS_TONES: Record<string, Tone> = {
@@ -27,6 +28,7 @@ const STATUS_TONES: Record<string, Tone> = {
   active: "info",
   upcoming: "neutral",
   no_date: "neutral",
+  pending: "warning",
 };
 
 const CONTACT_LABELS: Record<string, string> = { contacto: "Contacto", update: "Update" };
@@ -205,6 +207,7 @@ function StageCard({
                 {stage.contact.planned_date && <> até {formatDatePt(stage.contact.planned_date)}</>}
                 {stage.contact.overdue && <Badge tone="danger">por fazer</Badge>}
                 {stage.contact.done && stage.contact.source === "legacy" && <span className="small muted"> (importado do legado)</span>}
+                {stage.contact.done && stage.contact.source === "inferred" && <span className="small muted"> (concluído por regra)</span>}
                 {stage.contact.note && <span className="muted"> — {stage.contact.note}</span>}
               </span>
             </label>
@@ -222,7 +225,10 @@ function StageCard({
                   <span className={t.done ? "process__done" : undefined}>{t.title}</span>
                 </label>
                 {t.done && t.source === "legacy" && <span className="small muted">importado do legado</span>}
-                {t.done && t.source !== "legacy" && (t.done_by_display_name || t.done_at) && (
+                {t.done && t.source === "inferred" && (
+                  <span className="small muted">concluída por regra (projeto entregue)</span>
+                )}
+                {t.done && t.source === "ui" && (t.done_by_display_name || t.done_at) && (
                   <span className="small muted">
                     {t.done_by_display_name ?? ""}
                     {t.done_at ? ` · ${formatDatePt(t.done_at.slice(0, 10))}` : ""}

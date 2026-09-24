@@ -190,6 +190,37 @@ describe("ProjectProcess", () => {
     expect(screen.getByText(/Ana · 06\/05\/2026/)).toBeInTheDocument();
   });
 
+  it("mostra 'Por concluir' (e não 'Em atraso') numa etapa de um projeto já entregue", async () => {
+    getProjectProcess.mockResolvedValue(
+      process({}, [
+        stage({ id: "a", code: "etapa-17", title: "Fecho", status: "done" }),
+        stage({ id: "b", code: "etapa-18", title: "Inspeção e certificado", status: "pending", done_count: 0, subtasks: [{ id: "z", code: "etapa-18.0", title: "Pedir a inspeção", done: false, done_at: null, done_by_display_name: null, source: "ui" }] }),
+      ])
+    );
+    renderWithProviders(<ProjectProcess projectId="p-1" />);
+    await screen.findByText("Inspeção e certificado");
+    expect(screen.getByText("Por concluir")).toBeInTheDocument();
+    expect(screen.queryByText("Em atraso")).not.toBeInTheDocument();
+    expect(screen.queryByText(/em atraso/)).not.toBeInTheDocument(); // nem no resumo
+  });
+
+  it("mostra 'concluída por regra' para o que foi concluído por regra num projeto entregue", async () => {
+    getProjectProcess.mockResolvedValue(
+      process({}, [
+        stage({
+          contact: { day: 9, kind: "contacto", note: "", planned_date: "2026-05-14", done: true, done_at: null, overdue: false, source: "inferred" },
+          subtasks: [{ id: "a", code: "etapa-01.0", title: "Concluída pela regra", done: true, done_at: null, done_by_display_name: null, source: "inferred" }],
+          status: "active",
+        }),
+      ])
+    );
+    renderWithProviders(<ProjectProcess projectId="p-1" />);
+    await screen.findByText("Concluída pela regra");
+    expect(screen.getByText("concluída por regra (projeto entregue)")).toBeInTheDocument();
+    expect(screen.getByText("(concluído por regra)")).toBeInTheDocument();
+    expect(screen.queryByText("importado do legado")).not.toBeInTheDocument();
+  });
+
   it("estado vazio quando o catálogo ainda não foi carregado", async () => {
     getProjectProcess.mockResolvedValue(process({ has_catalog: false, phases: [] }));
     renderWithProviders(<ProjectProcess projectId="p-1" />);

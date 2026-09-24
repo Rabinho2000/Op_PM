@@ -2964,3 +2964,46 @@ processo).
 
 **Verificado:** ver o resumo do PR. Contra a base local: 18 155 subtarefas e 2 792 contactos
 importados, 0 chaves sem correspondência, repetição sem alterações.
+
+
+## D-075 — Projetos entregues ao cliente: sem atraso e etapas concluídas por regra
+
+**Contexto:** o D-074 deixou 50 projetos ativos sem progresso no legado, 34 deles já
+**entregues ao cliente** (mais 16 entregues com progresso parcial). No separador Processo
+mostravam as etapas "em atraso". Um projeto entregue já passou por toda a obra: só lhe falta a
+**inspeção final e o certificado final** (etapa 18). O atraso era falta de registo, não
+trabalho pendente. Confirmado nos dados: nos entregues com progresso, o que fica por fazer é
+exatamente a etapa 18 (às vezes também a 17).
+
+**1. Sem atraso nos entregues e certificados** (`app/services/process.py`): num projeto em
+`entregue_cliente` ou `certificado_final`, uma etapa por fazer aparece como **"Por concluir"**
+(`pending`), nunca "em atraso"; os contactos por fazer também deixam de contar como atrasados e o
+resumo mostra 0 etapas e 0 contactos em atraso. As datas planeadas continuam visíveis. Nos outros
+estados (preparação, construção, on hold, sem estado) nada muda, e voltar um projeto atrás no
+estado traz o atraso de volta.
+
+**2. Concluir as etapas dos entregues por regra** (`python -m app.cli.close_delivered_stages
+[--dry-run] [--actor-email …] [--except-stage etapa-18]`, `app/services/process_rules.py`):
+conclui as subtarefas e os pontos de contacto de todas as etapas **exceto a 18** nos projetos
+ativos em `entregue_cliente`. Garantias, todas com testes:
+- só projetos **ativos** e **entregues**; nunca outros estados;
+- **nunca sobrescreve**: o que já está feito (na aplicação ou importado do legado) fica como
+  está, e uma subtarefa que alguém **desmarcou na aplicação** continua por fazer;
+- o que a regra conclui fica com `source="inferred"`, **sem data nem autor**, e a interface diz
+  "concluída por regra (projeto entregue)"; um registo de histórico por projeto
+  (`processo:concluído por regra`, origem `rule`);
+- idempotente; a etapa excecionada (e o seu ponto de contacto) nunca é tocada; uma etapa
+  desconhecida em `--except-stage` é um erro; recusa `APP_ENV=production` e um catálogo por
+  carregar.
+É uma **limpeza pontual**, não uma regra permanente: um projeto que passe a "Entregue ao cliente"
+daqui em diante não conclui etapas sozinho (decide-se se isso é desejável).
+
+**3. Duplicado do legado (Ribermold):** o legado tinha dois projetos "Ribermold" — um em
+Preparação com o PM certo e datas, outro em On hold, sem data de início e com outro PM. Ficou o
+primeiro; o segundo foi **desativado** pela API (nunca apagado), com o histórico registado. Uma
+reimportação não o reativa (a importação não escreve `is_active`).
+
+**Verificado:** 717 testes de backend (21 novos) e 233 Vitest; `tsc` e build. Contra a base local:
+50 projetos entregues, 44 alterados (2 521 subtarefas e 389 contactos concluídos por regra), os 6
+restantes já estavam completos; repetição sem alterações. Um projeto entregue passou de 0 % a
+95 % (73 de 77), com 17 etapas concluídas e a 18 "Por concluir", sem atraso; 294 projetos ativos.
