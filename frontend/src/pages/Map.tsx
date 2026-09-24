@@ -4,6 +4,7 @@
 // — nunca depende de um serviço externo para o resto da app funcionar
 // (ver docs/MAP_AND_PLANNING.md). Sem otimização automática de rotas, por
 // pedido explícito — só seleção manual + link para uma rota externa.
+import LifecycleMultiSelect from "../components/LifecycleMultiSelect";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet.markercluster";
@@ -937,17 +938,7 @@ export default function MapPage() {
             ))}
           </select>
         </div>
-        <div className="field">
-          <label htmlFor="map-lifecycle">Estado do projeto</label>
-          <select id="map-lifecycle" className="select" value={filters.lifecycle} onChange={(e) => setFilters({ ...filters, lifecycle: e.target.value })}>
-            <option value="">Todos</option>
-            {lifecycleStatuses.map((s) => (
-              <option key={s.code} value={s.code}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        <LifecycleMultiSelect id="map-lifecycle" label="Estado do projeto" value={filters.lifecycle} onChange={(next) => setFilters({ ...filters, lifecycle: next })} statuses={lifecycleStatuses} />
         <div className="field">
           <label htmlFor="map-status">Tarefas</label>
           <select id="map-status" className="select" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>

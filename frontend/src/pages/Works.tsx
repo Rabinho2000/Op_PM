@@ -1,3 +1,4 @@
+import LifecycleMultiSelect from "../components/LifecycleMultiSelect";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
@@ -180,26 +181,7 @@ export default function Works() {
             ))}
           </select>
         </div>
-        <div className="field field--wide" role="group" aria-labelledby="w-estado-label">
-          <span id="w-estado-label" className="field__label">
-            Estado da obra
-          </span>
-          <div className="chips">
-            {statuses.map((s) => {
-              const checked = lifecycle.includes(s.code);
-              return (
-                <label key={s.code} className={`chip ${checked ? "chip--on" : ""}`}>
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => update({ estado: checked ? lifecycle.filter((c) => c !== s.code) : [...lifecycle, s.code] })}
-                  />
-                  {s.label}
-                </label>
-              );
-            })}
-          </div>
-        </div>
+        <LifecycleMultiSelect id="w-estado" label="Estado da obra" value={lifecycle} onChange={(next) => update({ estado: next })} statuses={statuses} />
         <div className="toolbar__end">
           <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.85rem" }}>
             <input type="checkbox" checked={showIdle} onChange={(e) => update({ idle: e.target.checked ? "1" : null })} />

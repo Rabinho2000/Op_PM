@@ -153,7 +153,7 @@ function ProjectList({
           </li>
         ))}
       </ul>
-      <MoreLink total={projects.length} to="/projects" />
+      <MoreLink total={projects.length} to="/projects?estado=todos" />
     </>
   );
 }
@@ -243,13 +243,13 @@ interface StatDef {
 
 function buildStats(s: DashboardSummary): StatDef[] {
   return [
-    { label: "Projetos ativos", value: s.active_projects_count, icon: "folder", tone: "brand", to: "/projects" },
+    { label: "Projetos ativos", value: s.active_projects_count, icon: "folder", tone: "brand", to: "/projects?estado=todos" },
     {
       label: "A começar nos próximos 30 dias",
       value: s.projects_starting_next_30_days.length,
       icon: "flag",
       tone: "info",
-      to: "/projects",
+      to: "/projects?estado=todos",
     },
     { label: "Tarefas atrasadas", value: s.overdue_tasks.length, icon: "clock", tone: "danger", to: "/tasks?atrasadas=1", alert: true },
     { label: "Tarefas desta semana", value: s.tasks_due_this_week.length, icon: "calendar", tone: "brand", to: "/tasks" },
@@ -268,20 +268,20 @@ function buildStats(s: DashboardSummary): StatDef[] {
       tone: "success",
       to: "/tasks",
     },
-    { label: "Projetos sem PM", value: s.projects_without_pm.length, icon: "userOff", tone: "warning", to: "/projects", alert: true },
+    { label: "Projetos sem PM", value: s.projects_without_pm.length, icon: "userOff", tone: "warning", to: "/projects?estado=todos", alert: true },
     {
       label: "Projetos com dados incompletos",
       value: s.projects_missing_data.length,
       icon: "info",
       tone: "warning",
-      to: "/projects",
+      to: "/projects?estado=todos",
     },
     {
       label: "Fotografias por colocar",
       value: s.projects_photos_pending.length,
       icon: "camera",
       tone: "warning",
-      to: "/projects",
+      to: "/projects?estado=todos",
       alert: true,
     },
   ];
