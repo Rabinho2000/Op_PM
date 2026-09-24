@@ -14,7 +14,6 @@ def _day(d: str) -> dt.datetime:
 
 
 def test_list_is_grouped_by_state_then_chronological(db_session, api_client):
-    db_session.query(Project).delete()
     rows = [
         # (nome, estado, entrada, ligação)
         ("Z construção antigo", "construcao", "2025-01-10", None),
@@ -30,7 +29,9 @@ def test_list_is_grouped_by_state_then_chronological(db_session, api_client):
 
     res = api_client.get("/api/projects", headers={"X-Dev-User-Email": CHEFE})
     assert res.status_code == 200
-    assert [p["name"] for p in res.json()] == [
+    ours = {r[0] for r in rows}
+    # A base de teste já tem projetos: só interessa a ordem relativa dos nossos.
+    assert [p["name"] for p in res.json() if p["name"] in ours] == [
         "N on hold",
         "B prep 2 mesma entrada",  # entrada igual → ligação mais antiga primeiro
         "M prep 1",
