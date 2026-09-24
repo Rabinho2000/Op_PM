@@ -20,12 +20,12 @@ vi.mock("../api/client", async () => {
 function makeSupplier(overrides: Partial<Supplier> = {}): Supplier {
   return {
     id: "s-1",
-    name: "Energy Systems",
+    name: "Fornecedor A",
     category: null,
     contact: "Ana",
     phone: "+351 253 145 794",
-    email: "info@energysystems.pt",
-    website: "https://www.energysystems.pt/",
+    email: "info@fornecedor-a.example",
+    website: "https://www.fornecedor-a.example/",
     address: "Rua de Lamas 541, Rio Covo",
     lat: null,
     lon: null,
@@ -58,7 +58,7 @@ describe("Suppliers (lista)", () => {
       makeSupplier(),
       makeSupplier({
         id: "s-2",
-        name: "Sikla Lusa",
+        name: "Fornecedor B",
         phone: null,
         email: null,
         website: null,
@@ -75,12 +75,12 @@ describe("Suppliers (lista)", () => {
   it("mostra nome, tipos, telefone, email e localização, com ligações úteis", async () => {
     renderWithProviders(<Suppliers />, { me: viewOnly() });
 
-    expect(await screen.findByText("Energy Systems")).toBeInTheDocument();
+    expect(await screen.findByText("Fornecedor A")).toBeInTheDocument();
     expect(screen.getByText("2 fornecedores")).toBeInTheDocument();
     expect(screen.getAllByText("Carports").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: "+351 253 145 794" })).toHaveAttribute("href", "tel:+351253145794");
-    expect(screen.getByRole("link", { name: "info@energysystems.pt" })).toHaveAttribute("href", "mailto:info@energysystems.pt");
-    expect(screen.getByRole("link", { name: "www.energysystems.pt" })).toHaveAttribute("href", "https://www.energysystems.pt/");
+    expect(screen.getByRole("link", { name: "info@fornecedor-a.example" })).toHaveAttribute("href", "mailto:info@fornecedor-a.example");
+    expect(screen.getByRole("link", { name: "www.fornecedor-a.example" })).toHaveAttribute("href", "https://www.fornecedor-a.example/");
     expect(screen.getByText("Rua de Lamas 541, Rio Covo")).toBeInTheDocument();
     // Sem dados: traço; inativo assinalado; "Ver no mapa" só com coordenadas.
     expect(screen.getByText("Inativo")).toBeInTheDocument();
@@ -89,7 +89,7 @@ describe("Suppliers (lista)", () => {
 
   it("carrega só fornecedores ativos por omissão e envia os filtros ao servidor", async () => {
     renderWithProviders(<Suppliers />, { me: viewOnly() });
-    await screen.findByText("Energy Systems");
+    await screen.findByText("Fornecedor A");
     expect(listSuppliers).toHaveBeenLastCalledWith({ q: undefined, material_type: undefined, is_active: true });
 
     await screen.findByRole("option", { name: "Carports (2)" });
@@ -113,7 +113,7 @@ describe("Suppliers (lista)", () => {
 
   it("sem permissão de gestão não mostra criar nem editar", async () => {
     renderWithProviders(<Suppliers />, { me: viewOnly() });
-    await screen.findByText("Energy Systems");
+    await screen.findByText("Fornecedor A");
     expect(screen.queryByRole("button", { name: /Novo fornecedor/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Editar/ })).not.toBeInTheDocument();
   });
@@ -131,7 +131,7 @@ describe("Suppliers (lista)", () => {
   it("cria um fornecedor com vários tipos de material", async () => {
     createSupplier.mockResolvedValue(makeSupplier({ id: "s-3", name: "Nova Loja" }));
     renderWithProviders(<Suppliers />, { me: withManage() });
-    await screen.findByText("Energy Systems");
+    await screen.findByText("Fornecedor A");
 
     fireEvent.click(screen.getByRole("button", { name: /Novo fornecedor/ }));
     const dialog = await screen.findByRole("dialog");
@@ -166,7 +166,7 @@ describe("Suppliers (lista)", () => {
 
   it("valida no cliente antes de enviar", async () => {
     renderWithProviders(<Suppliers />, { me: withManage() });
-    await screen.findByText("Energy Systems");
+    await screen.findByText("Fornecedor A");
     fireEvent.click(screen.getByRole("button", { name: /Novo fornecedor/ }));
     const dialog = await screen.findByRole("dialog");
 
@@ -188,11 +188,11 @@ describe("Suppliers (lista)", () => {
   it("edita e desativa um fornecedor existente", async () => {
     updateSupplier.mockResolvedValue(makeSupplier({ is_active: false }));
     renderWithProviders(<Suppliers />, { me: withManage() });
-    await screen.findByText("Energy Systems");
+    await screen.findByText("Fornecedor A");
 
-    fireEvent.click(screen.getByRole("button", { name: "Editar Energy Systems" }));
+    fireEvent.click(screen.getByRole("button", { name: "Editar Fornecedor A" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByLabelText("Nome *")).toHaveValue("Energy Systems");
+    expect(within(dialog).getByLabelText("Nome *")).toHaveValue("Fornecedor A");
     expect(within(dialog).getByRole("button", { name: "Remover Carports" })).toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Remover Carports" }));
@@ -203,7 +203,7 @@ describe("Suppliers (lista)", () => {
     const [id, changes] = updateSupplier.mock.calls[0];
     expect(id).toBe("s-1");
     expect(changes).toMatchObject({ is_active: false, material_types: ["Estruturas de fixação"] });
-    expect(await screen.findByText("Fornecedor «Energy Systems» atualizado.")).toBeInTheDocument();
+    expect(await screen.findByText("Fornecedor «Fornecedor A» atualizado.")).toBeInTheDocument();
   });
 
   it("mostra o erro do servidor e mantém o diálogo aberto", async () => {
@@ -212,10 +212,10 @@ describe("Suppliers (lista)", () => {
       throw new actual.ApiError(409, "Já existe um fornecedor com este nome.");
     });
     renderWithProviders(<Suppliers />, { me: withManage() });
-    await screen.findByText("Energy Systems");
+    await screen.findByText("Fornecedor A");
     fireEvent.click(screen.getByRole("button", { name: /Novo fornecedor/ }));
     const dialog = await screen.findByRole("dialog");
-    fireEvent.change(within(dialog).getByLabelText("Nome *"), { target: { value: "Energy Systems" } });
+    fireEvent.change(within(dialog).getByLabelText("Nome *"), { target: { value: "Fornecedor A" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Guardar fornecedor" }));
 
     expect(await within(dialog).findByText("Já existe um fornecedor com este nome.")).toBeInTheDocument();

@@ -33,6 +33,7 @@ from app.security.permissions import (
 )
 from app.security.project_fields import PM_EDITABLE_PROJECT_FIELDS
 from app.services.installers import PlanError, update_work_plan
+from app.services.process import progress_percent_by_project
 from app.services.project_lifecycle import LIFECYCLE_FLOW, LIFECYCLE_STATUS_CODES, LIFECYCLE_STATUSES
 from app.services.projects import (
     change_lifecycle_status,
@@ -56,7 +57,18 @@ def _editable_fields(ctx: AuthContext, project: Project) -> list[str]:
     return sorted(PM_EDITABLE_PROJECT_FIELDS)
 
 
-def _to_read(db: Session, project: Project, ctx: AuthContext) -> ProjectRead:
+_COMPUTE = object()  # "calcular só para este projeto" (por oposição a `None` = sem catálogo)
+
+
+def _to_read(
+    db: Session,
+    project: Project,
+    ctx: AuthContext,
+    process_percents: dict[uuid.UUID, int] | None | object = _COMPUTE,
+) -> ProjectRead:
+    """`process_percents`: percentagem do processo de vários projetos, já calculada (a listagem
+    calcula-a uma vez para todos, sem uma query por projeto). Omitido, calcula-se só para este;
+    `None` = catálogo do processo ainda não carregado."""
     data = ProjectRead.model_validate(project)
     data.pm_display_name = project.pm.display_name if project.pm else None
     data.has_pm = project.has_pm
@@ -69,7 +81,15 @@ def _to_read(db: Session, project: Project, ctx: AuthContext) -> ProjectRead:
     data.next_task_title = summary.next_task_title
     data.next_task_due_date = summary.next_task_due_date
     data.overdue_tasks_count = summary.overdue_tasks_count
-    data.workflow_progress_percent = summary.workflow_progress_percent
+    # D-074: o progresso vem do processo (subtarefas feitas / total do catálogo). Sem catálogo
+    # carregado, mantém-se a alternativa antiga (as tarefas padrão).
+    if process_percents is _COMPUTE:
+        process_percents = progress_percent_by_project(db, [project.id])
+    data.workflow_progress_percent = (
+        process_percents[project.id]  # type: ignore[index]
+        if process_percents is not None and project.id in process_percents  # type: ignore[operator]
+        else summary.workflow_progress_percent
+    )
     data.photos_pending_warning = summary.photos_pending_warning
 
     data.editable_fields = _editable_fields(ctx, project)
@@ -111,7 +131,8 @@ def list_projects_endpoint(
         start_to=start_to,
         lifecycle_statuses=lifecycle_status,
     )
-    result = [_to_read(db, p, ctx) for p in projects]
+    percents = progress_percent_by_project(db, [p.id for p in projects])
+    result = [_to_read(db, p, ctx, percents) for p in projects]
     # O estado é derivado das tarefas (compute_project_task_summary), por
     # isso o filtro aplica-se depois do cálculo — nunca uma segunda regra.
     if status is not None:

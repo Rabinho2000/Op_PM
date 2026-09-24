@@ -21,6 +21,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 from app.audit.log import record_project_change
@@ -89,9 +90,20 @@ def _resolve_responsible(
     return ProcessResponsibleRead(rule=rule, label=label, names=[], unresolved=True)
 
 
-def _stage_status(done: bool, start: dt.date | None, end: dt.date | None, today: dt.date) -> str:
+# Projetos já entregues ou certificados: as etapas por fazer não são trabalho em atraso
+# (estão à espera da inspeção/certificado, ou nunca foram registadas) — D-075.
+NO_OVERDUE_STATES = frozenset({"entregue_cliente", "certificado_final"})
+
+
+def _stage_status(
+    done: bool, start: dt.date | None, end: dt.date | None, today: dt.date, hide_overdue: bool = False
+) -> str:
+    """`pending` ("por concluir") no lugar de `overdue`/`active`/`upcoming`/`no_date` quando o
+    projeto já foi entregue: um projeto entregue nunca tem etapas "em atraso"."""
     if done:
         return "done"
+    if hide_overdue:
+        return "pending"
     if start is None or end is None:
         return "no_date"
     if today > end:
@@ -126,6 +138,7 @@ def build_project_process(db: Session, project: Project, ctx: AuthContext, today
             support = db.get(Person, delegation.support_person_id)
             support_name = support.display_name if support else None
 
+    hide_overdue = project.lifecycle_status in NO_OVERDUE_STATES
     total_done = total_all = stages_done = stages_total = overdue_stages = overdue_contacts = 0
     phase_reads: list[ProcessPhaseRead] = []
     for phase in phases:
@@ -146,6 +159,7 @@ def build_project_process(db: Session, project: Project, ctx: AuthContext, today
                         done=done,
                         done_at=progress.done_at if done and progress else None,
                         done_by_display_name=names.get(progress.done_by_person_id) if done and progress and progress.done_by_person_id else None,
+                        source=progress.source if done and progress else "ui",
                     )
                 )
             stage_done = bool(subtasks) and done_count == len(subtasks)
@@ -153,14 +167,14 @@ def build_project_process(db: Session, project: Project, ctx: AuthContext, today
             if project.start_date is not None and stage.planned_start_offset_days and stage.planned_end_offset_days:
                 start = business_day(project.start_date, stage.planned_start_offset_days)
                 end = business_day(project.start_date, stage.planned_end_offset_days)
-            status = _stage_status(stage_done, start, end, today)
+            status = _stage_status(stage_done, start, end, today, hide_overdue)
 
             contact = None
             if stage.has_contact_checkpoint and stage.contact_day:
                 cp = stage_progress.get(stage.id)
                 contact_done = bool(cp and cp.contact_done)
                 planned = business_day(project.start_date, stage.contact_day) if project.start_date else None
-                contact_overdue = not contact_done and planned is not None and planned < today
+                contact_overdue = not hide_overdue and not contact_done and planned is not None and planned < today
                 overdue_contacts += contact_overdue
                 contact = ProcessContactRead(
                     day=stage.contact_day,
@@ -170,6 +184,7 @@ def build_project_process(db: Session, project: Project, ctx: AuthContext, today
                     done=contact_done,
                     done_at=cp.contact_done_at if contact_done and cp else None,
                     overdue=contact_overdue,
+                    source=cp.source if contact_done and cp else "ui",
                 )
             dep = stage_by_id.get(stage.depends_on_stage_id) if stage.depends_on_stage_id else None
             stage_reads.append(
@@ -224,6 +239,25 @@ def build_project_process(db: Session, project: Project, ctx: AuthContext, today
             overdue_contacts=overdue_contacts,
         ),
     )
+
+
+def progress_percent_by_project(db: Session, project_ids: list[uuid.UUID]) -> dict[uuid.UUID, int] | None:
+    """Percentagem do processo (subtarefas feitas / total do catálogo) de vários projetos, em
+    **duas queries** (nunca uma por projeto). `None` se o catálogo ainda não foi carregado —
+    quem chama usa então a alternativa antiga (as tarefas padrão)."""
+    total = db.query(func.count(WorkflowSubtask.id)).scalar() or 0
+    if total == 0:
+        return None
+    if not project_ids:
+        return {}
+    rows = (
+        db.query(ProjectSubtaskProgress.project_id, func.count(ProjectSubtaskProgress.id))
+        .filter(ProjectSubtaskProgress.project_id.in_(project_ids), ProjectSubtaskProgress.done.is_(True))
+        .group_by(ProjectSubtaskProgress.project_id)
+        .all()
+    )
+    done = dict(rows)
+    return {pid: round(100 * done.get(pid, 0) / total) for pid in project_ids}
 
 
 # --- escrita -----------------------------------------------------------------

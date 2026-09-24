@@ -92,8 +92,8 @@ def test_list_shows_teams_leaders_and_project_counts(api_client):
 
 
 def test_installer_names_are_unique_ignoring_case_and_accents(api_client):
-    assert api_client.post("/api/installers", json={"name": "Verde Milenar"}, headers=_h(CHEFE)).status_code == 201
-    dup = api_client.post("/api/installers", json={"name": "  VERDE   milenar "}, headers=_h(CHEFE))
+    assert api_client.post("/api/installers", json={"name": "Instalador A"}, headers=_h(CHEFE)).status_code == 201
+    dup = api_client.post("/api/installers", json={"name": "  INSTALADOR   a "}, headers=_h(CHEFE))
     assert dup.status_code == 409
 
 
@@ -340,8 +340,8 @@ def _promote(db, payload, external_id="synth_p001"):
 
 
 def test_promotion_creates_the_installer_and_estimated_work_dates(db_session):
-    project, _record, _actor = _promote(db_session, _legacy_payload(subcontractor="  Verde   Milenar "))
-    assert project.installer.name == "Verde Milenar"
+    project, _record, _actor = _promote(db_session, _legacy_payload(subcontractor="  Instalador   A "))
+    assert project.installer.name == "Instalador A"
     assert project.installer_team_id is None  # o legado não diz a equipa
     assert project.start_date == dt.date(2026, 2, 10)
     assert (project.work_start_date, project.work_end_date) == derive_work_window(dt.date(2026, 2, 10))
@@ -349,9 +349,9 @@ def test_promotion_creates_the_installer_and_estimated_work_dates(db_session):
 
 
 def test_installer_names_from_the_legacy_are_normalized_into_one(db_session):
-    first, _r, _a = _promote(db_session, _legacy_payload(subcontractor="Verde Milenar"))
-    assert get_or_create_installer(db_session, "  VERDE milenar ").id == first.installer_id
-    assert db_session.query(Installer).filter(Installer.name_key == "verde milenar").count() == 1
+    first, _r, _a = _promote(db_session, _legacy_payload(subcontractor="Instalador A"))
+    assert get_or_create_installer(db_session, "  INSTALADOR a ").id == first.installer_id
+    assert db_session.query(Installer).filter(Installer.name_key == "instalador a").count() == 1
 
 
 @pytest.mark.parametrize("empty", ["", "   ", None])
@@ -414,7 +414,7 @@ def test_reimport_never_overwrites_a_planned_installer_or_dates_and_rollback_res
 
 ENTRIES = [
     {
-        "name": "Verde Milenar",
+        "name": "Instalador A",
         "teams": [
             {"name": "Equipa 1", "leader_name": "Chefe Um", "leader_phone": "+351 910 000 001"},
             {"name": "Equipa 2", "leader_name": "Chefe Dois"},
@@ -430,7 +430,7 @@ def test_loader_creates_validates_and_is_idempotent(db_session):
     summary = load_installers(db_session, ENTRIES)
     assert (summary["installers_created"], summary["teams_created"]) == (3, 3)
     assert len(summary["invalid"]) == 1 and "Inválido / X" in summary["invalid"][0]
-    vm = _installer(db_session, "Verde Milenar")
+    vm = _installer(db_session, "Instalador A")
     assert [(t.name, t.leader_name) for t in vm.teams] == [("Equipa 1", "Chefe Um"), ("Equipa 2", "Chefe Dois"), ("Equipa 3", None)]
 
     again = load_installers(db_session, ENTRIES)
@@ -439,14 +439,14 @@ def test_loader_creates_validates_and_is_idempotent(db_session):
 
 def test_loader_only_fills_empty_fields(db_session):
     load_installers(db_session, ENTRIES)
-    vm = _installer(db_session, "Verde Milenar")
+    vm = _installer(db_session, "Instalador A")
     equipa1 = next(t for t in vm.teams if t.name == "Equipa 1")
     equipa1.leader_name = "Editado na app"
     equipa1.is_active = False
     equipa3 = next(t for t in vm.teams if t.name == "Equipa 3")
     db_session.flush()
 
-    changed = [{"name": "verde milenar", "teams": [
+    changed = [{"name": "instalador a", "teams": [
         {"name": "equipa 1", "leader_name": "Chefe Um"},
         {"name": "Equipa 3", "leader_name": "Novo Chefe", "leader_phone": "+351 910 000 003"},
     ]}]

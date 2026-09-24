@@ -14,6 +14,9 @@ class ProcessSubtaskRead(BaseModel):
     done: bool
     done_at: dt.datetime | None = None
     done_by_display_name: str | None = None
+    # "ui" (marcado na aplicação), "legacy" (importado do legado) ou "inferred" (concluído por
+    # regra num projeto entregue) — os dois últimos sem data nem autor.
+    source: str = "ui"
 
 
 class ProcessResponsibleRead(BaseModel):
@@ -37,6 +40,7 @@ class ProcessContactRead(BaseModel):
     done: bool
     done_at: dt.datetime | None = None
     overdue: bool
+    source: str = "ui"
 
 
 class ProcessStageRead(BaseModel):
@@ -50,7 +54,7 @@ class ProcessStageRead(BaseModel):
     end_day: int | None
     planned_start: dt.date | None
     planned_end: dt.date | None
-    # done | overdue | active | upcoming | no_date
+    # done | overdue | active | upcoming | no_date | pending (projeto já entregue)
     status: str
     done_count: int
     total_count: int

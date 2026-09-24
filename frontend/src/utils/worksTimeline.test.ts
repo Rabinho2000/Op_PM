@@ -148,7 +148,7 @@ describe("buildRows", () => {
   const installers: Installer[] = [
     {
       id: "vm",
-      name: "Verde Milenar",
+      name: "Instalador A",
       is_active: true,
       project_count: 0,
       teams: [
@@ -157,7 +157,7 @@ describe("buildRows", () => {
         { id: "t3", name: "Equipa 3", leader_name: null, leader_phone: null, is_active: false, project_count: 0 },
       ],
     },
-    { id: "gps", name: "GPS Energia", is_active: true, project_count: 0, teams: [] },
+    { id: "gps", name: "Instalador B", is_active: true, project_count: 0, teams: [] },
     { id: "off", name: "Parado", is_active: false, project_count: 0, teams: [] },
   ];
 
@@ -168,7 +168,7 @@ describe("buildRows", () => {
       work("c", "2026-06-01", "2026-06-05", { installer_id: "vm", installer_team_id: null }),
     ];
     const rows = buildRows(works, installers);
-    expect(rows.map((r) => `${r.kind}:${r.label}`)).toEqual(["header:Verde Milenar", "lane:Equipa 1", "lane:Sem equipa"]);
+    expect(rows.map((r) => `${r.kind}:${r.label}`)).toEqual(["header:Instalador A", "lane:Equipa 1", "lane:Sem equipa"]);
     expect(rows[1].laneCount).toBe(2); // A e B sobrepõem-se
     expect(rows[1].indent).toBe(true);
     expect(rows[0].works).toEqual([]);
@@ -180,7 +180,7 @@ describe("buildRows", () => {
       work("x", "2026-06-01", "2026-06-05"),
     ];
     const rows = buildRows(works, installers);
-    expect(rows.map((r) => r.label)).toEqual(["GPS Energia", "Sem instalador"]);
+    expect(rows.map((r) => r.label)).toEqual(["Instalador B", "Sem instalador"]);
     expect(rows.every((r) => r.kind === "lane")).toBe(true);
   });
 
@@ -188,17 +188,17 @@ describe("buildRows", () => {
     expect(buildRows([], installers)).toEqual([]);
     const idle = buildRows([], installers, true);
     expect(idle.map((r) => `${r.kind}:${r.label}`)).toEqual([
-      "header:Verde Milenar",
+      "header:Instalador A",
       "lane:Equipa 1",
       "lane:Equipa 2", // a Equipa 3 está inativa
-      "lane:GPS Energia", // o instalador inativo 'Parado' não aparece
+      "lane:Instalador B", // o instalador inativo 'Parado' não aparece
     ]);
     expect(idle.filter((r) => r.kind === "lane").every((r) => r.muted)).toBe(true);
   });
 
   it("uma equipa inativa com obras continua a aparecer", () => {
     const rows = buildRows([work("z", "2026-06-01", "2026-06-02", { installer_id: "vm", installer_team_id: "t3" })], installers);
-    expect(rows.map((r) => r.label)).toEqual(["Verde Milenar", "Equipa 3"]);
+    expect(rows.map((r) => r.label)).toEqual(["Instalador A", "Equipa 3"]);
   });
 });
 

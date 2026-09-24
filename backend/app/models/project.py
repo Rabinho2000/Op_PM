@@ -192,6 +192,8 @@ class ProjectStageProgress(UUIDPk, TimestampMixin, Base):
     contact_done_by_person_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("people.id"), nullable=True
     )
+    # `ui` (marcado na aplicação) ou `legacy` (importado do legado, sem data nem autor — D-074).
+    source: Mapped[str] = mapped_column(String(16), default="ui", nullable=False)
 
 
 class ProjectSubtaskProgress(UUIDPk, TimestampMixin, Base):
@@ -211,6 +213,8 @@ class ProjectSubtaskProgress(UUIDPk, TimestampMixin, Base):
     done_by_person_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("people.id"), nullable=True
     )
+    # `ui` (marcado na aplicação) ou `legacy` (importado do legado, sem data nem autor — D-074).
+    source: Mapped[str] = mapped_column(String(16), default="ui", nullable=False)
 
 
 class ProjectHistory(UUIDPk, Base):

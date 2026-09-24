@@ -2730,8 +2730,8 @@ confirmação fica no histórico. Os ~31 projetos não concluídos têm de ser
 revistos à mão.
 
 **Importação do legado:** o `subcontractor` do export (que nunca era lido)
-passa a criar/encontrar o instalador pelo nome normalizado ("  Verde  Milenar " e
-"verde milenar" são o mesmo); vazio → sem instalador. **O legado não diz a
+passa a criar/encontrar o instalador pelo nome normalizado ("  Instalador  A " e
+"instalador a" são o mesmo); vazio → sem instalador. **O legado não diz a
 equipa**: todas as obras ficam "sem equipa" até serem atribuídas. Reimportar
 **nunca sobrescreve** um instalador nem datas já atribuídos (o Op_PM manda, como
 no estado do projeto, D-069); o rollback de uma promoção repõe o vazio.
@@ -2909,3 +2909,101 @@ Só se pode marcar se o servidor o permitir (`can_update`).
 migração para cima e para baixo. Contra a base local: processo real carregado (6/18/77) e
 recarregado sem alterações; num projeto do PM A as etapas de suporte vão para a pessoa de Suporte
 (delegado), num do PM C para o próprio PM C; marcar/desmarcar testado no browser.
+
+
+## D-074 — Progresso do legado migrado e progresso vindo do processo (PR 6 do plano)
+
+**Decisão:** o progresso que a equipa já registou no legado (`done` e `contactsDone`, 245 dos
+295 projetos) passa para o Op_PM, e a barra de progresso dos projetos passa a vir do
+**processo** (subtarefas feitas ÷ total do catálogo) em vez das 5 tarefas padrão.
+
+**Correspondência sem tabelas intermédias:** as chaves do legado são `<etapa>.<índice a partir
+de 0>` (`"2.0"` = 1.ª subtarefa da etapa 2) e `c<etapa>` (ponto de contacto). Os códigos do
+catálogo (D-073) foram escolhidos para coincidir: `etapa-02.0`, `etapa-02`. O `done` não tem
+"marcador de etapa": uma etapa está concluída quando todas as suas subtarefas estão feitas
+(`stageDone` do legado) — o mesmo critério da aplicação.
+
+**Importação** (`python -m app.cli.import_legacy_progress --file <export> [--dry-run]
+[--actor-email …]`, `app/services/legacy_progress.py`). Como os outros comandos de migração,
+recusa um ficheiro que o Git apanharia e `APP_ENV=production` (passa primeiro por staging).
+Regras, todas com testes:
+- só se importa o que é **verdadeiro** (os 6 `false` do legado são o mesmo que "por fazer");
+- **nunca sobrescreve** progresso que já exista no Op_PM — marcado na aplicação (mesmo que
+  depois desmarcado) ou já importado. O Op_PM manda; repetir a importação não cria nada;
+- o importado fica com `source="legacy"`, **sem data nem autor** — o legado não os guarda — e a
+  interface mostra "importado do legado" em vez de inventar (migração `a9c3e7f1b5d2`: coluna
+  `source`, `ui` por omissão);
+- chaves sem correspondência no catálogo são **listadas, nunca escondidas**; projetos do export
+  que não existem no Op_PM (por `ProjectExternalId`, nunca por nome) são contados e listados;
+- um registo de histórico por projeto (`processo:importado`, `import_legacy`), não um por
+  subtarefa;
+- **não** se importam `commissionedAt` (33 projetos; a data de comissionamento não tem
+  correspondente) nem `shift` (2 projetos; deslocamento de etapas por projeto, não modelado): são
+  contados no resumo.
+
+**Barra de progresso:** `workflow_progress_percent` (lista e detalhe) = subtarefas feitas ÷
+total do catálogo, calculado **em bloco** para a lista (2 queries, sem N+1, testado). Sem
+catálogo carregado mantém-se o cálculo antigo (as tarefas padrão). O estado derivado
+"Tarefas" (não iniciado/em curso/concluído) não muda.
+
+**Equivalência verificada com a lógica do próprio legado** (não só com testes sintéticos): o
+`STAGES` e o `stageDone`/`stageCount`/percentagem do `solcor-gestao.html` foram avaliados em
+Node sobre o export real e comparados, projeto a projeto, com o que a aplicação mostra
+(subtarefas feitas, etapas concluídas, feitas por etapa, contactos, percentagem na lista e no
+processo).
+
+**Fica de fora / para decidir:**
+1. Os projetos **sem `done` no legado** (50, quase todos já entregues ou certificados) mostram
+   as suas etapas como "em atraso" no separador Processo, porque nada foi marcado e as datas já
+   passaram. É verdade pelas datas, mas ruidoso; se incomodar, esconde-se o atraso nos estados
+   "Entregue" e "Certificado final".
+2. "Etapas em atraso" e "a fazer agora" no **painel** (a fase opcional da feature 1): não
+   feito. As tarefas por projeto existem agora, mas calcular o atraso de todos os projetos no
+   painel pede uma consulta em bloco própria.
+3. `commissionedAt` e `shift` (acima).
+
+**Verificado:** ver o resumo do PR. Contra a base local: 18 155 subtarefas e 2 792 contactos
+importados, 0 chaves sem correspondência, repetição sem alterações.
+
+
+## D-075 — Projetos entregues ao cliente: sem atraso e etapas concluídas por regra
+
+**Contexto:** o D-074 deixou 50 projetos ativos sem progresso no legado, 34 deles já
+**entregues ao cliente** (mais 16 entregues com progresso parcial). No separador Processo
+mostravam as etapas "em atraso". Um projeto entregue já passou por toda a obra: só lhe falta a
+**inspeção final e o certificado final** (etapa 18). O atraso era falta de registo, não
+trabalho pendente. Confirmado nos dados: nos entregues com progresso, o que fica por fazer é
+exatamente a etapa 18 (às vezes também a 17).
+
+**1. Sem atraso nos entregues e certificados** (`app/services/process.py`): num projeto em
+`entregue_cliente` ou `certificado_final`, uma etapa por fazer aparece como **"Por concluir"**
+(`pending`), nunca "em atraso"; os contactos por fazer também deixam de contar como atrasados e o
+resumo mostra 0 etapas e 0 contactos em atraso. As datas planeadas continuam visíveis. Nos outros
+estados (preparação, construção, on hold, sem estado) nada muda, e voltar um projeto atrás no
+estado traz o atraso de volta.
+
+**2. Concluir as etapas dos entregues por regra** (`python -m app.cli.close_delivered_stages
+[--dry-run] [--actor-email …] [--except-stage etapa-18]`, `app/services/process_rules.py`):
+conclui as subtarefas e os pontos de contacto de todas as etapas **exceto a 18** nos projetos
+ativos em `entregue_cliente`. Garantias, todas com testes:
+- só projetos **ativos** e **entregues**; nunca outros estados;
+- **nunca sobrescreve**: o que já está feito (na aplicação ou importado do legado) fica como
+  está, e uma subtarefa que alguém **desmarcou na aplicação** continua por fazer;
+- o que a regra conclui fica com `source="inferred"`, **sem data nem autor**, e a interface diz
+  "concluída por regra (projeto entregue)"; um registo de histórico por projeto
+  (`processo:concluído por regra`, origem `rule`);
+- idempotente; a etapa excecionada (e o seu ponto de contacto) nunca é tocada; uma etapa
+  desconhecida em `--except-stage` é um erro; recusa `APP_ENV=production` e um catálogo por
+  carregar.
+É uma **limpeza pontual**, não uma regra permanente: um projeto que passe a "Entregue ao cliente"
+daqui em diante não conclui etapas sozinho (decide-se se isso é desejável).
+
+**3. Duplicado do legado (projeto 298):** o legado tinha dois projetos para o mesmo cliente — o
+`298`, em Preparação com o PM certo e datas, e outro sem número, em On hold, sem data de início e
+com outro PM. Ficou o `298`; o outro foi **desativado** pela API (nunca apagado), com o histórico
+registado. Uma reimportação não o reativa (a importação não escreve `is_active`).
+
+**Verificado:** 717 testes de backend (21 novos) e 233 Vitest; `tsc` e build. Contra a base local:
+50 projetos entregues, 44 alterados (2 521 subtarefas e 389 contactos concluídos por regra), os 6
+restantes já estavam completos; repetição sem alterações. Um projeto entregue passou de 0 % a
+95 % (73 de 77), com 17 etapas concluídas e a 18 "Por concluir", sem atraso; 294 projetos ativos.

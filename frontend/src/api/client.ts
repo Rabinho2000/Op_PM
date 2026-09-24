@@ -384,6 +384,8 @@ export interface ProcessSubtask {
   done: boolean;
   done_at: string | null;
   done_by_display_name: string | null;
+  // "ui" (marcado na aplicação) ou "legacy" (importado do legado, sem data nem autor).
+  source: string;
 }
 
 export interface ProcessResponsible {
@@ -405,6 +407,7 @@ export interface ProcessContact {
   done: boolean;
   done_at: string | null;
   overdue: boolean;
+  source: string;
 }
 
 export interface ProcessStage {

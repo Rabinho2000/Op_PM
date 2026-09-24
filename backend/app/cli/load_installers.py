@@ -9,7 +9,7 @@ Idempotente, pelo nome (sem maiúsculas nem acentos):
   sobrescreve o que alguém editou na app, nem reativa o que foi desativado.
 
 Formato:
-    {"installers": [{"name": "Verde Milenar", "teams": [
+    {"installers": [{"name": "Instalador A", "teams": [
         {"name": "Equipa 1", "leader_name": "…", "leader_phone": "+351 …"}, …]}]}
 
 Utilização:
