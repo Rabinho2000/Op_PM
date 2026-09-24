@@ -26,6 +26,7 @@ class ProjectRead(BaseModel):
     power_raw: str | None
     pm_person_id: uuid.UUID | None
     start_date: dt.date | None
+    lifecycle_status: str | None
     clickup_status_mirror: str | None
     role: str | None
     equipment_notes: str | None
@@ -63,6 +64,7 @@ class ProjectRead(BaseModel):
     # cada escrita (app/services/projects.py, app/services/tasks.py).
     editable_fields: list[str] = []
     can_manage_tasks: bool = False
+    can_change_status: bool = False
 
 
 class ProjectUpdate(BaseModel):
@@ -111,3 +113,24 @@ class ProjectHistoryRead(BaseModel):
     note: str
     related_staging_record_id: uuid.UUID | None
     changed_at: dt.datetime
+
+
+class LifecycleStatusRead(BaseModel):
+    code: str
+    label: str
+    # Sequência normal (1..5); `null` para "On hold pelo cliente", que não faz
+    # parte dela.
+    flow_position: int | None = None
+
+
+class ProjectStatusChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lifecycle_status: str
+    note: str = ""
+
+
+class ProjectStatusChangeResult(BaseModel):
+    project: ProjectRead
+    # Aviso (nunca bloqueio) quando a mudança salta estados da sequência normal.
+    warning: str | None = None

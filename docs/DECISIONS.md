@@ -2570,3 +2570,61 @@ real por Microsoft Graph.
 - O `vitest` 5 exige Node ≥ 22.12; CI (`ci.yml`) e as duas imagens Docker do
   frontend passaram de Node 20 para 22 (o Node 20 já está em fim de vida).
 - Verificado: `tsc`, 154 testes Vitest, `vite build`.
+
+
+## D-069 — Estado do ciclo de vida do projeto (PR 1 do plano de tarefas/estados/calendário/fornecedores)
+
+**Decisão:** cada projeto tem um estado próprio, `Project.lifecycle_status`, com
+seis valores: `on_hold_cliente` (On hold pelo cliente), `preparacao`,
+`construcao`, `construido`, `entregue_cliente`, `certificado_final`. A lista
+vive num só sítio (`app/services/project_lifecycle.py`) e a UI lê-a de
+`GET /api/projects/lifecycle-statuses` — nunca a duplica.
+
+**Fonte de verdade (D1 do plano):** o **Op_PM**. `clickup_status_mirror`
+continua a ser só um espelho e serve apenas para inicializar o estado. Quando a
+Fase 8 (ClickUp real) chegar, decide-se a sincronização.
+
+**Nome:** o estado derivado das tarefas (`Project.status`:
+nao_iniciado/em_curso/concluido) mantém-se, mas na UI passa a chamar-se
+"Tarefas"; "Estado do projeto" é este novo campo.
+
+**Estado inicial (migração `7c1e4a9d2b30` e importação):**
+- Valores conhecidos do estado ClickUp do legado mapeiam-se diretamente (sem
+  distinguir maiúsculas nem acentos).
+- "vendido" e o estado vazio no legado ficam em **On hold pelo cliente** (D2,
+  decisão explícita). Na migração, "vazio" só conta para projetos vindos do
+  legado (`project_external_ids.source_system = 'legacy_json'`); qualquer outro
+  projeto sem estado ClickUp fica sem estado.
+- Um valor desconhecido nunca é adivinhado: fica **sem estado** e aparece
+  como tal na lista.
+- Reimportar um projeto já existente **nunca sobrescreve** um estado já
+  atribuído (só preenche se estiver vazio); o espelho do ClickUp continua a
+  acompanhar o export.
+
+**Alterar o estado (D6 do plano):** `PATCH /api/projects/{id}/status`, com a
+permissão nova `project.change_status` (Administrador e Chefe de Operações em
+todos os projetos visíveis; PM só nos próprios — o âmbito vem da visibilidade
+do projeto, sem uma segunda regra). Fora do âmbito → **404**; sem permissão →
+403. As transições são **livres** (também para trás e para/de "On hold"); só
+há um **aviso**, nunca um bloqueio, quando a mudança salta estados da sequência
+normal (Preparação → Construção → Construído → Entregue → Certificado). Cada
+mudança grava uma entrada em `project_history` (quem, quando, de/para, nota);
+repetir o estado atual não faz nada.
+
+**Filtros:** `GET /api/projects?lifecycle_status=…` (repetível, valida os
+códigos), chips de multisseleção na lista de projetos, e um filtro no mapa
+(`MapProjectRead.lifecycle_status`).
+
+**Bases já existentes:** a permissão nova chega com o catálogo
+(`seed_catalog`/`provision_staging`, idempotentes e só aditivos — o mesmo
+caminho das permissões anteriores). Depois de atualizar, corre-se
+`python -m app.cli.provision_staging` (staging) ou `seed_catalog` (local), senão
+ninguém consegue alterar estados (recebe 403).
+
+**Verificado:** 545 testes de backend (28 novos) e 160 Vitest, `tsc` e build;
+migração para cima e para baixo; contra a base local com os 295 projetos reais,
+as contagens por estado batem certo com o export (212 / 50 / 17 / 5 / 4 e 7 em
+On hold = 5 + as 2 exceções).
+
+**Fora do âmbito deste PR:** instalador e equipas, datas da obra e calendário
+(PR 3 e 4), fornecedores (PR 2), processo por projeto (PR 5 e 6).

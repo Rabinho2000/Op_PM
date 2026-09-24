@@ -361,6 +361,11 @@ def _seed_projects(db: Session, today: dt.date) -> None:
             power_kwp=spec.power_kwp,
             pm_person_id=people[spec.pm].id if spec.pm else None,
             start_date=today + dt.timedelta(days=spec.start_in_days) if spec.start_in_days is not None else None,
+            lifecycle_status=(
+                "on_hold_cliente"
+                if spec.start_in_days is None
+                else ("preparacao" if spec.start_in_days > 0 else "construcao")
+            ),
             is_active=True,
             notes=spec.notes,
         )

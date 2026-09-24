@@ -38,6 +38,7 @@ import {
   updateTask,
 } from "../api/client";
 import Icon from "../components/Icon";
+import { LifecycleStatusControl, useLifecycleStatuses } from "../components/LifecycleStatus";
 import TaskFormModal from "../components/TaskForm";
 import TaskStatusControl, { useTaskStatusChange } from "../components/TaskStatusControl";
 import { useToast } from "../components/Toast";
@@ -531,6 +532,7 @@ export default function ProjectDetail() {
   const { notify } = useToast();
   const { can } = useSession();
   const [project, setProject] = useState<Project | null>(null);
+  const lifecycleStatuses = useLifecycleStatuses();
   const [history, setHistory] = useState<ProjectHistoryEntry[] | null>(null);
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
@@ -791,7 +793,11 @@ export default function ProjectDetail() {
               <dl className="kv">
                 <dt>Nome</dt>
                 <dd>{project.name}</dd>
-                <dt>Estado</dt>
+                <dt>Estado do projeto</dt>
+                <dd>
+                  <LifecycleStatusControl project={project} statuses={lifecycleStatuses} onChanged={setProject} />
+                </dd>
+                <dt>Tarefas</dt>
                 <dd>{PROJECT_STATUS_LABELS[project.status]}</dd>
                 <dt>PM</dt>
                 <dd>{project.pm_display_name ?? "—"}</dd>

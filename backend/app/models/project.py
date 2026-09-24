@@ -65,6 +65,11 @@ class Project(UUIDPk, TimestampMixin, Base):
 
     start_date: Mapped[dt.date | None] = mapped_column(nullable=True)
 
+    # Estado do ciclo de vida (D-069) — fonte de verdade: Op_PM. Códigos em
+    # `app/services/project_lifecycle.py`. Distinto de `status` (derivado das
+    # tarefas). `None` = sem estado atribuído.
+    lifecycle_status: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+
     # --- Campos legados adicionais (IDF em solcor-gestao.html) — fonte de
     # verdade: Op_PM, importados verbatim do export legado por
     # app/migration/staging.py. Tipados como texto (não Date/Integer) de

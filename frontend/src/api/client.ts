@@ -223,6 +223,8 @@ export interface Project {
   pm_person_id: string | null;
   pm_display_name: string | null;
   start_date: string | null;
+  // Estado do ciclo de vida (D-069) — código estável; a lista vem de getLifecycleStatuses().
+  lifecycle_status: string | null;
   clickup_status_mirror: string | null;
   role: string | null;
   equipment_notes: string | null;
@@ -253,6 +255,7 @@ export interface Project {
   // Permissões efetivas do utilizador atual sobre este projeto (servidor).
   editable_fields: string[];
   can_manage_tasks: boolean;
+  can_change_status: boolean;
 }
 
 export type ProjectStatus = Project["status"];
@@ -282,6 +285,7 @@ export interface ProjectFilters {
   is_active?: boolean;
   q?: string;
   status?: ProjectStatus;
+  lifecycle_status?: string[];
   start_from?: string;
   start_to?: string;
 }
@@ -292,6 +296,7 @@ export function listProjects(filters: ProjectFilters = {}): Promise<Project[]> {
   if (filters.is_active !== undefined) params.set("is_active", String(filters.is_active));
   if (filters.q) params.set("q", filters.q);
   if (filters.status) params.set("status", filters.status);
+  for (const s of filters.lifecycle_status ?? []) params.append("lifecycle_status", s);
   if (filters.start_from) params.set("start_from", filters.start_from);
   if (filters.start_to) params.set("start_to", filters.start_to);
   const qs = params.toString();
@@ -302,6 +307,35 @@ export const getProject = (id: string) => apiGet<Project>(`/api/projects/${id}`)
 export const updateProject = (id: string, changes: Partial<Project>) =>
   apiPatch<Project>(`/api/projects/${id}`, changes);
 export const getProjectHistory = (id: string) => apiGet<ProjectHistoryEntry[]>(`/api/projects/${id}/history`);
+
+// --- Estado do ciclo de vida do projeto (D-069) ---
+export interface LifecycleStatus {
+  code: string;
+  label: string;
+  // Posição na sequência normal (1..5); null para "On hold pelo cliente".
+  flow_position: number | null;
+}
+
+export interface ProjectStatusChangeResult {
+  project: Project;
+  // Aviso (nunca bloqueio) quando a mudança salta estados da sequência normal.
+  warning: string | null;
+}
+
+let lifecycleStatusesPromise: Promise<LifecycleStatus[]> | null = null;
+// A lista é fixa durante a sessão: um único pedido, partilhado por toda a UI.
+export function getLifecycleStatuses(): Promise<LifecycleStatus[]> {
+  if (!lifecycleStatusesPromise) {
+    lifecycleStatusesPromise = apiGet<LifecycleStatus[]>("/api/projects/lifecycle-statuses").catch((e) => {
+      lifecycleStatusesPromise = null;
+      throw e;
+    });
+  }
+  return lifecycleStatusesPromise;
+}
+
+export const changeProjectStatus = (id: string, lifecycle_status: string, note = "") =>
+  apiPatch<ProjectStatusChangeResult>(`/api/projects/${id}/status`, { lifecycle_status, note });
 
 // --- /api/migration ---
 
@@ -1133,6 +1167,7 @@ export interface MapProject {
   pm_person_id: string | null;
   pm_display_name: string | null;
   status: string;
+  lifecycle_status: string | null;
   lat: number | null;
   lon: number | null;
   power_kwp: number | null;

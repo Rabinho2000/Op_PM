@@ -94,6 +94,7 @@ def _map_project_read(entry) -> MapProjectRead:
         pm_person_id=project.pm_person_id,
         pm_display_name=project.pm.display_name if project.pm else None,
         status=entry.task_summary.status,
+        lifecycle_status=project.lifecycle_status,
         lat=project.lat,
         lon=project.lon,
         power_kwp=project.power_kwp,

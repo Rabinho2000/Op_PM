@@ -73,6 +73,13 @@ def can_edit_project(ctx: AuthContext, project: Project) -> bool:
     return False
 
 
+def can_change_project_status(ctx: AuthContext, project: Project) -> bool:
+    """Alterar o estado do ciclo de vida: exige `project.change_status` e que o
+    projeto seja visível para o utilizador — o âmbito (todos, ou só os próprios
+    como PM) vem daí, sem uma segunda regra."""
+    return ctx.has_permission("project.change_status") and can_view_project(ctx, project)
+
+
 def can_view_project(ctx: AuthContext, project: Project) -> bool:
     if ctx.has_permission("project.view_all"):
         return True

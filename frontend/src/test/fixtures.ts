@@ -63,6 +63,7 @@ export function makeProject(overrides: Partial<Project> = {}): Project {
     pm_person_id: "p-pm",
     pm_display_name: "PM Sintético Um",
     start_date: "2026-09-01",
+    lifecycle_status: "construcao",
     clickup_status_mirror: null,
     role: null,
     equipment_notes: null,
@@ -89,6 +90,7 @@ export function makeProject(overrides: Partial<Project> = {}): Project {
     photos_pending_warning: false,
     editable_fields: [],
     can_manage_tasks: false,
+    can_change_status: false,
     ...overrides,
   };
 }

@@ -9,6 +9,16 @@ export const PROJECT_STATUS_TONES: Record<ProjectStatus, Tone> = {
   concluido: "success",
 };
 
+// Estado do ciclo de vida do projeto (D-069): só apresentação; os códigos vêm da API.
+export const LIFECYCLE_STATUS_TONES: Record<string, Tone> = {
+  on_hold_cliente: "warning",
+  preparacao: "info",
+  construcao: "brand",
+  construido: "violet",
+  entregue_cliente: "success",
+  certificado_final: "neutral",
+};
+
 export const TASK_STATUS_TONES: Record<TaskStatus, Tone> = {
   todo: "neutral",
   in_progress: "info",

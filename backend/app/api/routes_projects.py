@@ -13,11 +13,30 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models.people import Person
 from app.models.project import Project, ProjectHistory
-from app.schemas.projects import ProjectHistoryRead, ProjectRead, ProjectUpdate
+from app.schemas.projects import (
+    LifecycleStatusRead,
+    ProjectHistoryRead,
+    ProjectRead,
+    ProjectStatusChange,
+    ProjectStatusChangeResult,
+    ProjectUpdate,
+)
 from app.security.current_user import get_auth_context
-from app.security.permissions import AuthContext, PermissionDenied, can_create_task, can_edit_project
+from app.security.permissions import (
+    AuthContext,
+    PermissionDenied,
+    can_change_project_status,
+    can_create_task,
+    can_edit_project,
+)
 from app.security.project_fields import PM_EDITABLE_PROJECT_FIELDS
-from app.services.projects import compute_project_task_summary, get_visible_project, list_projects
+from app.services.project_lifecycle import LIFECYCLE_FLOW, LIFECYCLE_STATUS_CODES, LIFECYCLE_STATUSES
+from app.services.projects import (
+    change_lifecycle_status,
+    compute_project_task_summary,
+    get_visible_project,
+    list_projects,
+)
 from app.services.projects import update_project as update_project_service
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -52,6 +71,7 @@ def _to_read(db: Session, project: Project, ctx: AuthContext) -> ProjectRead:
 
     data.editable_fields = _editable_fields(ctx, project)
     data.can_manage_tasks = can_create_task(ctx, project)
+    data.can_change_status = can_change_project_status(ctx, project)
     return data
 
 
@@ -63,13 +83,26 @@ def list_projects_endpoint(
     status: str | None = Query(default=None, description="nao_iniciado | em_curso | concluido"),
     start_from: dt.date | None = Query(default=None, description="Data de início a partir de (inclusive)"),
     start_to: dt.date | None = Query(default=None, description="Data de início até (inclusive)"),
+    lifecycle_status: list[str] | None = Query(
+        default=None, description="Estado do ciclo de vida (repetível: mostra os que estiverem em qualquer um)"
+    ),
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[ProjectRead]:
     if status is not None and status not in PROJECT_STATUSES:
         raise HTTPException(status_code=400, detail=f"Estado de projeto inválido: {status!r}")
+    invalid = sorted(set(lifecycle_status or []) - LIFECYCLE_STATUS_CODES)
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Estado do ciclo de vida inválido: {', '.join(invalid)}")
     projects = list_projects(
-        db, ctx, pm_person_id=pm_person_id, is_active=is_active, search=q, start_from=start_from, start_to=start_to
+        db,
+        ctx,
+        pm_person_id=pm_person_id,
+        is_active=is_active,
+        search=q,
+        start_from=start_from,
+        start_to=start_to,
+        lifecycle_statuses=lifecycle_status,
     )
     result = [_to_read(db, p, ctx) for p in projects]
     # O estado é derivado das tarefas (compute_project_task_summary), por
@@ -77,6 +110,20 @@ def list_projects_endpoint(
     if status is not None:
         result = [r for r in result if r.status == status]
     return result
+
+
+@router.get("/lifecycle-statuses", response_model=list[LifecycleStatusRead])
+def list_lifecycle_statuses_endpoint(ctx: AuthContext = Depends(get_auth_context)) -> list[LifecycleStatusRead]:
+    """Lista única de estados (código, rótulo, posição na sequência normal) —
+    a UI lê-a daqui em vez de a duplicar."""
+    return [
+        LifecycleStatusRead(
+            code=code,
+            label=label,
+            flow_position=LIFECYCLE_FLOW.index(code) + 1 if code in LIFECYCLE_FLOW else None,
+        )
+        for code, label in LIFECYCLE_STATUSES
+    ]
 
 
 @router.get("/{project_id}", response_model=ProjectRead)
@@ -109,6 +156,28 @@ def update_project_endpoint(
         # informação sensível, o próprio pedido já continha esses campos.
         raise HTTPException(status_code=403, detail=f"Sem permissão para editar este projeto: {exc}")
     return _to_read(db, updated, ctx)
+
+
+@router.patch("/{project_id}/status", response_model=ProjectStatusChangeResult)
+def change_project_status_endpoint(
+    project_id: uuid.UUID,
+    body: ProjectStatusChange,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ProjectStatusChangeResult:
+    # 404 (não 403) fora do âmbito: nunca revela que o projeto existe.
+    project = get_visible_project(db, ctx, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
+    if body.lifecycle_status not in LIFECYCLE_STATUS_CODES:
+        raise HTTPException(status_code=422, detail=f"Estado de projeto inválido: {body.lifecycle_status!r}")
+    try:
+        updated, warning = change_lifecycle_status(
+            db, project=project, new_status=body.lifecycle_status, note=body.note, ctx=ctx
+        )
+    except PermissionDenied:
+        raise HTTPException(status_code=403, detail="Sem permissão para alterar o estado deste projeto.")
+    return ProjectStatusChangeResult(project=_to_read(db, updated, ctx), warning=warning)
 
 
 @router.get("/{project_id}/history", response_model=list[ProjectHistoryRead])
