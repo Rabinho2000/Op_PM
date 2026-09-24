@@ -14,7 +14,7 @@ from app.models.project import (  # noqa: F401
 from app.models.calendar import CalendarEvent, Visit  # noqa: F401
 from app.models.task import Task, TaskHistory  # noqa: F401
 from app.models.absence import Absence  # noqa: F401
-from app.models.supplier import Supplier  # noqa: F401
+from app.models.supplier import Supplier, SupplierMaterialType  # noqa: F401
 from app.models.inventory import (  # noqa: F401
     InventoryItem,
     InventoryLocation,

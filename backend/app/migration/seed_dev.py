@@ -67,6 +67,7 @@ from app.models.task import (
 )
 from app.models.workflow import Phase, WorkflowStage, WorkflowSubtask
 from app.security.catalog import PERMISSIONS, ROLE_PERMISSIONS, ROLES
+from app.services.suppliers import get_or_create_material_types
 from app.services.tasks import ensure_default_tasks_for_project
 from app.utils.timezones import today_lisbon
 
@@ -617,6 +618,7 @@ def seed_map_and_inventory(db: Session) -> None:
         name="Fornecedor Sintético de Material Elétrico Lda.",
         category="material_eletrico",
         contact="Contacto Sintético do Fornecedor A",
+        phone="+351 210 000 001",
         email="fornecedor.a.sintetico@example.invalid",
         address="Morada sintética do Fornecedor A",
         lat=41.15,
@@ -630,6 +632,7 @@ def seed_map_and_inventory(db: Session) -> None:
         name="Fornecedor Sintético de Estruturas Lda.",
         category="estruturas",
         contact="Contacto Sintético do Fornecedor B",
+        phone="+351 210 000 002",
         email="fornecedor.b.sintetico@example.invalid",
         address="Morada sintética do Fornecedor B",
         lat=40.98,
@@ -640,6 +643,9 @@ def seed_map_and_inventory(db: Session) -> None:
         is_active=True,
     )
     db.add_all([supplier_a, supplier_b])
+    db.flush()
+    supplier_a.material_types = get_or_create_material_types(db, ["Material elétrico", "Cabos e acessórios"])
+    supplier_b.material_types = get_or_create_material_types(db, ["Estruturas de fixação"])
     db.flush()
 
     db.add(

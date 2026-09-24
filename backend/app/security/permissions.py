@@ -218,6 +218,12 @@ def can_manage_suppliers(ctx: AuthContext) -> bool:
     return ctx.has_permission("supplier.manage")
 
 
+def can_view_suppliers(ctx: AuthContext) -> bool:
+    """`supplier.view`, ou `map.view` (compatibilidade: a lista já era visível
+    a quem via o mapa)."""
+    return ctx.has_permission("supplier.view") or ctx.has_permission("map.view")
+
+
 def can_manage_pickup_points(ctx: AuthContext) -> bool:
     return ctx.has_permission("pickup_point.manage")
 

@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.suppliers import SupplierRead
+
 
 class NextOperationalTaskRead(BaseModel):
     id: uuid.UUID
@@ -64,52 +66,8 @@ class MapProjectRead(BaseModel):
     next_visit: NextVisitRead | None = None
 
 
-class MapSupplierRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: uuid.UUID
-    name: str
-    category: str | None
-    contact: str | None
-    email: str | None
-    address: str | None
-    lat: float | None
-    lon: float | None
-    is_preferred: bool
-    lead_time_days: int | None
-    materials: str
-    is_active: bool
-
-
-class SupplierCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    category: str | None = None
-    contact: str | None = None
-    email: str | None = None
-    address: str | None = None
-    lat: float | None = None
-    lon: float | None = None
-    is_preferred: bool = False
-    lead_time_days: int | None = None
-    materials: str = ""
-
-
-class SupplierUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str | None = None
-    category: str | None = None
-    contact: str | None = None
-    email: str | None = None
-    address: str | None = None
-    lat: float | None = None
-    lon: float | None = None
-    is_preferred: bool | None = None
-    lead_time_days: int | None = None
-    materials: str | None = None
-    is_active: bool | None = None
+# Mantido o nome antigo: o mapa devolve o mesmo modelo de fornecedor (D-070).
+MapSupplierRead = SupplierRead
 
 
 class MapPickupPointRead(BaseModel):
