@@ -38,7 +38,7 @@ Do export dos 295 projetos:
   (`"2.0"`, `"2.1"`…). 33 têm `commissionedAt`.
 - **Processo legado:** 6 fases, **18 etapas, 77 subtarefas**, 12 pontos de
   contacto. Responsáveis: Comercial, Sales Support, PM, Duarte, Bárbara,
-  VM (subempreiteiro), CE (chefe de equipa).
+  VM (subempreiteiro), CE (provavelmente chefe de equipa — ver D5).
 
 > **Confidencialidade.** Este repositório é público e o texto das 18 etapas e 77
 > subtarefas é o processo interno da Solcor. O `seed_dev` usa deliberadamente um
