@@ -9,7 +9,7 @@ import dataclasses
 import datetime as dt
 import uuid
 
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Query, Session
 
 from app.audit.log import record_project_change
@@ -23,7 +23,7 @@ from app.security.permissions import (
     can_edit_project,
     can_view_project,
 )
-from app.services.project_lifecycle import LIFECYCLE_STATUS_CODES, status_change_warning
+from app.services.project_lifecycle import LIFECYCLE_FLOW, LIFECYCLE_STATUS_CODES, status_change_warning
 from app.security.project_fields import PM_EDITABLE_PROJECT_FIELDS
 
 _STANDARD_TASK_TYPES = frozenset(code for code, _ in DEFAULT_TASK_TYPES)
@@ -99,6 +99,18 @@ def compute_project_task_summary_from_tasks(tasks: list[Task]) -> ProjectTaskSum
     )
 
 
+# D-077: agrupa por estado (na ordem do fluxo) e, dentro de cada um, por ordem
+# cronológica de entrada no programa; desempata pela data de ligação (texto ISO)
+# e pelo nome. Sem estado no fim.
+_STATE_ORDER = ("on_hold_cliente", *LIFECYCLE_FLOW)
+PROJECT_LIST_ORDER = (
+    case({code: i for i, code in enumerate(_STATE_ORDER)}, value=Project.lifecycle_status, else_=len(_STATE_ORDER)).asc(),
+    func.coalesce(Project.entered_at, Project.created_at).asc(),
+    func.coalesce(Project.upac_connection_date_raw, "9999-99-99").asc(),
+    Project.name.asc(),
+)
+
+
 def visible_projects_query(db: Session, ctx: AuthContext) -> Query:
     """Restringe a query à visibilidade do utilizador — nunca devolve tudo
     e filtra depois em Python (evita esquecer o filtro nalgum sítio)."""
@@ -141,7 +153,7 @@ def list_projects(
         query = query.filter(Project.start_date >= start_from)
     if start_to is not None:
         query = query.filter(Project.start_date <= start_to)
-    return query.order_by(Project.name.asc()).all()
+    return query.order_by(*PROJECT_LIST_ORDER).all()
 
 
 def get_visible_project(db: Session, ctx: AuthContext, project_id: uuid.UUID) -> Project | None:

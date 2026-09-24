@@ -3007,3 +3007,9 @@ registado. Uma reimportação não o reativa (a importação não escreve `is_ac
 50 projetos entregues, 44 alterados (2 521 subtarefas e 389 contactos concluídos por regra), os 6
 restantes já estavam completos; repetição sem alterações. Um projeto entregue passou de 0 % a
 95 % (73 de 77), com 17 etapas concluídas e a 18 "Por concluir", sem atraso; 294 projetos ativos.
+
+## D-077 — Ordem da lista de projetos: por estado e, dentro dele, cronológica
+
+**Decisão.** A lista (`GET /api/projects`) ordena por estado (On hold, Preparação, Construção, Construído, Entregue, Certificado, sem estado) e, dentro de cada estado, por ordem cronológica de entrada no programa (mais antigo primeiro), com desempate pela data de ligação (`upac_connection_date_raw`, ISO) e depois pelo nome. Nova coluna `projects.entered_at`: projetos novos ficam com o momento da criação; os do legado com a data de início (a do ClickUp), porque o export não traz outra data de criação. A migração `b4d8f2a6c1e3` preenche os existentes (data de início, ou a criação do registo se faltar).
+
+**Consequências.** `entered_at` não é editável nem exposto na API. Se surgir a data de criação real do ClickUp, basta reescrever esta coluna.
