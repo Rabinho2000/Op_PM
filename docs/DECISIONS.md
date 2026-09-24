@@ -2828,3 +2828,75 @@ build. Contra a base local com os 295 projetos: a janela por omissão devolve 31
 obras (todas estimadas), 24 delas sem instalador (os projetos recentes não têm
 subempreiteiro no legado) e 1 por planear; testado no browser (escalas, filtros,
 URL, título do separador).
+
+
+## D-073 — Processo do projeto: catálogo, responsável por regra e separador "Processo" (PR 5 do plano)
+
+**Decisão:** cada projeto mostra o processo da Solcor — 6 fases, 18 etapas, 77
+subtarefas — com o **responsável resolvido para esse projeto**, os prazos calculados
+a partir do arranque e o progresso. É a "Fase 3" do `PLAN.md` (o modelo já existia
+desde a Fase 0, sem API nem UI).
+
+**O texto do processo não entra no repositório** (é interno da Solcor e o repositório
+é público). `scripts/extract_process_from_legacy.py` lê o `solcor-gestao.html` (só
+avalia os literais `PHASES`/`STAGES`, com Node) e escreve um JSON **fora do Git**;
+`python -m app.cli.load_process --file <json> [--delegations <json>] [--dry-run]` carrega-o.
+Ambos recusam um caminho que o Git apanharia. O código, o seed e os testes usam um
+**processo sintético com a mesma forma** (`backend/fixtures/synthetic_process.json`:
+mesmas fases, responsáveis, dependências, dias e nº de subtarefas; textos genéricos).
+
+**Catálogo:** carga **idempotente por `code`** e sem apagar; valida o ficheiro inteiro
+antes de escrever (responsável ou fase desconhecidos, dependências, contactos, dias…),
+por isso uma carga nunca fica a meio. Códigos: etapa `etapa-NN`, subtarefa
+`etapa-NN.<índice a partir de 0>` — **iguais às chaves do `done` do legado** (`"2.0"` é
+a 1.ª subtarefa da etapa 2; verificado no código do legado, `subKey`), o que deixa a
+migração do progresso (PR 6) direta. Migração `e5b1c9d3a7f2`: `workflow_stages` ganha
+`contact_day`, `contact_kind`, `note`, `responsible_rule` e `responsible_label`; nova
+tabela `support_delegations`.
+
+**Responsável por regra (D5):** `WorkflowStage.responsible_rule`, resolvida por projeto:
+- `pm` → o PM do projeto;
+- `support_delegate` (as etapas da Bárbara no legado) → a pessoa de **suporte delegada**
+  para o PM do projeto; sem delegação, o próprio PM. Hoje: Ricardo Louro e Gonçalo
+  Palacino → Bárbara Ferreira; João Fernandes e os outros → eles próprios;
+- `installer` (VM) → o instalador da obra; `team_leader` (CE) → o **chefe da equipa
+  atribuída**; `role` (Comercial, Sales Support, "Duarte") → o papel, com o nome de
+  quem o tem quando há.
+Um dado em falta (sem PM, instalador, equipa ou chefe) aparece como **"por atribuir"**,
+nunca inventado. As delegações são **dados** (`support_delegations`, sincronizadas de
+um ficheiro local e autoritativas): mudar a regra é mudar linhas, não código.
+
+**Prazos e estado:** `start_date` do projeto + os dias úteis da etapa (o mesmo cálculo do
+legado e da janela da obra, D-071). Estado da etapa: `done` (todas as subtarefas feitas —
+o mesmo critério do legado), `overdue` (o fim planeado já passou), `active`, `upcoming`,
+`no_date`. Os pontos de contacto (12 etapas) têm dia, tipo (`contacto`/`update`), nota e
+o seu próprio "feito" — não contam como subtarefa.
+
+**API:** `GET /api/projects/{id}/process`; `PATCH …/process/subtasks/{id}` e
+`…/process/stages/{id}/contact` (`{"done": bool}`). Ver: quem vê o projeto (404 fora do
+âmbito). Marcar: permissão nova `workflow.update_progress` (Administrador e Chefe em
+todos os projetos visíveis; PM só nos próprios), 403 sem ela. Cada alteração grava uma
+entrada em `project_history` (`processo:etapa-NN.i`, quem, quando); repetir o mesmo valor
+não faz nada; a resposta devolve o processo atualizado. Queries limitadas (sem N+1).
+
+**Interface:** separador "Processo" no detalhe do projeto: progresso global, fases
+coloridas, etapas recolhíveis (abertas por omissão as que estão em curso ou em atraso)
+com estado, responsável, datas, contacto e a lista de subtarefas com quem marcou e quando.
+Só se pode marcar se o servidor o permitir (`can_update`).
+
+**Em aberto (perguntas para o PR 6 / para si):**
+1. **A etapa "cartão M2M e seguro RC"** também é da Bárbara no legado e foi tratada como as
+   outras (delegada). Confirma? Foi dito "licenciamentos e projetos eletrotécnicos".
+2. **A Bárbara consegue ver/marcar os projetos do Ricardo e do Gonçalo?** Hoje o âmbito de
+   visibilidade é "todos" ou "os próprios como PM"; uma pessoa de suporte só os veria se o seu
+   papel tiver `project.view_all`. Depende do papel que ela tem no Op_PM.
+3. `workflow_progress_percent` (barra da lista de projetos) continua a vir das 5 tarefas
+   padrão; passa a vir deste processo **no PR 6**, quando o progresso do legado (`done`)
+   estiver migrado — antes disso seria 0 % em todos.
+4. O legado permite deslocar etapas por projeto (`shift`); só 2 dos 295 projetos o usam e não
+   está modelado — decide-se no PR 6.
+
+**Verificado:** 672 testes de backend (45 novos) e 230 Vitest (12 novos), `tsc` e build;
+migração para cima e para baixo. Contra a base local: processo real carregado (6/18/77) e
+recarregado sem alterações; num projeto do Ricardo as etapas de suporte vão para a Bárbara
+(delegado), num do João para o próprio João; marcar/desmarcar testado no browser.

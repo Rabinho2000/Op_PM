@@ -86,6 +86,12 @@ def can_plan_project_work(ctx: AuthContext, project: Project) -> bool:
     return ctx.has_permission("project.plan_work") and can_view_project(ctx, project)
 
 
+def can_update_process(ctx: AuthContext, project: Project) -> bool:
+    """Marcar o progresso do processo: exige `workflow.update_progress` e que o
+    projeto seja visível (todos, ou só os próprios como PM)."""
+    return ctx.has_permission("workflow.update_progress") and can_view_project(ctx, project)
+
+
 def can_view_installers(ctx: AuthContext) -> bool:
     """Quem consegue ver projetos vê os instaladores (o nome faz parte da obra)."""
     return ctx.has_permission("project.view_all") or ctx.has_permission("project.view_own")

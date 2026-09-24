@@ -376,6 +376,89 @@ export const updateInstallerTeam = (
 export const updateProjectWorkPlan = (id: string, plan: WorkPlanInput) =>
   apiPatch<Project>(`/api/projects/${id}/work-plan`, plan);
 
+// --- Processo do projeto (D-073) ---
+export interface ProcessSubtask {
+  id: string;
+  code: string;
+  title: string;
+  done: boolean;
+  done_at: string | null;
+  done_by_display_name: string | null;
+}
+
+export interface ProcessResponsible {
+  rule: string | null;
+  // Texto genérico da regra ("PM do projeto", "Subempreiteiro"…).
+  label: string;
+  names: string[];
+  // A regra precisa de um dado que este projeto ainda não tem (PM, instalador, chefe de equipa).
+  unresolved: boolean;
+  // Há uma pessoa de suporte delegada para o PM deste projeto.
+  delegated: boolean;
+}
+
+export interface ProcessContact {
+  day: number;
+  kind: string;
+  note: string;
+  planned_date: string | null;
+  done: boolean;
+  done_at: string | null;
+  overdue: boolean;
+}
+
+export interface ProcessStage {
+  id: string;
+  code: string;
+  title: string;
+  note: string;
+  responsible: ProcessResponsible;
+  depends_on_code: string | null;
+  start_day: number | null;
+  end_day: number | null;
+  planned_start: string | null;
+  planned_end: string | null;
+  // done | overdue | active | upcoming | no_date
+  status: string;
+  done_count: number;
+  total_count: number;
+  contact: ProcessContact | null;
+  subtasks: ProcessSubtask[];
+}
+
+export interface ProcessPhase {
+  id: string;
+  code: string;
+  name: string;
+  color: string;
+  done_count: number;
+  total_count: number;
+  stages: ProcessStage[];
+}
+
+export interface ProcessRead {
+  project_id: string;
+  start_date: string | null;
+  has_catalog: boolean;
+  can_update: boolean;
+  phases: ProcessPhase[];
+  summary: {
+    done: number;
+    total: number;
+    percent: number;
+    stages_done: number;
+    stages_total: number;
+    overdue_stages: number;
+    overdue_contacts: number;
+  };
+}
+
+export const getProjectProcess = (projectId: string) => apiGet<ProcessRead>(`/api/projects/${projectId}/process`);
+export const setProcessSubtaskDone = (projectId: string, subtaskId: string, done: boolean) =>
+  apiPatch<ProcessRead>(`/api/projects/${projectId}/process/subtasks/${subtaskId}`, { done });
+export const setProcessContactDone = (projectId: string, stageId: string, done: boolean) =>
+  apiPatch<ProcessRead>(`/api/projects/${projectId}/process/stages/${stageId}/contact`, { done });
+
 // --- Calendário de obras (D-072) ---
 export interface WorkItem {
   project_id: string;

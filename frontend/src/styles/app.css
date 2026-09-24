@@ -2361,3 +2361,136 @@ a.cell-title:hover {
     width: 120px !important;
   }
 }
+
+/* ---- Processo do projeto (D-073) ---- */
+.process {
+  display: grid;
+  gap: 16px;
+}
+
+.process__phase {
+  display: grid;
+  gap: 8px;
+}
+
+.process__phase-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  font-family: var(--font-display);
+  font-size: 1rem;
+}
+
+.process__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.process__stage {
+  padding: 4px 12px 10px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.process__stage--done { border-left-color: var(--success); }
+.process__stage--overdue { border-left-color: var(--danger); }
+.process__stage--active { border-left-color: var(--info); }
+
+.process__stage-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 0 2px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.process__stage-head:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+  border-radius: 4px;
+}
+
+.process__chevron {
+  display: inline-flex;
+  flex: 0 0 auto;
+  transition: transform 0.12s ease;
+}
+
+.process__chevron--open {
+  transform: rotate(90deg);
+}
+
+.process__stage-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.process__stage-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.process__stage-sub {
+  padding-left: 24px;
+}
+
+.process__stage-body {
+  display: grid;
+  gap: 8px;
+  padding: 10px 0 0 24px;
+}
+
+.process__contact,
+.process__subtasks label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.process__contact {
+  padding: 8px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.process__contact--overdue {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.process__subtasks {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.process__subtasks li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.process__done {
+  color: var(--text-subtle);
+  text-decoration: line-through;
+}
