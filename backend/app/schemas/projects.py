@@ -27,6 +27,12 @@ class ProjectRead(BaseModel):
     pm_person_id: uuid.UUID | None
     start_date: dt.date | None
     lifecycle_status: str | None
+    # Obra (D-071)
+    installer_id: uuid.UUID | None
+    installer_team_id: uuid.UUID | None
+    work_start_date: dt.date | None
+    work_end_date: dt.date | None
+    work_dates_estimated: bool
     clickup_status_mirror: str | None
     role: str | None
     equipment_notes: str | None
@@ -65,6 +71,10 @@ class ProjectRead(BaseModel):
     editable_fields: list[str] = []
     can_manage_tasks: bool = False
     can_change_status: bool = False
+    can_plan_work: bool = False
+    installer_name: str | None = None
+    installer_team_name: str | None = None
+    installer_team_leader_name: str | None = None
 
 
 class ProjectUpdate(BaseModel):

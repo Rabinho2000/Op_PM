@@ -2688,3 +2688,79 @@ dezenas de entradas), importação a partir de Excel.
 **Verificado:** 579 testes de backend e 172 Vitest, `tsc` e build; migração para
 cima e para baixo. Contra a base local: 16 fornecedores carregados, segunda
 corrida sem alterações; pesquisa e filtro por tipo conferidos.
+
+
+## D-071 — Instaladores com equipas e datas da obra (PR 3 do plano)
+
+**Decisão:** uma obra passa a ter um **instalador** (subempreiteiro), opcionalmente
+uma das **equipas** desse instalador, e uma janela de datas (**início e fim da
+obra**). É a base do calendário de obras (PR 4).
+
+**Instalador como entidade (D3):** `installers` (+ `name_key`, sem maiúsculas nem
+acentos, único) e `installer_teams` (instalador, nome, **chefe de equipa**,
+telefone do chefe, ativa). O chefe é uma pessoa **externa** à Solcor: só nome e
+telefone, sem `Person` nem login. `projects.installer_id` e
+`projects.installer_team_id` ligam a obra; uma **chave estrangeira composta**
+`(installer_id, installer_team_id) → installer_teams(installer_id, id)` garante na
+base de dados que a equipa é do instalador, e uma restrição `CHECK` impede uma
+equipa sem instalador. Nada se apaga: desativa-se.
+
+**Regras do plano de obra** (`PATCH /api/projects/{id}/work-plan`, permissão
+`project.plan_work` — Administrador e Chefe em todos os projetos visíveis, PM só
+nos próprios; fora do âmbito → 404):
+- a equipa tem de pertencer ao instalador e estar ativa (ao atribuir; uma equipa
+  entretanto desativada mantém-se numa obra que já a tinha);
+- mudar de instalador sem indicar equipa **limpa** a equipa; retirar o instalador
+  retira a equipa;
+- o fim da obra nunca é anterior ao início (também contra a data já gravada);
+- cada campo alterado grava uma entrada em `project_history` (quem, quando,
+  de/para); não alterar nada não grava nada.
+Gerir instaladores e equipas: `installer.manage` (Administrador e Chefe). Ver:
+quem vê projetos.
+
+**Datas da obra (D4):** `work_start_date` / `work_end_date` são **campos
+explícitos e editáveis**. O legado não tem data de obra: `startDate` é o dia 1 do
+processo. As datas iniciais são **estimadas** pelo modelo do processo — dia útil
+**41 a 49** desde o arranque (só fins de semana são não úteis; o `shift` do
+export existe em 2 dos 295 projetos, por isso não conta) — e ficam marcadas
+`work_dates_estimated = true`. **Nos projetos ainda ativos estas datas já
+passaram: refletem o modelo, não a realidade.** Editar as datas, ou **confirmá-las**
+sem as alterar (`work_dates_estimated=false`), põe o marcador a falso; a
+confirmação fica no histórico. Os ~31 projetos não concluídos têm de ser
+revistos à mão.
+
+**Importação do legado:** o `subcontractor` do export (que nunca era lido)
+passa a criar/encontrar o instalador pelo nome normalizado ("  Verde  Milenar " e
+"verde milenar" são o mesmo); vazio → sem instalador. **O legado não diz a
+equipa**: todas as obras ficam "sem equipa" até serem atribuídas. Reimportar
+**nunca sobrescreve** um instalador nem datas já atribuídos (o Op_PM manda, como
+no estado do projeto, D-069); o rollback de uma promoção repõe o vazio.
+
+**Migração `c8d2e4f6a1b7`:** cria as tabelas, acrescenta as colunas e
+restrições a `projects`, preenche as datas estimadas de todos os projetos com
+`start_date` e converte o texto livre `project_licensing_data.installer` (quando
+existe) em instalador — o texto antigo mantém-se.
+
+**Carga de instaladores e equipas:**
+`python -m app.cli.load_installers --file <json> [--dry-run]`. Os nomes dos
+chefes são dados pessoais de pessoas externas, por isso **o ficheiro fica fora
+do repositório** e o comando recusa um que o Git apanharia. Idempotente; só
+preenche campos vazios (nunca sobrescreve edições nem reativa).
+
+**Interface:** cartão "Obra" no detalhe do projeto (instalador, equipa com o
+chefe, datas, aviso de "Datas estimadas") com diálogo "Editar plano"; página
+`/installers` (menu de administração) para gerir instaladores,
+equipas, chefes e telefones; o instalador/equipa aparece na lista de projetos.
+
+**Bases já existentes:** as permissões `project.plan_work` e `installer.manage`
+chegam com o catálogo (`provision_staging` / `seed_catalog`).
+
+**Fora do âmbito:** o calendário de obras (PR 4), filtrar a lista de projetos por
+instalador, geolocalização de equipas.
+
+**Verificado:** 613 testes de backend (o teste da chave estrangeira composta fica saltado em
+SQLite, que não impõe chaves estrangeiras — corre no PostgreSQL do CI) e 186
+Vitest, `tsc` e build; migração para cima e para baixo. Contra a base local
+com os 295 projetos: 239 com instalador (= 295 − 56 sem, como no export), com
+contagens por instalador iguais às do export (79 / 73 / 50 / 18 / 9 / 5 / 2 / 2 / 1);
+estados dos projetos intactos; 294 com janela estimada.

@@ -18,6 +18,7 @@ from app.api.routes_performance import router as performance_router
 from app.api.routes_planning import router as planning_router
 from app.api.routes_project_data import router as project_data_router
 from app.api.routes_projects import router as projects_router
+from app.api.routes_installers import router as installers_router
 from app.api.routes_suppliers import router as suppliers_router
 from app.api.routes_tasks import router as tasks_router
 from app.config import get_settings
@@ -57,6 +58,7 @@ app.include_router(material_requests_router)
 app.include_router(project_data_router)
 app.include_router(map_router)
 app.include_router(suppliers_router)
+app.include_router(installers_router)
 app.include_router(planning_router)
 app.include_router(performance_router)
 app.include_router(imports_router)

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models.people import Person
 from app.models.project import Project, ProjectHistory
+from app.schemas.installers import WorkPlanUpdate
 from app.schemas.projects import (
     LifecycleStatusRead,
     ProjectHistoryRead,
@@ -28,8 +29,10 @@ from app.security.permissions import (
     can_change_project_status,
     can_create_task,
     can_edit_project,
+    can_plan_project_work,
 )
 from app.security.project_fields import PM_EDITABLE_PROJECT_FIELDS
+from app.services.installers import PlanError, update_work_plan
 from app.services.project_lifecycle import LIFECYCLE_FLOW, LIFECYCLE_STATUS_CODES, LIFECYCLE_STATUSES
 from app.services.projects import (
     change_lifecycle_status,
@@ -72,6 +75,10 @@ def _to_read(db: Session, project: Project, ctx: AuthContext) -> ProjectRead:
     data.editable_fields = _editable_fields(ctx, project)
     data.can_manage_tasks = can_create_task(ctx, project)
     data.can_change_status = can_change_project_status(ctx, project)
+    data.can_plan_work = can_plan_project_work(ctx, project)
+    data.installer_name = project.installer.name if project.installer else None
+    data.installer_team_name = project.installer_team.name if project.installer_team else None
+    data.installer_team_leader_name = project.installer_team.leader_name if project.installer_team else None
     return data
 
 
@@ -178,6 +185,27 @@ def change_project_status_endpoint(
     except PermissionDenied:
         raise HTTPException(status_code=403, detail="Sem permissão para alterar o estado deste projeto.")
     return ProjectStatusChangeResult(project=_to_read(db, updated, ctx), warning=warning)
+
+
+@router.patch("/{project_id}/work-plan", response_model=ProjectRead)
+def update_work_plan_endpoint(
+    project_id: uuid.UUID,
+    body: WorkPlanUpdate,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ProjectRead:
+    """Instalador, equipa e datas da obra (D-071). 404 fora do âmbito, 403 sem
+    `project.plan_work`, 422 quando uma regra não se cumpre."""
+    project = get_visible_project(db, ctx, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
+    try:
+        updated = update_work_plan(db, project=project, changes=body.model_dump(exclude_unset=True), ctx=ctx)
+    except PermissionDenied:
+        raise HTTPException(status_code=403, detail="Sem permissão para planear a obra deste projeto.")
+    except PlanError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return _to_read(db, updated, ctx)
 
 
 @router.get("/{project_id}/history", response_model=list[ProjectHistoryRead])

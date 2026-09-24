@@ -62,6 +62,7 @@ from app.db import new_uuid
 from app.migration.people_reconciliation import classify_pm_name
 from app.models.migration import ImportBatch, StagingProjectRecord
 from app.models.project import Project, ProjectExternalId, ProjectHistory
+from app.services.installers import derive_work_window, get_or_create_installer
 from app.services.project_lifecycle import lifecycle_status_from_legacy
 
 SOURCE_LEGACY_JSON = "legacy_json"
@@ -90,8 +91,8 @@ _CANONICAL_TEXT_FIELDS = (
     "power_raw",
 )
 _CANONICAL_FLOAT_FIELDS = ("lat", "lon", "power_kwp")
-_CANONICAL_DATE_FIELDS = ("start_date",)
-_CANONICAL_UUID_FIELDS = ("pm_person_id",)
+_CANONICAL_DATE_FIELDS = ("start_date", "work_start_date", "work_end_date")
+_CANONICAL_UUID_FIELDS = ("pm_person_id", "installer_id")
 
 
 # --------------------------------------------------------------------------
@@ -142,6 +143,7 @@ def _map_legacy_fields(record: dict) -> dict:
     return {
         "name": (record.get("name") or "").strip(),
         "pm_name_raw": record.get("pm"),
+        "installer_name_raw": record.get("subcontractor"),
         "contact": record.get("contact"),
         "email": record.get("email"),
         "lat": coords.get("lat"),
@@ -619,6 +621,11 @@ def promote_staging_record(
 
     mapped = json.loads(record.mapped_fields_json)
     canonical = _build_canonical_fields(mapped)
+    # D-071: instalador (o `subcontractor` do legado) e janela estimada da obra.
+    installer = get_or_create_installer(db, mapped.get("installer_name_raw"))
+    canonical["installer_id"] = installer.id if installer else None
+    work_window = derive_work_window(canonical.get("start_date"))
+    canonical["work_start_date"], canonical["work_end_date"] = work_window if work_window else (None, None)
     now = dt.datetime.now(dt.timezone.utc)
 
     # Defesa em profundidade (D-023): mesmo que o estado do registo tenha
@@ -640,6 +647,7 @@ def promote_staging_record(
 
     if record.resolved_action == "create_new":
         project = Project(id=new_uuid(), is_active=True, **canonical)
+        project.work_dates_estimated = work_window is not None
         project.pm_person_id = pm_person.id if pm_person else None
         db.add(project)
         db.flush()
@@ -682,6 +690,14 @@ def promote_staging_record(
         # sobrescreve um estado já atribuído; só preenche se estiver vazio.
         if project.lifecycle_status is not None:
             fields_to_apply.pop("lifecycle_status", None)
+        # Instalador e datas da obra também são do Op_PM: só se preenchem se estiverem vazios.
+        if project.installer_id is not None:
+            fields_to_apply.pop("installer_id", None)
+        if project.work_start_date is not None or project.work_end_date is not None:
+            fields_to_apply.pop("work_start_date", None)
+            fields_to_apply.pop("work_end_date", None)
+        elif work_window is not None:
+            project.work_dates_estimated = True
         if pm_person is not None:
             fields_to_apply["pm_person_id"] = pm_person.id
 

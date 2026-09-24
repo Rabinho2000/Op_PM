@@ -31,15 +31,40 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    ForeignKeyConstraint,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
+from app.models.installer import Installer, InstallerTeam
 
 
 class Project(UUIDPk, TimestampMixin, Base):
     __tablename__ = "projects"
+    __table_args__ = (
+        # A equipa tem de pertencer ao instalador (D-071): chave composta, e a
+        # equipa sem instalador não faz sentido.
+        ForeignKeyConstraint(
+            ["installer_id", "installer_team_id"],
+            ["installer_teams.installer_id", "installer_teams.id"],
+            name="fk_project_team_belongs_to_installer",
+        ),
+        CheckConstraint(
+            "installer_team_id IS NULL OR installer_id IS NOT NULL",
+            name="ck_project_team_needs_installer",
+        ),
+    )
 
     # --- Identidade/atribuição — fonte de verdade: Op_PM ---
     name: Mapped[str] = mapped_column(String(512), nullable=False)
@@ -64,6 +89,18 @@ class Project(UUIDPk, TimestampMixin, Base):
     )
 
     start_date: Mapped[dt.date | None] = mapped_column(nullable=True)
+
+    # --- Obra (D-071): instalador, equipa e datas — fonte de verdade: Op_PM ---
+    installer_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("installers.id"), nullable=True, index=True
+    )
+    installer_team_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
+    # Janela da obra (fase "Obra" do processo). `work_dates_estimated` = foram
+    # derivadas do modelo do processo (dia útil 41 a 49 desde `start_date`) e
+    # ainda ninguém as confirmou; editar as datas põe-no a falso.
+    work_start_date: Mapped[dt.date | None] = mapped_column(nullable=True)
+    work_end_date: Mapped[dt.date | None] = mapped_column(nullable=True)
+    work_dates_estimated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Estado do ciclo de vida (D-069) — fonte de verdade: Op_PM. Códigos em
     # `app/services/project_lifecycle.py`. Distinto de `status` (derivado das
@@ -92,6 +129,15 @@ class Project(UUIDPk, TimestampMixin, Base):
     notes: Mapped[str] = mapped_column(Text, default="")
 
     pm: Mapped["Person | None"] = relationship(foreign_keys=[pm_person_id])
+    installer: Mapped[Installer | None] = relationship(
+        primaryjoin="Project.installer_id == Installer.id", foreign_keys=[installer_id], lazy="selectin"
+    )
+    installer_team: Mapped[InstallerTeam | None] = relationship(
+        primaryjoin="Project.installer_team_id == InstallerTeam.id",
+        foreign_keys=[installer_team_id],
+        viewonly=True,
+        lazy="selectin",
+    )
     external_ids: Mapped[list["ProjectExternalId"]] = relationship(back_populates="project")
 
     @property
