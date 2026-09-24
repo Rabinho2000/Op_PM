@@ -47,6 +47,17 @@ class WorkflowStage(UUIDPk, TimestampMixin, Base):
     planned_end_offset_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     has_contact_checkpoint: Mapped[bool] = mapped_column(default=False, nullable=False)
     contact_note: Mapped[str] = mapped_column(Text, default="")
+    # Dia útil (desde o arranque do projeto) do ponto de contacto e o seu tipo
+    # ("contacto" com o cliente ou "update" interno). D-073.
+    contact_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    contact_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    note: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # Quem é o responsável, resolvido **por projeto** (ver app/services/process.py):
+    # `role` (um papel), `pm`, `support_delegate` (o PM, ou a pessoa de suporte
+    # delegada), `installer` (o subempreiteiro da obra) ou `team_leader` (o chefe
+    # da equipa atribuída). `responsible_label` é o texto a mostrar. D-073.
+    responsible_rule: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    responsible_label: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     phase: Mapped["Phase"] = relationship(back_populates="stages")
     subtasks: Mapped[list["WorkflowSubtask"]] = relationship(back_populates="stage")
@@ -63,3 +74,14 @@ class WorkflowSubtask(UUIDPk, TimestampMixin, Base):
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
 
     stage: Mapped["WorkflowStage"] = relationship(back_populates="subtasks")
+
+
+class SupportDelegation(UUIDPk, TimestampMixin, Base):
+    """Quem faz as etapas de suporte (licenciamento, projeto eletrotécnico…) nos
+    projetos de um PM. Sem linha para um PM, essas etapas são do próprio PM
+    (D-073). É dado, não código: mudar a regra é mudar linhas."""
+
+    __tablename__ = "support_delegations"
+
+    pm_person_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("people.id"), unique=True, nullable=False)
+    support_person_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("people.id"), nullable=False)

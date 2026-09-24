@@ -234,8 +234,8 @@ itens logo na primeira ingestão real.
 
 **Decisão necessária:** quem (Chefe de Operações? Administrador?) tem
 autoridade para tomar estas decisões, e se há casos que precisam de
-confirmação do próprio PM (ex.: confirmar que "Gonçalo Palacino" e
-"Gonçalo P." no legado são a mesma pessoa).
+confirmação do próprio PM (ex.: confirmar que "PM B" e
+"PM B." no legado são a mesma pessoa).
 
 **Recomendação por defeito (já implementada como omissão técnica, a
 confirmar como decisão de negócio):** a Fase 1 já restringiu as

@@ -37,7 +37,7 @@ Do export dos 295 projetos:
 - **Progresso (`done`):** 245 projetos têm progresso, com chaves posicionais
   (`"2.0"`, `"2.1"`…). 33 têm `commissionedAt`.
 - **Processo legado:** 6 fases, **18 etapas, 77 subtarefas**, 12 pontos de
-  contacto. Responsáveis: Comercial, Sales Support, PM, Duarte, Bárbara,
+  contacto. Responsáveis: Comercial, Sales Support, PM, chefe do departamento, Suporte,
   VM (subempreiteiro), CE (chefe de equipa — confirmado).
 
 > **Confidencialidade.** Este repositório é público e o texto das 18 etapas e 77
@@ -55,10 +55,10 @@ subtarefas), com progresso, responsável e prazos.
 **Desenho**
 - **Catálogo real** carregado por CLI a partir do JSON local (idempotente, por
   `code`): fases, etapas (responsável, dependência, offsets, contacto, nota) e
-  subtarefas. Os responsáveis do legado que são nomes de pessoas (Duarte,
-  Bárbara) ou externos (VM, CE) têm o tratamento definido em D5: Duarte é o
-  Duarte Batista (chefe do departamento); Bárbara é a Bárbara Ferreira; VM é o
-  subempreiteiro Verde Milenar; CE = chefe de equipa, que passa a resolver-se
+  subtarefas. Os responsáveis do legado que são nomes de pessoas (o chefe do
+  departamento e a pessoa de Suporte) ou externos (VM, CE) têm o tratamento
+  definido em D5: o primeiro é o chefe do departamento; o segundo é a pessoa de
+  Suporte; VM é o subempreiteiro Verde Milenar; CE = chefe de equipa, que passa a resolver-se
   para o chefe da **equipa atribuída ao projeto** (ver feature 3).
 - **API** (leitura + escrita, sempre no âmbito do projeto — 404 fora dele):
   `GET /api/projects/{id}/workflow` (fases → etapas → subtarefas com o estado de
@@ -150,7 +150,7 @@ feature).
 | **D2** | Os 2 projetos que não cabem nos 6 estados ("vendido" e vazio). | **DECIDIDO:** ficam em **On hold pelo cliente**. |
 | **D3** | Instalador: entidade própria ou texto livre normalizado? | **Entidade** (`installers`), inicializada com os 9 nomes do export. Evita "GPS Energia"/"gps energia" como instaladores diferentes. |
 | **D4** | Datas da obra: derivadas do processo ou introduzidas à mão? | **Campos explícitos**, preenchidos por derivação e editáveis. **Verificado no export:** `shift` só existe em 2 dos 295 projetos, por isso a derivação é `startDate` + dias úteis do modelo base (obra = dia útil 41 a 49, cerca de 9 dias úteis). Nos projetos ainda ativos essas datas já passaram (ex.: obras "em construção" com a janela derivada em fevereiro–agosto), ou seja, **a derivação reflete o modelo, não a realidade**. Ficam marcadas como *estimadas* e é preciso rever à mão as datas dos ~31 projetos não concluídos. |
-| **D5** | Responsáveis do processo (Duarte, Bárbara, VM, CE). | **PARCIALMENTE DECIDIDO.** Duarte = Duarte Batista, chefe do departamento. Bárbara = Bárbara Ferreira: as etapas em que consta como responsável (registos de licenciamento, projeto eletrotécnico) ficam com ela, e os projetos antigos em que é PM continuam associados a ela. VM = Verde Milenar (subempreiteiro). CE = **chefe de equipa** (confirmado): na etapa "Acompanhamento da obra" resolve-se para o chefe da equipa atribuída ao projeto. **Regra final (Bárbara):** trabalha hoje no departamento de suporte e faz os licenciamentos (registos de entidade e UPAC, pedidos de inspeção) e os projetos eletrotécnicos, **só nos projetos do Ricardo Louro e do Gonçalo Palacino**; nos projetos do João Fernandes essas tarefas são feitas por ele (o PM). |
+| **D5** | Responsáveis do processo (chefe do departamento, Suporte, VM, CE). | **PARCIALMENTE DECIDIDO.** O primeiro é o chefe do departamento. O segundo é a pessoa de Suporte: as etapas em que consta como responsável (registos de licenciamento, projeto eletrotécnico) ficam com ela, e os projetos antigos em que era PM continuam associados a ela. VM = Verde Milenar (subempreiteiro). CE = **chefe de equipa** (confirmado): na etapa "Acompanhamento da obra" resolve-se para o chefe da equipa atribuída ao projeto. **Regra final (Suporte):** a pessoa de Suporte trabalha hoje no departamento de suporte e faz os licenciamentos (registos de entidade e UPAC, pedidos de inspeção) e os projetos eletrotécnicos, **só nos projetos do PM A e do PM B**; nos projetos do PM C essas tarefas são feitas por ele (o PM). |
 | **D6** | Transições de estado livres ou por ordem? | **Livres**, com histórico (o ClickUp de hoje é manual). Um aviso, não um bloqueio, se saltar etapas. |
 | **D7** | Fornecedores: "contacto telefónico" é campo novo? Vários tipos de material? | **DECIDIDO:** `phone` novo (o `contact` passa a "pessoa de contacto") e **um fornecedor tem vários tipos de material** (tabela de tipos + associação, filtrável). |
 | **D8** | Fornecedores: lista inicial? | **DECIDIDO:** lista criada a partir dos sites dos fornecedores que indicaste (16). Fica num ficheiro **local, fora do git**, e é carregada no PR 2. |
@@ -200,10 +200,10 @@ Contacto telefónico (**novo** `phone`) · Email (`email`) · Localização
 **Responsável das tarefas de suporte (D5, decidido):** as etapas de licenciamento
 (registos de entidade e UPAC, pedidos de inspeção) e de projeto eletrotécnico
 têm o responsável **resolvido por projeto**, não fixo: uma tabela de delegação
-"PM → pessoa de suporte" (Ricardo Louro e Gonçalo Palacino → Bárbara Ferreira).
-Quando o PM do projeto não tem delegação (ex.: João Fernandes) o responsável é o
+"PM → pessoa de suporte" (PM A e PM B → pessoa de Suporte).
+Quando o PM do projeto não tem delegação (ex.: PM C) o responsável é o
 próprio PM. Assim, mudar a regra é alterar dados, não código, e os projetos
-antigos da Bárbara como PM continuam associados a ela.
+antigos da pessoa de Suporte, quando era PM, continuam associados a ela.
 
 Os PR 1 e 2 são independentes e pequenos; podem ir primeiro e em paralelo. O
 PR 6 é o mais arriscado e fica no fim de propósito.

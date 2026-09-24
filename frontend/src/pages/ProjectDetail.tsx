@@ -39,6 +39,7 @@ import {
 } from "../api/client";
 import Icon from "../components/Icon";
 import { LifecycleStatusControl, useLifecycleStatuses } from "../components/LifecycleStatus";
+import ProjectProcess from "../components/ProjectProcess";
 import WorkPlanCard from "../components/WorkPlan";
 import TaskFormModal from "../components/TaskForm";
 import TaskStatusControl, { useTaskStatusChange } from "../components/TaskStatusControl";
@@ -53,7 +54,7 @@ import {
   TASK_TYPE_ICONS,
 } from "../utils/labels";
 
-type TabKey = "resumo" | "instalacao" | "licenciamento" | "tarefas" | "inventario" | "historico" | "cliente";
+type TabKey = "resumo" | "processo" | "instalacao" | "licenciamento" | "tarefas" | "inventario" | "historico" | "cliente";
 
 // Campos de texto oferecidos no formulário de edição, por ordem. Só são
 // mostrados os que o servidor indica em `project.editable_fields` (D-028).
@@ -666,6 +667,7 @@ export default function ProjectDetail() {
 
   const tabs: { key: TabKey; label: string; count?: number }[] = [
     { key: "resumo", label: "Resumo" },
+    { key: "processo", label: "Processo" },
     ...(canViewInstallation ? [{ key: "instalacao" as TabKey, label: "Dados da instalação" }] : []),
     ...(canViewLicensing || canViewCommunication ? [{ key: "licenciamento" as TabKey, label: "Licenciamento" }] : []),
     { key: "tarefas", label: "Tarefas", count: tasks?.length },
@@ -788,6 +790,8 @@ export default function ProjectDetail() {
       </div>
 
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
+        {tab === "processo" && <ProjectProcess projectId={project.id} />}
+
         {tab === "resumo" && (
           <div className="grid grid--main-side">
             <Card title="Dados do projeto" icon="folder">

@@ -26,6 +26,7 @@ PERMISSIONS: dict[str, str] = {
     "project.view_own": "Ver os projetos próprios (como PM)",
     "project.edit_all": "Editar identidade/atribuição de qualquer projeto",
     "project.edit_own_progress": "Editar progresso/checklist dos projetos próprios",
+    "workflow.update_progress": "Marcar subtarefas e pontos de contacto do processo dos projetos visíveis (todos, ou só os próprios como PM)",
     "project.plan_work": "Definir instalador, equipa e datas da obra dos projetos visíveis (todos, ou só os próprios como PM)",
     "installer.manage": "Criar/editar instaladores e as suas equipas",
     "project.change_status": "Alterar o estado do ciclo de vida dos projetos visíveis (todos, ou só os próprios como PM)",
@@ -96,6 +97,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
     ROLE_ADMIN: list(PERMISSIONS.keys()),
     ROLE_CHEFE_OPERACOES: [
         "supplier.view",
+        "workflow.update_progress",
         "project.plan_work",
         "installer.manage",
         "project.view_all",
@@ -148,6 +150,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
     ],
     ROLE_PM: [
         "supplier.view",
+        "workflow.update_progress",
         "project.plan_work",
         "project.view_own",
         "project.edit_own_progress",

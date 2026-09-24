@@ -1,0 +1,396 @@
+{
+  "_note": "Processo SINTÉTICO com a mesma forma do real (fases, responsáveis, dependências, dias e nº de subtarefas) e textos genéricos. Usado no seed e nos testes.",
+  "phases": [
+    {
+      "code": "handover",
+      "name": "Fase 1 — Arranque (exemplo)",
+      "color": "#2E75B6"
+    },
+    {
+      "code": "licenc",
+      "name": "Fase 2 — Licenciamento (exemplo)",
+      "color": "#C0392B"
+    },
+    {
+      "code": "visita",
+      "name": "Fase 3 — Visita e subempreiteiro (exemplo)",
+      "color": "#E07B39"
+    },
+    {
+      "code": "prep",
+      "name": "Fase 4 — Preparação (exemplo)",
+      "color": "#7C58B8"
+    },
+    {
+      "code": "obra",
+      "name": "Fase 5 — Obra (exemplo)",
+      "color": "#4F8A3B"
+    },
+    {
+      "code": "fecho",
+      "name": "Fase 6 — Fecho (exemplo)",
+      "color": "#0E93B8"
+    }
+  ],
+  "stages": [
+    {
+      "code": "etapa-01",
+      "phase": "handover",
+      "title": "Etapa 01 (exemplo)",
+      "responsible": "comercial",
+      "depends_on": null,
+      "start_day": 1,
+      "end_day": 1,
+      "contact": null,
+      "note": "",
+      "subtasks": [
+        "Subtarefa 01.0 (exemplo)"
+      ]
+    },
+    {
+      "code": "etapa-02",
+      "phase": "handover",
+      "title": "Etapa 02 (exemplo)",
+      "responsible": "sales_support",
+      "depends_on": "etapa-01",
+      "start_day": 1,
+      "end_day": 5,
+      "contact": null,
+      "note": "",
+      "subtasks": [
+        "Subtarefa 02.0 (exemplo)",
+        "Subtarefa 02.1 (exemplo)",
+        "Subtarefa 02.2 (exemplo)",
+        "Subtarefa 02.3 (exemplo)",
+        "Subtarefa 02.4 (exemplo)",
+        "Subtarefa 02.5 (exemplo)"
+      ]
+    },
+    {
+      "code": "etapa-03",
+      "phase": "handover",
+      "title": "Etapa 03 (exemplo)",
+      "responsible": "chefe_departamento",
+      "depends_on": "etapa-02",
+      "start_day": 6,
+      "end_day": 8,
+      "contact": null,
+      "note": "",
+      "subtasks": [
+        "Subtarefa 03.0 (exemplo)",
+        "Subtarefa 03.1 (exemplo)"
+      ]
+    },
+    {
+      "code": "etapa-04",
+      "phase": "handover",
+      "title": "Etapa 04 (exemplo)",
+      "responsible": "pm",
+      "depends_on": "etapa-03",
+      "start_day": 9,
+      "end_day": 10,
+      "contact": {
+        "day": 9,
+        "kind": "contacto",
+        "note": "Nota de contacto da etapa 04 (exemplo)"
+      },
+      "note": "",
+      "subtasks": [
+        "Subtarefa 04.0 (exemplo)",
+        "Subtarefa 04.1 (exemplo)",
+        "Subtarefa 04.2 (exemplo)"
+      ]
+    },
+    {
+      "code": "etapa-05",
+      "phase": "licenc",
+      "title": "Etapa 05 (exemplo)",
+      "responsible": "suporte",
+      "depends_on": "etapa-04",
+      "start_day": 11,
+      "end_day": 15,
+      "contact": {
+        "day": 15,
+        "kind": "contacto",
+        "note": "Nota de contacto da etapa 05 (exemplo)"
+      },
+      "note": "",
+      "subtasks": [
+        "Subtarefa 05.0 (exemplo)",
+        "Subtarefa 05.1 (exemplo)",
+        "Subtarefa 05.2 (exemplo)"
+      ]
+    },
+    {
+      "code": "etapa-06",
+      "phase": "visita",
+      "title": "Etapa 06 (exemplo)",
+      "responsible": "pm",
+      "depends_on": "etapa-04",
+      "start_day": 11,
+      "end_day": 20,
+      "contact": {
+        "day": 20,
+        "kind": "contacto",
+        "note": "Nota de contacto da etapa 06 (exemplo)"
+      },
+      "note": "Nota da etapa 06 (exemplo)",
+      "subtasks": [
+        "Subtarefa 06.0 (exemplo)",
+        "Subtarefa 06.1 (exemplo)",
+        "Subtarefa 06.2 (exemplo)",
+        "Subtarefa 06.3 (exemplo)",
+        "Subtarefa 06.4 (exemplo)"
+      ]
+    },
+    {
+      "code": "etapa-07",
+      "phase": "visita",
+      "title": "Etapa 07 (exemplo)",
+      "responsible": "chefe_departamento",
+      "depends_on": "etapa-06",
+      "start_day": 21,
+      "end_day": 25,
+      "contact": {
+        "day": 25,
+        "kind": "update",
+        "note": "Nota de contacto da etapa 07 (exemplo)"
+      },
+      "note": "",
+      "subtasks": [
+        "Subtarefa 07.0 (exemplo)",
+        "Subtarefa 07.1 (exemplo)"
+      ]
+    },
+    {
+      "code": "etapa-08",
+      "phase": "visita",
+      "title": "Etapa 08 (exemplo)",
+      "responsible": "pm",
+      "depends_on": "etapa-07",
+      "start_day": 26,
+      "end_day": 30,
+      "contact": {
+        "day": 30,
+        "kind": "contacto",
+        "note": "Nota de contacto da etapa 08 (exemplo)"
+      },
+      "note": "",
+      "subtasks": [
+        "Subtarefa 08.0 (exemplo)",
+        "Subtarefa 08.1 (exemplo)"
+      ]
+    },
+    {
+      "code": "etapa-09",
+      "phase": "prep",
+      "title": "Etapa 09 (exemplo)",
+      "responsible": "suporte",
+      "depends_on": "etapa-06",
+      "start_day": 21,
+      "end_day": 35,
+      "contact": {
+        "day": 35,
+        "kind": "update",
+        "note": "Nota de contacto da etapa 09 (exemplo)"
+      },
+      "note": "",
+      "subtasks": [
+        "Subtarefa 09.0 (exemplo)",
+        "Subtarefa 09.1 (exemplo)",
+        "Subtarefa 09.2 (exemplo)",
+        "Subtarefa 09.3 (exemplo)"
+      ]
+    },
+    {
+      "code": "etapa-10",
+      "phase": "prep",
+      "title": "Etapa 10 (exemplo)",
+      "responsible": "pm",
+      "depends_on": "etapa-06",
+      "start_day": 21,
+      "end_day": 40,
+      "contact": {
+        "day": 40,
+        "kind": "update",
+        "note": "Nota de contacto da etapa 10 (exemplo)"
+      },
+      "note": "",
+      "subtasks": [
+        "Subtarefa 10.0 (exemplo)",
+        "Subtarefa 10.1 (exemplo)",
+        "Subtarefa 10.2 (exemplo)",
+        "Subtarefa 10.3 (exemplo)",
+        "Subtarefa 10.4 (exemplo)",
+        "Subtarefa 10.5 (exemplo)",
+        "Subtarefa 10.6 (exemplo)",
+        "Subtarefa 10.7 (exemplo)",
+        "Subtarefa 10.8 (exemplo)",
+        "Subtarefa 10.9 (exemplo)",
+        "Subtarefa 10.10 (exemplo)",
+        "Subtarefa 10.11 (exemplo)",
+        "Subtarefa 10.12 (exemplo)",
+        "Subtarefa 10.13 (exemplo)",
+        "Subtarefa 10.14 (exemplo)"
+      ]
+    },
+    {
+      "code": "etapa-11",
+      "phase": "obra",
+      "title": "Etapa 11 (exemplo)",
+      "responsible": "pm",
+      "depends_on": "etapa-08",
+      "start_day": 31,
+      "end_day": 40,
+      "contact": null,
+      "note": "",
+      "subtasks": [
+        "Subtarefa 11.0 (exemplo)",
+        "Subtarefa 11.1 (exemplo)",
+        "Subtarefa 11.2 (exemplo)",
+        "Subtarefa 11.3 (exemplo)",
+        "Subtarefa 11.4 (exemplo)",
+        "Subtarefa 11.5 (exemplo)",
+        "Subtarefa 11.6 (exemplo)",
+        "Subtarefa 11.7 (exemplo)",
+        "Subtarefa 11.8 (exemplo)",
+        "Subtarefa 11.9 (exemplo)"
+      ]
+    },
+    {
+      "code": "etapa-12",
+      "phase": "obra",
+      "title": "Etapa 12 (exemplo)",
+      "responsible": "instalador",
+      "depends_on": "etapa-10",
+      "start_day": 41,
+      "end_day": 41,
+      "contact": null,
+      "note": "Nota da etapa 12 (exemplo)",
+      "subtasks": [
+        "Subtarefa 12.0 (exemplo)",
+        "Subtarefa 12.1 (exemplo)",
+        "Subtarefa 12.2 (exemplo)",
+        "Subtarefa 12.3 (exemplo)"
+      ]
+    },
+    {
+      "code": "etapa-13",
+      "phase": "licenc",
+      "title": "Etapa 13 (exemplo)",
+      "responsible": "suporte",
+      "depends_on": "etapa-12",
+      "start_day": 42,
+      "end_day": 46,
+      "contact": null,
+      "note": "",
+      "subtasks": [
+        "Subtarefa 13.0 (exemplo)",
+        "Subtarefa 13.1 (exemplo)"
+      ]
+    },
+    {
+      "code": "etapa-14",
+      "phase": "obra",
+      "title": "Etapa 14 (exemplo)",
+      "responsible": "chefe_equipa",
+      "depends_on": "etapa-12",
+      "start_day": 42,
+      "end_day": 49,
+      "contact": {
+        "day": 45,
+        "kind": "update",
+        "note": "Nota de contacto da etapa 14 (exemplo)"
+      },
+      "note": "Nota da etapa 14 (exemplo)",
+      "subtasks": [
+        "Subtarefa 14.0 (exemplo)",
+        "Subtarefa 14.1 (exemplo)",
+        "Subtarefa 14.2 (exemplo)",
+        "Subtarefa 14.3 (exemplo)",
+        "Subtarefa 14.4 (exemplo)"
+      ]
+    },
+    {
+      "code": "etapa-15",
+      "phase": "fecho",
+      "title": "Etapa 15 (exemplo)",
+      "responsible": "pm",
+      "depends_on": "etapa-14",
+      "start_day": 50,
+      "end_day": 50,
+      "contact": {
+        "day": 50,
+        "kind": "contacto",
+        "note": "Nota de contacto da etapa 15 (exemplo)"
+      },
+      "note": "",
+      "subtasks": [
+        "Subtarefa 15.0 (exemplo)",
+        "Subtarefa 15.1 (exemplo)"
+      ]
+    },
+    {
+      "code": "etapa-16",
+      "phase": "fecho",
+      "title": "Etapa 16 (exemplo)",
+      "responsible": "pm",
+      "depends_on": "etapa-15",
+      "start_day": 51,
+      "end_day": 55,
+      "contact": {
+        "day": 51,
+        "kind": "contacto",
+        "note": "Nota de contacto da etapa 16 (exemplo)"
+      },
+      "note": "",
+      "subtasks": [
+        "Subtarefa 16.0 (exemplo)",
+        "Subtarefa 16.1 (exemplo)",
+        "Subtarefa 16.2 (exemplo)",
+        "Subtarefa 16.3 (exemplo)",
+        "Subtarefa 16.4 (exemplo)"
+      ]
+    },
+    {
+      "code": "etapa-17",
+      "phase": "fecho",
+      "title": "Etapa 17 (exemplo)",
+      "responsible": "pm",
+      "depends_on": "etapa-16",
+      "start_day": 56,
+      "end_day": 65,
+      "contact": {
+        "day": 65,
+        "kind": "update",
+        "note": "Nota de contacto da etapa 17 (exemplo)"
+      },
+      "note": "",
+      "subtasks": [
+        "Subtarefa 17.0 (exemplo)",
+        "Subtarefa 17.1 (exemplo)"
+      ]
+    },
+    {
+      "code": "etapa-18",
+      "phase": "licenc",
+      "title": "Etapa 18 (exemplo)",
+      "responsible": "suporte",
+      "depends_on": "etapa-16",
+      "start_day": 56,
+      "end_day": 60,
+      "contact": {
+        "day": 60,
+        "kind": "contacto",
+        "note": "Nota de contacto da etapa 18 (exemplo)"
+      },
+      "note": "",
+      "subtasks": [
+        "Subtarefa 18.0 (exemplo)",
+        "Subtarefa 18.1 (exemplo)",
+        "Subtarefa 18.2 (exemplo)",
+        "Subtarefa 18.3 (exemplo)"
+      ]
+    }
+  ]
+}

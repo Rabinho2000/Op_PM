@@ -18,6 +18,7 @@ from app.api.routes_performance import router as performance_router
 from app.api.routes_planning import router as planning_router
 from app.api.routes_project_data import router as project_data_router
 from app.api.routes_projects import router as projects_router
+from app.api.routes_process import router as process_router
 from app.api.routes_installers import router as installers_router
 from app.api.routes_suppliers import router as suppliers_router
 from app.api.routes_works import router as works_router
@@ -48,6 +49,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(me_router)
 app.include_router(projects_router)
+app.include_router(process_router)
 app.include_router(migration_router)
 app.include_router(people_router)
 app.include_router(tasks_router)

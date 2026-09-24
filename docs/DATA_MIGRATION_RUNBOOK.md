@@ -32,8 +32,8 @@
 **Porquê antes, não depois:** o export legado tem, no mínimo, os 8 PMs
 históricos conhecidos (`docs/DECISIONS.md` D-003) — alguns já não têm
 `User` (conta de login), só `Person` (para preservar o histórico). Nomes
-grafados de forma diferente entre o export e `people` (ex. "Gonçalo
-Palacino" vs. "Gonçalo P.") geram itens na fila de reconciliação
+grafados de forma diferente entre o export e `people` (ex. "PM B"
+vs. "PM B.") geram itens na fila de reconciliação
 (`person_reconciliation_items`, D-023) que bloqueiam a promoção do(s)
 projeto(s) correspondente(s) até serem resolvidos. Resolver isto **antes**
 da ingestão principal reduz o número de projetos que ficam bloqueados por
