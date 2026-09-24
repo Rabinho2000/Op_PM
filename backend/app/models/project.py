@@ -106,6 +106,11 @@ class Project(UUIDPk, TimestampMixin, Base):
     # `app/services/project_lifecycle.py`. Distinto de `status` (derivado das
     # tarefas). `None` = sem estado atribuído.
     lifecycle_status: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    # Quando o projeto entrou no programa (D-077): ordena a lista, dentro de cada estado.
+    # Novos projetos = momento da criação; legado = data de início (ClickUp) — ver migração.
+    entered_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=lambda: dt.datetime.now(dt.timezone.utc)
+    )
 
     # --- Campos legados adicionais (IDF em solcor-gestao.html) — fonte de
     # verdade: Op_PM, importados verbatim do export legado por

@@ -647,6 +647,9 @@ def promote_staging_record(
 
     if record.resolved_action == "create_new":
         project = Project(id=new_uuid(), is_active=True, **canonical)
+        # D-077: no legado, "entrou no programa" = data de início no ClickUp.
+        if canonical.get("start_date") is not None:
+            project.entered_at = dt.datetime.combine(canonical["start_date"], dt.time.min, tzinfo=dt.timezone.utc)
         project.work_dates_estimated = work_window is not None
         project.pm_person_id = pm_person.id if pm_person else None
         db.add(project)
