@@ -161,33 +161,28 @@ export default function ProjectsList() {
             ))}
           </select>
         </div>
-        <div className="field field--wide" role="group" aria-labelledby="f-lifecycle-label">
-          <span id="f-lifecycle-label" className="field__label">
-            Estado do projeto
-          </span>
-          <div className="segmented" role="group" aria-label="Que projetos mostrar" style={{ alignSelf: "flex-start" }}>
-            <button type="button" aria-pressed={view === "in_progress"} onClick={() => setLifecycle([...IN_PROGRESS_LIFECYCLE])}>
-              Em curso
-            </button>
-            <button type="button" aria-pressed={view === "all"} onClick={() => setLifecycle([])}>
-              Todos
-            </button>
-          </div>
-          <div className="chips">
-            {lifecycleStatuses.map((s) => {
-              const checked = lifecycle.includes(s.code);
-              return (
-                <label key={s.code} className={`chip ${checked ? "chip--on" : ""}`}>
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => setLifecycle(checked ? lifecycle.filter((c) => c !== s.code) : [...lifecycle, s.code])}
-                  />
-                  {s.label}
-                </label>
-              );
-            })}
-          </div>
+        <div className="field">
+          <label htmlFor="f-lifecycle">Estado do projeto</label>
+          <select
+            id="f-lifecycle"
+            className="select"
+            value={view === "custom" ? (lifecycle.length === 1 ? lifecycle[0] : "custom") : view}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "in_progress") setLifecycle([...IN_PROGRESS_LIFECYCLE]);
+              else if (v === "all") setLifecycle([]);
+              else if (v !== "custom") setLifecycle([v]);
+            }}
+          >
+            <option value="in_progress">Em curso</option>
+            <option value="all">Todos</option>
+            {view === "custom" && lifecycle.length !== 1 && <option value="custom">Personalizado</option>}
+            {lifecycleStatuses.map((s) => (
+              <option key={s.code} value={s.code}>
+                {s.label}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="field">
           <label htmlFor="f-pm">PM</label>

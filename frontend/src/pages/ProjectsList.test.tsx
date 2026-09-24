@@ -77,7 +77,7 @@ describe("ProjectsList (filtros)", () => {
     );
   });
 
-  it("mostra o estado do projeto e filtra por vários estados no servidor", async () => {
+  it("mostra o estado do projeto e filtra por estado no servidor", async () => {
     listProjects.mockResolvedValue([
       makeProject({ lifecycle_status: "construcao" }),
       makeProject({ id: "proj-2", name: "Projeto Sintético Sem PM", lifecycle_status: null }),
@@ -89,16 +89,8 @@ describe("ProjectsList (filtros)", () => {
     expect(await screen.findAllByText("Construção")).not.toHaveLength(0);
     expect(screen.getByText("Sem estado")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Todos" }));
-    fireEvent.click(await screen.findByLabelText("On hold pelo cliente"));
-    fireEvent.click(screen.getByLabelText("Preparação"));
-    await waitFor(() =>
-      expect(listProjects).toHaveBeenLastCalledWith(
-        expect.objectContaining({ lifecycle_status: ["on_hold_cliente", "preparacao"] })
-      )
-    );
-
-    fireEvent.click(screen.getByLabelText("On hold pelo cliente"));
+    await screen.findByRole("option", { name: "Preparação" });
+    fireEvent.change(screen.getByLabelText("Estado do projeto"), { target: { value: "preparacao" } });
     await waitFor(() =>
       expect(listProjects).toHaveBeenLastCalledWith(expect.objectContaining({ lifecycle_status: ["preparacao"] }))
     );
@@ -111,12 +103,12 @@ describe("ProjectsList (filtros)", () => {
     expect(listProjects).toHaveBeenLastCalledWith(
       expect.objectContaining({ lifecycle_status: ["on_hold_cliente", "preparacao", "construcao", "construido"] })
     );
-    expect(screen.getByRole("button", { name: "Em curso" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Estado do projeto")).toHaveValue("in_progress");
     expect(screen.getByText("2 projetos em curso")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Todos" }));
+    fireEvent.change(screen.getByLabelText("Estado do projeto"), { target: { value: "all" } });
     await waitFor(() => expect(listProjects).toHaveBeenLastCalledWith(expect.objectContaining({ lifecycle_status: undefined })));
-    expect(screen.getByRole("button", { name: "Todos" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Estado do projeto")).toHaveValue("all");
   });
 
   it("?estado=todos abre sem filtro de estado", async () => {
