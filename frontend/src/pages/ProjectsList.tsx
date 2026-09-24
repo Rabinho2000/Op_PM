@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   ApiError,
   listPeople,
@@ -16,6 +16,7 @@ import { Avatar, Badge, EmptyState, ErrorState, LoadingState, PageHeader, Progre
 import { useSession } from "../session/SessionContext";
 import { formatDatePt, relativeDayLabel, todayIsoLisbon } from "../utils/dates";
 import { PROJECT_STATUS_TONES } from "../utils/labels";
+import { lifecycleFromParams, lifecycleToParams, lifecycleView, IN_PROGRESS_LIFECYCLE } from "../utils/projectFilters";
 
 type ActiveFilter = "active" | "inactive" | "all";
 
@@ -56,7 +57,22 @@ function missingLabels(p: Project): string[] {
 
 export default function ProjectsList() {
   const { can } = useSession();
-  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [params, setParams] = useSearchParams();
+  // O estado do projeto vive no URL: por omissão só os em curso; `?estado=todos` mostra tudo (D-076).
+  const lifecycle = useMemo(() => lifecycleFromParams(params.getAll("estado")), [params]);
+  const view = lifecycleView(lifecycle);
+  const setLifecycle = (selected: string[]) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("estado");
+        lifecycleToParams(selected).forEach((v) => next.append("estado", v));
+        return next;
+      },
+      { replace: true }
+    );
+  const [localFilters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const filters = useMemo<Filters>(() => ({ ...localFilters, lifecycle }), [localFilters, lifecycle]);
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
@@ -75,7 +91,7 @@ export default function ProjectsList() {
     return () => window.clearTimeout(handle);
   }, [filters.search]);
 
-  const { status, lifecycle, pm, active, startFrom, startTo } = filters;
+  const { status, pm, active, startFrom, startTo } = filters;
   const lifecycleKey = lifecycle.join(",");
   useEffect(() => {
     let cancelled = false;
@@ -90,8 +106,14 @@ export default function ProjectsList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch, status, lifecycleKey, pm, active, startFrom, startTo, reloadKey]);
 
-  const set = <K extends keyof Filters>(key: K, value: Filters[K]) => setFilters((f) => ({ ...f, [key]: value }));
-  const hasFilters = JSON.stringify(filters) !== JSON.stringify(EMPTY_FILTERS);
+  const set = <K extends Exclude<keyof Filters, "lifecycle">>(key: K, value: Filters[K]) =>
+    setFilters((f) => ({ ...f, [key]: value }));
+  // "Com filtros" = qualquer coisa diferente da vista por omissão (todos os campos vazios e os em curso).
+  const hasFilters = JSON.stringify({ ...localFilters, lifecycle: [] }) !== JSON.stringify(EMPTY_FILTERS) || view !== "in_progress";
+  const resetFilters = () => {
+    setFilters(EMPTY_FILTERS);
+    setLifecycle([...IN_PROGRESS_LIFECYCLE]);
+  };
   const today = todayIsoLisbon();
 
   return (
@@ -143,20 +165,23 @@ export default function ProjectsList() {
           <span id="f-lifecycle-label" className="field__label">
             Estado do projeto
           </span>
+          <div className="segmented" role="group" aria-label="Que projetos mostrar" style={{ alignSelf: "flex-start" }}>
+            <button type="button" aria-pressed={view === "in_progress"} onClick={() => setLifecycle([...IN_PROGRESS_LIFECYCLE])}>
+              Em curso
+            </button>
+            <button type="button" aria-pressed={view === "all"} onClick={() => setLifecycle([])}>
+              Todos
+            </button>
+          </div>
           <div className="chips">
             {lifecycleStatuses.map((s) => {
-              const checked = filters.lifecycle.includes(s.code);
+              const checked = lifecycle.includes(s.code);
               return (
                 <label key={s.code} className={`chip ${checked ? "chip--on" : ""}`}>
                   <input
                     type="checkbox"
                     checked={checked}
-                    onChange={() =>
-                      set(
-                        "lifecycle",
-                        checked ? filters.lifecycle.filter((c) => c !== s.code) : [...filters.lifecycle, s.code]
-                      )
-                    }
+                    onChange={() => setLifecycle(checked ? lifecycle.filter((c) => c !== s.code) : [...lifecycle, s.code])}
                   />
                   {s.label}
                 </label>
@@ -205,7 +230,7 @@ export default function ProjectsList() {
         </div>
         {hasFilters && (
           <div className="toolbar__end">
-            <button type="button" className="btn btn--ghost" onClick={() => setFilters(EMPTY_FILTERS)}>
+            <button type="button" className="btn btn--ghost" onClick={resetFilters}>
               <Icon name="x" size={16} /> Limpar filtros
             </button>
           </div>
@@ -226,7 +251,7 @@ export default function ProjectsList() {
             }
             action={
               hasFilters ? (
-                <button type="button" className="btn btn--sm" onClick={() => setFilters(EMPTY_FILTERS)}>
+                <button type="button" className="btn btn--sm" onClick={resetFilters}>
                   Limpar filtros
                 </button>
               ) : undefined
@@ -238,7 +263,16 @@ export default function ProjectsList() {
             <div className="card__header" style={{ paddingBottom: 12 }}>
               <span className="small muted" aria-live="polite">
                 {projects.length} projeto{projects.length === 1 ? "" : "s"}
+                {view === "in_progress" && " em curso"}
               </span>
+              {view === "in_progress" && (
+                <span className="small muted" style={{ marginLeft: 8 }}>
+                  (os já entregues e certificados estão escondidos){" "}
+                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => setLifecycle([])}>
+                    Mostrar todos
+                  </button>
+                </span>
+              )}
             </div>
             <div className="table-wrap">
               <table className="table">

@@ -3007,3 +3007,11 @@ registado. Uma reimportação não o reativa (a importação não escreve `is_ac
 50 projetos entregues, 44 alterados (2 521 subtarefas e 389 contactos concluídos por regra), os 6
 restantes já estavam completos; repetição sem alterações. Um projeto entregue passou de 0 % a
 95 % (73 de 77), com 17 etapas concluídas e a 18 "Por concluir", sem atraso; 294 projetos ativos.
+
+## D-076 — A lista de projetos abre nos projetos em curso
+
+**Contexto.** 262 dos 295 projetos estão entregues ou certificados e escondiam o trabalho do dia a dia.
+
+**Decisão.** A lista abre filtrada pelo estado *em curso* = On hold pelo cliente, Preparação, Construção e Construído (constante `IN_PROGRESS_LIFECYCLE` em `frontend/src/utils/projectFilters.ts`, fácil de alterar). O estado vive no URL: sem `estado` = em curso; `?estado=todos` = tudo; `estado=a&estado=b` = esses estados. Um controlo "Em curso | Todos" e os chips por estado alteram-no; "Limpar filtros" volta à omissão. Os cartões do painel que contam "todos os projetos" apontam a `?estado=todos` para os números coincidirem.
+
+**Consequências.** Só frontend; sem alterações à API. Projetos sem estado ficam fora da vista por omissão (aparecem em "Todos").
