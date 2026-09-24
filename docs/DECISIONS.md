@@ -3012,6 +3012,6 @@ restantes já estavam completos; repetição sem alterações. Um projeto entreg
 
 **Contexto.** 262 dos 295 projetos estão entregues ou certificados e escondiam o trabalho do dia a dia.
 
-**Decisão.** A lista abre filtrada pelo estado *em curso* = On hold pelo cliente, Preparação, Construção e Construído (constante `IN_PROGRESS_LIFECYCLE` em `frontend/src/utils/projectFilters.ts`, fácil de alterar). O estado vive no URL: sem `estado` = em curso; `?estado=todos` = tudo; `estado=a&estado=b` = esses estados. Um dropdown "Estado do projeto" (Em curso, Todos ou um estado) altera-o; "Limpar filtros" volta à omissão. Os cartões do painel que contam "todos os projetos" apontam a `?estado=todos` para os números coincidirem.
+**Decisão.** A lista abre filtrada pelo estado *em curso* = On hold pelo cliente, Preparação, Construção e Construído (constante `IN_PROGRESS_LIFECYCLE` em `frontend/src/utils/projectFilters.ts`, fácil de alterar). O estado vive no URL: sem `estado` = em curso; `?estado=todos` = tudo; `estado=a&estado=b` = esses estados. Um dropdown com caixas de seleção "Estado do projeto" (atalhos Em curso e Todos + um por estado) altera-o; "Limpar filtros" volta à omissão. Os cartões do painel que contam "todos os projetos" apontam a `?estado=todos` para os números coincidirem.
 
 **Consequências.** Só frontend; sem alterações à API. Projetos sem estado ficam fora da vista por omissão (aparecem em "Todos").
