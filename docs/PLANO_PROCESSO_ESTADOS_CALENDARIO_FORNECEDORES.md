@@ -3,8 +3,8 @@
 > **Estado: proposta para aprovação.** Nada aqui está implementado. Foi escrito
 > depois de ler o `solcor-gestao.html` legado, o export real
 > (`Op_PM_export_projetos.json`, só agregados — nenhum dado de cliente é citado)
-> e o código atual. As decisões que preciso de ti estão na secção 6, cada uma com
-> uma recomendação por omissão.
+> e o código atual. **Atualizado com as respostas de D1, D2, D5, D7 e D8**; as
+> restantes decisões estão na secção 6, cada uma com uma recomendação por omissão.
 
 ## 1. O que o código já tem (e não vamos refazer)
 
@@ -24,8 +24,8 @@ Do export dos 295 projetos:
 
 - **Estado (`clickupStatus`):** 212 certificado final · 50 entregue ao cliente ·
   17 em preparação · 5 construído · 4 em construção · 5 on hold pelo cliente ·
-  1 "vendido" · 1 vazio. Ou seja, **as duas exceções (2 projetos) não cabem nos
-  6 estados** — ver D2.
+  1 "vendido" · 1 vazio. As duas exceções (2 projetos) não cabem nos 6 estados e
+  ficam em **On hold pelo cliente** (D2, decidido).
 - **Instalador (`subcontractor`):** 9 nomes distintos; **56 projetos sem
   instalador** (55 vazios + 1 nulo). Três instaladores concentram a maioria.
 - **Datas:** 294 de 295 têm `startDate`. **No legado `startDate` é o dia 1 do
@@ -56,8 +56,9 @@ subtarefas), com progresso, responsável e prazos.
 - **Catálogo real** carregado por CLI a partir do JSON local (idempotente, por
   `code`): fases, etapas (responsável, dependência, offsets, contacto, nota) e
   subtarefas. Os responsáveis do legado que são nomes de pessoas (Duarte,
-  Bárbara) ou externos (VM, CE) mapeiam-se para **papéis** (`responsible_role_code`),
-  não para pessoas — ver D5.
+  Bárbara) ou externos (VM, CE) têm o tratamento definido em D5: Duarte é o
+  Duarte Batista (chefe do departamento); Bárbara é a Bárbara Ferreira; VM é o
+  subempreiteiro Verde Milenar; CE = chefe de equipa (a confirmar).
 - **API** (leitura + escrita, sempre no âmbito do projeto — 404 fora dele):
   `GET /api/projects/{id}/workflow` (fases → etapas → subtarefas com o estado de
   cada uma, datas planeadas, atraso) e
@@ -87,9 +88,10 @@ feature).
 - Coluna própria `Project.lifecycle_status` (nome distinto do `status` derivado,
   que passa a chamar-se "Progresso" na UI para não haver duas coisas com o mesmo
   nome). Constante única no backend, exposta à UI (nada de listas duplicadas).
-- **Valor inicial** = mapeamento do `clickup_status_mirror` (tabela acima). Os
-  casos que não mapeiam ficam **sem estado** e aparecem numa lista para decisão
-  humana (D2), nunca adivinhados.
+- **Valor inicial** = mapeamento do `clickup_status_mirror` (tabela acima).
+  "vendido" e o estado vazio mapeiam para `on_hold_cliente` (D2). Qualquer valor
+  futuro desconhecido fica **sem estado** e aparece numa lista para decisão
+  humana, nunca adivinhado.
 - Alteração via `PATCH /api/projects/{id}/status`, permissão nova
   `project.change_status`, com `ProjectHistory` (quem, quando, de/para).
 - Filtro por estado na lista de projetos, no mapa e no calendário; badge de
@@ -128,20 +130,21 @@ feature).
 
 | # | Pergunta | Recomendação |
 |---|---|---|
-| **D1** | Quem manda no estado: o Op_PM ou o ClickUp? | O **Op_PM** passa a ser a fonte (campo próprio); o ClickUp fica como espelho até a Fase 8 decidir a sincronização. |
-| **D2** | Os 2 projetos que não cabem nos 6 estados ("vendido" e vazio). | Ficam **sem estado** até decidires. "Vendido" parece um estado anterior a "Preparação": queres um 7.º estado, ou mapeia-se para Preparação? |
+| **D1** | Quem manda no estado: o Op_PM ou o ClickUp? | **DECIDIDO: Op_PM.** Campo próprio; o ClickUp fica como espelho até a Fase 8 decidir a sincronização. |
+| **D2** | Os 2 projetos que não cabem nos 6 estados ("vendido" e vazio). | **DECIDIDO:** ficam em **On hold pelo cliente**. |
 | **D3** | Instalador: entidade própria ou texto livre normalizado? | **Entidade** (`installers`), inicializada com os 9 nomes do export. Evita "GPS Energia"/"gps energia" como instaladores diferentes. |
 | **D4** | Datas da obra: derivadas do processo ou introduzidas à mão? | **Campos explícitos**, preenchidos por derivação no arranque e editáveis depois. Preciso de confirmar a fórmula com 2–3 projetos que conheças bem. |
-| **D5** | Responsáveis do processo (Duarte, Bárbara, VM, CE): pessoas, papéis ou externos? | **Papéis** (`responsible_role_code`); VM/CE tratam-se como "instalador/chefe de equipa". Preciso que me digas que papel corresponde a cada um. |
+| **D5** | Responsáveis do processo (Duarte, Bárbara, VM, CE). | **PARCIALMENTE DECIDIDO.** Duarte = Duarte Batista, chefe do departamento. Bárbara = Bárbara Ferreira: as etapas em que consta como responsável (registos de licenciamento, projeto eletrotécnico) ficam com ela, e os projetos antigos em que é PM continuam associados a ela. VM = Verde Milenar (subempreiteiro). CE: no legado é o responsável da etapa "Acompanhamento da obra" e "chefe de equipa" aparece nas mesmas etapas — **a confirmar que CE = chefe de equipa**. Falta: que papel tem hoje a Bárbara no Op_PM (ver nota abaixo). |
 | **D6** | Transições de estado livres ou por ordem? | **Livres**, com histórico (o ClickUp de hoje é manual). Um aviso, não um bloqueio, se saltar etapas. |
-| **D7** | Fornecedores: "contacto telefónico" é campo novo? | Sim, `phone`; o `contact` atual passa a "pessoa de contacto". Um fornecedor pode ter **vários** tipos de material? |
-| **D8** | Fornecedores: tens uma lista (Excel) para importar? | Se sim, importador com pré-visualização, como o de licenciamento. |
+| **D7** | Fornecedores: "contacto telefónico" é campo novo? Vários tipos de material? | **DECIDIDO:** `phone` novo (o `contact` passa a "pessoa de contacto") e **um fornecedor tem vários tipos de material** (tabela de tipos + associação, filtrável). |
+| **D8** | Fornecedores: lista inicial? | **DECIDIDO:** lista criada a partir dos sites dos fornecedores que indicaste (16). Fica num ficheiro **local, fora do git**, e é carregada no PR 2. |
 | **D9** | Quem pode ver/editar fornecedores? | Ver: quem já vê o inventário/pedidos; editar: `supplier.manage` (já existe). |
 | **D10** | Que obras mostra o calendário por omissão? | Janela de −3 a +6 meses, **todos os estados**, com o filtro de estado à mão (212 obras já certificadas encheriam o ecrã). |
 
 ## 7. Feature 4 — Lista de fornecedores
 
-**Campos pedidos → onde estão:** Nome (`name`) · Tipo de material (`category`) ·
+**Campos pedidos → onde estão:** Nome (`name`) · Tipos de material (vários:
+nova tabela de tipos + associação; o `category` atual fica como legado) ·
 Contacto telefónico (**novo** `phone`) · Email (`email`) · Localização
 (`address` + `lat/lon` opcionais, que o mapa já usa).
 
@@ -155,6 +158,16 @@ Contacto telefónico (**novo** `phone`) · Email (`email`) · Localização
   ligados), validação de email e telefone, e ligação ao mapa quando há
   coordenadas.
 - Os fornecedores do seed continuam a funcionar sem alterações.
+- **Lista inicial (16 fornecedores):** recolhida dos sites públicos e guardada
+  num JSON **local fora do repositório** (é informação comercial da Solcor).
+  Um comando administrativo carrega-a (idempotente por nome). Nem todos os sites
+  expõem contactos: 4 ficaram sem alguns campos e 1 (Mauser) sem nenhum, a
+  preencher à mão. Os dados foram lidos automaticamente das páginas e **têm de
+  ser confirmados** antes de os usares (telefones, emails e moradas).
+- **Vocabulário de tipos** proposto (editável): painéis fotovoltaicos,
+  inversores, baterias, estruturas de fixação, carports, material elétrico,
+  quadros elétricos, contadores e medição, carregadores VE, monitorização,
+  betão e pré-fabricados, cabos e acessórios.
 
 ## 8. Ordem de entrega (um PR por linha, CI verde antes de cada merge)
 
@@ -166,6 +179,11 @@ Contacto telefónico (**novo** `phone`) · Email (`email`) · Localização
 | **4** | Calendário de obras: endpoint, página, filtros PM/estado | PR 1 e 3 |
 | **5** | Catálogo real (CLI local) + API + separador "Processo" | — |
 | **6** | Migração do progresso legado (`done`) + atraso no painel | PR 5 e D4 |
+
+**Nota sobre a Bárbara (D5):** por defeito, as etapas dela ficam atribuídas à
+*pessoa* Bárbara Ferreira (responsável por defeito, editável), e não a um papel
+genérico, porque o papel dela mudou. Se preferires um papel dedicado (por
+exemplo "Licenciamento e projeto"), diz-mo.
 
 Os PR 1 e 2 são independentes e pequenos; podem ir primeiro e em paralelo. O
 PR 6 é o mais arriscado e fica no fim de propósito.
