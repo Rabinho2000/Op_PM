@@ -123,6 +123,20 @@ async function authHeaders(): Promise<Record<string, string>> {
   return headers;
 }
 
+// O FastAPI devolve `detail` como texto, ou como lista de erros de validação
+// (`[{ msg: "Value error, Email inválido." }]`): normaliza para uma frase legível.
+export function formatApiDetail(detail: unknown): string | null {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((d) => (d && typeof d === "object" && "msg" in d ? String((d as { msg: unknown }).msg) : null))
+      .filter((m): m is string => Boolean(m))
+      .map((m) => m.replace(/^Value error, /, ""));
+    return messages.length > 0 ? messages.join(" ") : null;
+  }
+  return null;
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   if (res.status === 401 && getActiveMsalAccount() !== null) {
     // O backend recusou o token (ex. revogado, ou utilizador nunca
@@ -135,7 +149,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
     let detail = res.statusText;
     try {
       const body = await res.json();
-      detail = body.detail ?? detail;
+      detail = formatApiDetail(body.detail) ?? detail;
     } catch {
       // corpo não-JSON — mantém statusText
     }
@@ -1359,11 +1373,59 @@ export interface TripPlan extends Omit<RouteOptimization, "stops"> {
 export const planTrip = (stops: { kind: RouteStopKind; id: string }[], roundTrip: boolean) =>
   apiPost<TripPlan>("/api/map/trip-plan", { stops, round_trip: roundTrip });
 
-export const listSuppliers = () => apiGet<MapSupplier[]>("/api/suppliers");
-export const createSupplier = (payload: Partial<MapSupplier> & { name: string }) =>
-  apiPost<MapSupplier>("/api/suppliers", payload);
-export const updateSupplier = (id: string, changes: Partial<MapSupplier>) =>
-  apiPatch<MapSupplier>(`/api/suppliers/${id}`, changes);
+// --- Fornecedores (D-070) ---
+export interface Supplier extends MapSupplier {
+  phone: string | null;
+  website: string | null;
+  notes: string;
+  // Vários tipos por fornecedor, por ordem alfabética.
+  material_types: string[];
+}
+
+export interface SupplierInput {
+  name: string;
+  category: string | null;
+  contact: string | null;
+  phone: string | null;
+  email: string | null;
+  website: string | null;
+  address: string | null;
+  lat: number | null;
+  lon: number | null;
+  is_preferred: boolean;
+  lead_time_days: number | null;
+  materials: string;
+  notes: string;
+  material_types: string[];
+  is_active: boolean;
+}
+
+export interface SupplierMaterialType {
+  id: string;
+  name: string;
+  // Fornecedores ativos com este tipo.
+  active_suppliers: number;
+}
+
+export interface SupplierFilters {
+  q?: string;
+  material_type?: string;
+  is_active?: boolean;
+}
+
+export function listSuppliers(filters: SupplierFilters = {}): Promise<Supplier[]> {
+  const params = new URLSearchParams();
+  if (filters.q) params.set("q", filters.q);
+  if (filters.material_type) params.set("material_type", filters.material_type);
+  if (filters.is_active !== undefined) params.set("is_active", String(filters.is_active));
+  const qs = params.toString();
+  return apiGet<Supplier[]>(`/api/suppliers${qs ? `?${qs}` : ""}`);
+}
+export const listSupplierMaterialTypes = () => apiGet<SupplierMaterialType[]>("/api/suppliers/material-types");
+export const createSupplier = (payload: Partial<SupplierInput> & { name: string }) =>
+  apiPost<Supplier>("/api/suppliers", payload);
+export const updateSupplier = (id: string, changes: Partial<SupplierInput>) =>
+  apiPatch<Supplier>(`/api/suppliers/${id}`, changes);
 
 export const listPickupPoints = () => apiGet<MapPickupPoint[]>("/api/pickup-points");
 export const createPickupPoint = (payload: Partial<MapPickupPoint> & { name: string }) =>

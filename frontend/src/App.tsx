@@ -8,6 +8,7 @@ import { ErrorState, LoadingState } from "./components/ui";
 import Home from "./pages/Home";
 import ImportNotes from "./pages/ImportNotes";
 import Inventory from "./pages/Inventory";
+import Suppliers from "./pages/Suppliers";
 import Login from "./pages/Login";
 import MapPage from "./pages/Map";
 import Performance from "./pages/Performance";
@@ -113,6 +114,7 @@ export default function App() {
           <Route path="/projects/:projectId" element={<ProjectDetail />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/inventory" element={<Inventory />} />
+          <Route path="/suppliers" element={<Suppliers />} />
           <Route path="/map" element={<MapPage />} />
           <Route path="/performance" element={<Performance />} />
           <Route path="/planning" element={<Planning />} />

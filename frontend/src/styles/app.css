@@ -706,6 +706,17 @@ a:hover {
   font-weight: 600;
 }
 
+.chip__remove {
+  margin-left: 6px;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 1.05rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
 .chip:focus-within {
   box-shadow: var(--focus);
 }

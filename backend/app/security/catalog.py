@@ -75,6 +75,7 @@ PERMISSIONS: dict[str, str] = {
     "project.view_communication_data": "Ver dados de comunicação/M2M do projeto (nunca inclui credenciais)",
     "project.edit_communication_data": "Editar dados de comunicação/M2M do projeto",
     "map.view": "Ver o mapa operacional (projetos, fornecedores, recolhas, pendências)",
+    "supplier.view": "Ver a lista de fornecedores (contactos, tipos de material, localização)",
     "supplier.manage": "Criar/editar fornecedores",
     "pickup_point.manage": "Criar/editar pontos de recolha",
     "project_issue.view": "Ver pendências de obra",
@@ -92,6 +93,7 @@ PERMISSIONS: dict[str, str] = {
 ROLE_PERMISSIONS: dict[str, list[str]] = {
     ROLE_ADMIN: list(PERMISSIONS.keys()),
     ROLE_CHEFE_OPERACOES: [
+        "supplier.view",
         "project.view_all",
         "project.edit_all",
         "project.change_status",
@@ -141,6 +143,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "import.licensing",
     ],
     ROLE_PM: [
+        "supplier.view",
         "project.view_own",
         "project.edit_own_progress",
         "project.change_status",

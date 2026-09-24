@@ -2628,3 +2628,63 @@ On hold = 5 + as 2 exceções).
 
 **Fora do âmbito deste PR:** instalador e equipas, datas da obra e calendário
 (PR 3 e 4), fornecedores (PR 2), processo por projeto (PR 5 e 6).
+
+
+## D-070 — Fornecedores: página própria, vários tipos de material e carregamento inicial (PR 2 do plano)
+
+**Decisão:** os fornecedores ganham uma página (`/suppliers`) e um modelo de dados
+à medida do que a Solcor precisa de consultar: **nome, tipos de material
+(vários), telefone, email e localização** (morada, com coordenadas opcionais
+que o mapa já usa). Acrescentam-se também o **site** e umas **notas** (outros
+contactos, lojas).
+
+**Dados (migração `a3f5d81c9e42`):**
+- `suppliers.phone`, `website`, `notes` (novos). `contact` passa a ser a
+  **pessoa de contacto**; o telefone tem campo próprio.
+- Tipos de material: tabela `supplier_material_types` + associação
+  `supplier_material_type_links` (D7: um fornecedor tem vários tipos). Um tipo é
+  identificado pelo nome sem maiúsculas nem acentos (`name_key`), por isso
+  "Inversores" e "inversores" são o mesmo. Tipos novos criam-se ao guardar um
+  fornecedor, sem passar por uma lista fechada.
+- O `category` antigo (um só tipo em texto) passa a tipo de material dos
+  fornecedores que o tinham; o campo mantém-se (nada se perde).
+
+**API:** as rotas de fornecedores saíram de `routes_map.py` para
+`routes_suppliers.py` (mesmos caminhos): `GET /api/suppliers` com `q`,
+`material_type` e `is_active`; `GET /api/suppliers/material-types` (com o número
+de fornecedores ativos de cada tipo); `GET/POST/PATCH`. A pesquisa ignora
+maiúsculas e acentos ("betao" encontra "Betão"). Validação numa só camada
+(email, telefone, site, coordenadas). Nome duplicado (sem distinguir maiúsculas
+nem acentos) → 409. Um fornecedor **nunca se apaga** — desativa-se (há pedidos de
+material ligados). O mapa e os pedidos de material continuam a usar os mesmos
+endpoints, agora com os campos novos.
+
+**Permissões (D9):** `supplier.view` (novo) para Chefe de Operações e PM — quem
+já vê o inventário e os pedidos de material; ver a lista continua permitido a
+quem tem `map.view` (compatibilidade: já a via pelo mapa). Editar continua a ser
+`supplier.manage`.
+
+**Lista inicial (D8):** `python -m app.cli.load_suppliers --file <json> [--dry-run]`.
+É informação comercial da Solcor, por isso **o ficheiro fica fora do
+repositório** e o comando recusa-se a ler um que o Git apanharia. Idempotente
+pelo nome: cria os novos; nos existentes só preenche campos vazios e acrescenta
+tipos em falta — nunca sobrescreve edições feitas na app nem reativa um
+fornecedor desativado. Cada entrada passa pela validação da API; uma inválida é
+reportada e saltada.
+
+**Bases já existentes:** a permissão `supplier.view` chega com o catálogo
+(`provision_staging` em staging, `seed_catalog` em local), como as anteriores.
+
+**Interface:** tabela com pesquisa, filtro por tipo e por situação (ativos por
+omissão), ligações `tel:`/`mailto:`/site e "Ver no mapa" quando há coordenadas;
+criar/editar num diálogo com os tipos como etiquetas (sugestões dos já
+existentes), validação imediata e mensagens de erro legíveis (o cliente HTTP
+passou a formatar as listas de erros de validação do FastAPI).
+
+**Fora do âmbito:** geocodificar moradas (o mapa só mostra fornecedores com
+coordenadas), histórico de alterações de fornecedores, paginação (a lista tem
+dezenas de entradas), importação a partir de Excel.
+
+**Verificado:** 579 testes de backend e 172 Vitest, `tsc` e build; migração para
+cima e para baixo. Contra a base local: 16 fornecedores carregados, segunda
+corrida sem alterações; pesquisa e filtro por tipo conferidos.

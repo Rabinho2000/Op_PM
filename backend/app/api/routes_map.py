@@ -31,8 +31,6 @@ from app.schemas.map import (
     RouteOptimizationRequest,
     RouteOptimizationResponse,
     RouteStopRead,
-    SupplierCreate,
-    SupplierUpdate,
     TripPlanResponse,
 )
 from app.schemas.tasks import TaskRead
@@ -41,7 +39,6 @@ from app.security.permissions import (
     AuthContext,
     can_manage_pickup_points,
     can_manage_project_issue,
-    can_manage_suppliers,
     can_view_map,
     can_view_project_issue,
 )
@@ -155,47 +152,6 @@ def get_map_data_endpoint(
             projects_with_material=summary.projects_with_material,
         ),
     )
-
-
-@router.get("/api/suppliers", response_model=list[MapSupplierRead])
-def list_suppliers_endpoint(
-    db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
-) -> list[MapSupplierRead]:
-    _require_map_view(ctx)
-    suppliers = db.query(Supplier).order_by(Supplier.name).all()
-    return [MapSupplierRead.model_validate(s) for s in suppliers]
-
-
-@router.post("/api/suppliers", response_model=MapSupplierRead, status_code=201)
-def create_supplier_endpoint(
-    body: SupplierCreate, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
-) -> MapSupplierRead:
-    if not can_manage_suppliers(ctx):
-        raise HTTPException(status_code=403, detail="Sem permissão para criar fornecedores.")
-    supplier = Supplier(**body.model_dump())
-    db.add(supplier)
-    db.commit()
-    db.refresh(supplier)
-    return MapSupplierRead.model_validate(supplier)
-
-
-@router.patch("/api/suppliers/{supplier_id}", response_model=MapSupplierRead)
-def update_supplier_endpoint(
-    supplier_id: uuid.UUID,
-    body: SupplierUpdate,
-    db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
-) -> MapSupplierRead:
-    if not can_manage_suppliers(ctx):
-        raise HTTPException(status_code=403, detail="Sem permissão para editar fornecedores.")
-    supplier = db.get(Supplier, supplier_id)
-    if supplier is None:
-        raise HTTPException(status_code=404, detail="Fornecedor não encontrado.")
-    for field_name, value in body.model_dump(exclude_unset=True).items():
-        setattr(supplier, field_name, value)
-    db.commit()
-    db.refresh(supplier)
-    return MapSupplierRead.model_validate(supplier)
 
 
 @router.get("/api/pickup-points", response_model=list[MapPickupPointRead])
