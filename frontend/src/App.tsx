@@ -9,6 +9,7 @@ import Home from "./pages/Home";
 import ImportNotes from "./pages/ImportNotes";
 import Inventory from "./pages/Inventory";
 import Installers from "./pages/Installers";
+import Works from "./pages/Works";
 import Suppliers from "./pages/Suppliers";
 import Login from "./pages/Login";
 import MapPage from "./pages/Map";
@@ -117,6 +118,7 @@ export default function App() {
           <Route path="/inventory" element={<Inventory />} />
           <Route path="/suppliers" element={<Suppliers />} />
           <Route path="/installers" element={<Installers />} />
+          <Route path="/works" element={<Works />} />
           <Route path="/map" element={<MapPage />} />
           <Route path="/performance" element={<Performance />} />
           <Route path="/planning" element={<Planning />} />

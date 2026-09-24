@@ -998,7 +998,8 @@ def seed_installers_and_work_plan(db: Session) -> None:
     plan("%de Demonstração", alfa, equipa1, -3, 9)
     plan("%Início Próximo%", alfa, equipa2, 5, 8)
     plan("%B — Atrasada%", beta, None, -20, 6)
-    plan("%G — Trabalho Urgente%", alfa, equipa1, 12, 6)
+    plan("%F — PM Legado%", beta, None, 8, 5)  # obra de outro PM (sem login): distingue o âmbito do PM Um
+    plan("%G — Trabalho Urgente%", alfa, equipa1, 3, 6)  # sobrepõe-se à de Demonstração (mesma equipa)
     db.flush()
 
 

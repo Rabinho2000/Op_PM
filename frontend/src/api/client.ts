@@ -376,6 +376,62 @@ export const updateInstallerTeam = (
 export const updateProjectWorkPlan = (id: string, plan: WorkPlanInput) =>
   apiPatch<Project>(`/api/projects/${id}/work-plan`, plan);
 
+// --- Calendário de obras (D-072) ---
+export interface WorkItem {
+  project_id: string;
+  name: string;
+  client_name: string | null;
+  pm_person_id: string | null;
+  pm_display_name: string | null;
+  lifecycle_status: string | null;
+  installer_id: string | null;
+  installer_name: string | null;
+  installer_team_id: string | null;
+  installer_team_name: string | null;
+  work_start_date: string;
+  work_end_date: string;
+  work_dates_estimated: boolean;
+  // A mesma equipa tem outra obra sobreposta (só entre preparação e construção).
+  conflict: boolean;
+}
+
+export interface UnscheduledProject {
+  project_id: string;
+  name: string;
+  pm_display_name: string | null;
+  lifecycle_status: string | null;
+  installer_name: string | null;
+  installer_team_name: string | null;
+  work_start_date: string | null;
+  work_end_date: string | null;
+}
+
+export interface WorksCalendar {
+  start: string;
+  end: string;
+  works: WorkItem[];
+  unscheduled: UnscheduledProject[];
+  summary: { works: number; conflicts: number; estimated: number; unscheduled: number };
+}
+
+export interface WorksFilters {
+  from: string;
+  to: string;
+  pm_person_id?: string;
+  lifecycle_status?: string[];
+  installer_id?: string;
+  team_id?: string;
+}
+
+export function getWorksCalendar(filters: WorksFilters): Promise<WorksCalendar> {
+  const params = new URLSearchParams({ from: filters.from, to: filters.to });
+  if (filters.pm_person_id) params.set("pm_person_id", filters.pm_person_id);
+  if (filters.installer_id) params.set("installer_id", filters.installer_id);
+  if (filters.team_id) params.set("team_id", filters.team_id);
+  for (const s of filters.lifecycle_status ?? []) params.append("lifecycle_status", s);
+  return apiGet<WorksCalendar>(`/api/works/calendar?${params.toString()}`);
+}
+
 // --- Estado do ciclo de vida do projeto (D-069) ---
 export interface LifecycleStatus {
   code: string;
