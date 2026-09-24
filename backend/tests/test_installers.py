@@ -499,6 +499,7 @@ def test_project_list_query_count_does_not_grow_with_distinct_installers(db_sess
     projects = db_session.query(Project).all()
     for i, project in enumerate(projects):
         installer = get_or_create_installer(db_session, f"Instalador extra {i}")
+        project.installer_team_id = None  # a equipa antiga é de outro instalador (a chave composta recusa)
         project.installer_id = installer.id
     db_session.flush()
     many = count()
