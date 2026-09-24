@@ -154,12 +154,12 @@ describe("ProjectProcess", () => {
   it("assinala responsáveis por atribuir e a delegação", async () => {
     getProjectProcess.mockResolvedValue(
       process({}, [
-        stage({ id: "a", code: "etapa-05", title: "Suporte", responsible: { rule: "support_delegate", label: "Suporte", names: ["Bárbara"], unresolved: false, delegated: true } }),
+        stage({ id: "a", code: "etapa-05", title: "Suporte", responsible: { rule: "support_delegate", label: "Suporte", names: ["Pessoa de suporte"], unresolved: false, delegated: true } }),
         stage({ id: "b", code: "etapa-14", title: "Acompanhamento", responsible: { rule: "team_leader", label: "Chefe de equipa", names: [], unresolved: true, delegated: false } }),
       ])
     );
     renderWithProviders(<ProjectProcess projectId="p-1" />);
-    expect(await screen.findByText("Suporte: Bárbara")).toBeInTheDocument();
+    expect(await screen.findByText("Suporte: Pessoa de suporte")).toBeInTheDocument();
     expect(screen.getByText("delegado")).toBeInTheDocument();
     expect(screen.getByText("Chefe de equipa — por atribuir")).toHaveClass("text-danger");
   });

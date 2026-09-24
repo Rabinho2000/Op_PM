@@ -359,7 +359,7 @@ do PostgreSQL embebido, porém, falha sempre neste computador com
 `FATAL: invalid byte sequence for encoding "UTF8"`, independentemente do
 diretório de dados escolhido ou de `--locale`/variáveis de ambiente
 `USERNAME` sobrepostas: o binário lê o nome da conta Windows atual
-("Sérgio", com acento) através de uma API que não faz a transcodificação
+("Responsável O&M", com acento) através de uma API que não faz a transcodificação
 correta para UTF-8 antes de o passar ao script de bootstrap SQL — um
 problema conhecido de builds de PostgreSQL para Windows com nomes de
 utilizador não-ASCII, não um problema no código deste repositório.
@@ -2845,6 +2845,15 @@ Ambos recusam um caminho que o Git apanharia. O código, o seed e os testes usam
 **processo sintético com a mesma forma** (`backend/app/migration/synthetic_process.json`, dentro do pacote para seguir na imagem Docker da demonstração:
 mesmas fases, responsáveis, dependências, dias e nº de subtarefas; textos genéricos).
 
+**Sem nomes de pessoas no repositório:** as chaves de responsável do carregador são
+neutras (`comercial`, `sales_support`, `chefe_departamento`, `pm`, `suporte`, `instalador`,
+`chefe_equipa`). Os rótulos do legado que são **nomes de pessoas** traduzem-se com um
+mapeamento **local, fora do Git** (`--responsible-map` do extrator); um rótulo sem tradução é
+um erro que os lista. `scripts/check_no_personal_names.py --names-file <json local>` procura
+uma lista de nomes (também local) nos ficheiros versionados e sai com erro se encontrar algum —
+para correr antes de cada PR. A substituição de nomes só limpa o estado atual: o histórico do
+Git e as mensagens de commit já publicadas mantêm o que lá estava.
+
 **Catálogo:** carga **idempotente por `code`** e sem apagar; valida o ficheiro inteiro
 antes de escrever (responsável ou fase desconhecidos, dependências, contactos, dias…),
 por isso uma carga nunca fica a meio. Códigos: etapa `etapa-NN`, subtarefa
@@ -2856,11 +2865,11 @@ tabela `support_delegations`.
 
 **Responsável por regra (D5):** `WorkflowStage.responsible_rule`, resolvida por projeto:
 - `pm` → o PM do projeto;
-- `support_delegate` (as etapas da Bárbara no legado) → a pessoa de **suporte delegada**
-  para o PM do projeto; sem delegação, o próprio PM. Hoje: Ricardo Louro e Gonçalo
-  Palacino → Bárbara Ferreira; João Fernandes e os outros → eles próprios;
+- `support_delegate` (as etapas da pessoa de Suporte no legado) → a pessoa de **suporte
+  delegada** para o PM do projeto; sem delegação, o próprio PM. Hoje: PM A e PM B → a
+  pessoa de Suporte; PM C e os outros → eles próprios;
 - `installer` (VM) → o instalador da obra; `team_leader` (CE) → o **chefe da equipa
-  atribuída**; `role` (Comercial, Sales Support, "Duarte") → o papel, com o nome de
+  atribuída**; `role` (Comercial, Sales Support, chefe do departamento) → o papel, com o nome de
   quem o tem quando há.
 Um dado em falta (sem PM, instalador, equipa ou chefe) aparece como **"por atribuir"**,
 nunca inventado. As delegações são **dados** (`support_delegations`, sincronizadas de
@@ -2885,9 +2894,9 @@ com estado, responsável, datas, contacto e a lista de subtarefas com quem marco
 Só se pode marcar se o servidor o permitir (`can_update`).
 
 **Em aberto (perguntas para o PR 6 / para si):**
-1. **A etapa "cartão M2M e seguro RC"** também é da Bárbara no legado e foi tratada como as
+1. **A etapa "cartão M2M e seguro RC"** também é da pessoa de Suporte no legado e foi tratada como as
    outras (delegada). Confirma? Foi dito "licenciamentos e projetos eletrotécnicos".
-2. **A Bárbara consegue ver/marcar os projetos do Ricardo e do Gonçalo?** Hoje o âmbito de
+2. **A pessoa de Suporte consegue ver/marcar os projetos do PM A e do PM B?** Hoje o âmbito de
    visibilidade é "todos" ou "os próprios como PM"; uma pessoa de suporte só os veria se o seu
    papel tiver `project.view_all`. Depende do papel que ela tem no Op_PM.
 3. `workflow_progress_percent` (barra da lista de projetos) continua a vir das 5 tarefas
@@ -2898,5 +2907,5 @@ Só se pode marcar se o servidor o permitir (`can_update`).
 
 **Verificado:** 672 testes de backend (45 novos) e 230 Vitest (12 novos), `tsc` e build;
 migração para cima e para baixo. Contra a base local: processo real carregado (6/18/77) e
-recarregado sem alterações; num projeto do Ricardo as etapas de suporte vão para a Bárbara
-(delegado), num do João para o próprio João; marcar/desmarcar testado no browser.
+recarregado sem alterações; num projeto do PM A as etapas de suporte vão para a pessoa de Suporte
+(delegado), num do PM C para o próprio PM C; marcar/desmarcar testado no browser.

@@ -26,17 +26,18 @@ from app.models.people import Person
 from app.models.workflow import Phase, SupportDelegation, WorkflowStage, WorkflowSubtask
 from app.utils.text import normalize_key
 
-# Como cada responsável do legado é resolvido, por projeto (ver app/services/process.py):
+# Como cada responsável é resolvido, por projeto (as chaves são neutras — nunca nomes de
+# pessoas; o extrator traduz os rótulos do legado com um mapeamento local, fora do Git) (ver app/services/process.py):
 # (regra, código do papel, texto a mostrar). Um responsável desconhecido é um erro:
 # nunca se adivinha.
 RESPONSIBLE_RULES: dict[str, tuple[str, str | None, str]] = {
-    "Comercial": ("role", "comercial", "Comercial"),
-    "Sales Support": ("role", "comercial", "Sales Support"),
-    "Duarte": ("role", "chefe_operacoes", "Chefe do departamento"),
-    "PM": ("pm", None, "PM do projeto"),
-    "Bárbara": ("support_delegate", None, "Suporte"),
-    "VM": ("installer", None, "Subempreiteiro"),
-    "CE": ("team_leader", None, "Chefe de equipa"),
+    "comercial": ("role", "comercial", "Comercial"),
+    "sales_support": ("role", "comercial", "Sales Support"),
+    "chefe_departamento": ("role", "chefe_operacoes", "Chefe do departamento"),
+    "pm": ("pm", None, "PM do projeto"),
+    "suporte": ("support_delegate", None, "Suporte"),
+    "instalador": ("installer", None, "Subempreiteiro"),
+    "chefe_equipa": ("team_leader", None, "Chefe de equipa"),
 }
 
 CONTACT_KINDS = ("contacto", "update")
