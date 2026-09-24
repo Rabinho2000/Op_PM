@@ -32,8 +32,8 @@ function stage(overrides: Partial<ProcessStage> = {}): ProcessStage {
     total_count: 2,
     contact: null,
     subtasks: [
-      { id: "sub-1", code: "etapa-01.0", title: "Primeira subtarefa", done: true, done_at: "2026-05-05T10:00:00Z", done_by_display_name: "Chefe" },
-      { id: "sub-2", code: "etapa-01.1", title: "Segunda subtarefa", done: false, done_at: null, done_by_display_name: null },
+      { id: "sub-1", code: "etapa-01.0", title: "Primeira subtarefa", done: true, done_at: "2026-05-05T10:00:00Z", done_by_display_name: "Chefe", source: "ui" },
+      { id: "sub-2", code: "etapa-01.1", title: "Segunda subtarefa", done: false, done_at: null, done_by_display_name: null, source: "ui" },
     ],
     ...overrides,
   };
@@ -82,8 +82,8 @@ describe("ProjectProcess", () => {
     getProjectProcess.mockResolvedValue(
       process({}, [
         stage({ id: "a", code: "etapa-01", title: "Em curso", status: "active" }),
-        stage({ id: "b", code: "etapa-02", title: "Futura", status: "upcoming", subtasks: [{ id: "x", code: "etapa-02.0", title: "Tarefa futura", done: false, done_at: null, done_by_display_name: null }] }),
-        stage({ id: "c", code: "etapa-03", title: "Feita", status: "done", subtasks: [{ id: "y", code: "etapa-03.0", title: "Tarefa feita", done: true, done_at: null, done_by_display_name: null }] }),
+        stage({ id: "b", code: "etapa-02", title: "Futura", status: "upcoming", subtasks: [{ id: "x", code: "etapa-02.0", title: "Tarefa futura", done: false, done_at: null, done_by_display_name: null, source: "ui" }] }),
+        stage({ id: "c", code: "etapa-03", title: "Feita", status: "done", subtasks: [{ id: "y", code: "etapa-03.0", title: "Tarefa feita", done: true, done_at: null, done_by_display_name: null, source: "ui" }] }),
       ])
     );
     renderWithProviders(<ProjectProcess projectId="p-1" />);
@@ -101,8 +101,8 @@ describe("ProjectProcess", () => {
     const updated = process(
       { summary: { done: 2, total: 2, percent: 100, stages_done: 1, stages_total: 1, overdue_stages: 0, overdue_contacts: 0 } },
       [stage({ status: "done", done_count: 2, subtasks: [
-        { id: "sub-1", code: "etapa-01.0", title: "Primeira subtarefa", done: true, done_at: "2026-05-05T10:00:00Z", done_by_display_name: "Chefe" },
-        { id: "sub-2", code: "etapa-01.1", title: "Segunda subtarefa", done: true, done_at: "2026-05-06T09:00:00Z", done_by_display_name: "Ana" },
+        { id: "sub-1", code: "etapa-01.0", title: "Primeira subtarefa", done: true, done_at: "2026-05-05T10:00:00Z", done_by_display_name: "Chefe", source: "ui" },
+        { id: "sub-2", code: "etapa-01.1", title: "Segunda subtarefa", done: true, done_at: "2026-05-06T09:00:00Z", done_by_display_name: "Ana", source: "ui" },
       ] })]
     );
     setProcessSubtaskDone.mockResolvedValue(updated);
@@ -136,7 +136,7 @@ describe("ProjectProcess", () => {
 
   it("mostra o ponto de contacto em atraso e permite marcá-lo", async () => {
     const withContact = stage({
-      contact: { day: 9, kind: "contacto", note: "Apresentação", planned_date: "2026-05-14", done: false, done_at: null, overdue: true },
+      contact: { day: 9, kind: "contacto", note: "Apresentação", planned_date: "2026-05-14", done: false, done_at: null, overdue: true, source: "ui" },
     });
     getProjectProcess.mockResolvedValue(process({ summary: { done: 1, total: 2, percent: 50, stages_done: 0, stages_total: 1, overdue_stages: 0, overdue_contacts: 1 } }, [withContact]));
     setProcessContactDone.mockResolvedValue(process({}, [stage({ contact: { ...withContact.contact!, done: true, overdue: false } })]));
@@ -169,6 +169,25 @@ describe("ProjectProcess", () => {
     renderWithProviders(<ProjectProcess projectId="p-1" />);
     expect(await screen.findByText(/não tem data de início/)).toBeInTheDocument();
     expect(screen.getByText("Sem data")).toBeInTheDocument();
+  });
+
+  it("mostra 'importado do legado' (sem inventar autor nem data) para o progresso vindo do legado", async () => {
+    getProjectProcess.mockResolvedValue(
+      process({}, [
+        stage({
+          contact: { day: 9, kind: "contacto", note: "", planned_date: "2026-05-14", done: true, done_at: null, overdue: false, source: "legacy" },
+          subtasks: [
+            { id: "a", code: "etapa-01.0", title: "Feita no legado", done: true, done_at: null, done_by_display_name: null, source: "legacy" },
+            { id: "b", code: "etapa-01.1", title: "Feita na aplicação", done: true, done_at: "2026-05-06T09:00:00Z", done_by_display_name: "Ana", source: "ui" },
+          ],
+        }),
+      ])
+    );
+    renderWithProviders(<ProjectProcess projectId="p-1" />);
+    await screen.findByText("Feita no legado");
+    expect(screen.getAllByText("importado do legado")).toHaveLength(1);
+    expect(screen.getByText("(importado do legado)")).toBeInTheDocument(); // o contacto
+    expect(screen.getByText(/Ana · 06\/05\/2026/)).toBeInTheDocument();
   });
 
   it("estado vazio quando o catálogo ainda não foi carregado", async () => {

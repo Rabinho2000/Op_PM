@@ -14,6 +14,8 @@ class ProcessSubtaskRead(BaseModel):
     done: bool
     done_at: dt.datetime | None = None
     done_by_display_name: str | None = None
+    # "ui" (marcado na aplicação) ou "legacy" (importado do legado, sem data nem autor).
+    source: str = "ui"
 
 
 class ProcessResponsibleRead(BaseModel):
@@ -37,6 +39,7 @@ class ProcessContactRead(BaseModel):
     done: bool
     done_at: dt.datetime | None = None
     overdue: bool
+    source: str = "ui"
 
 
 class ProcessStageRead(BaseModel):

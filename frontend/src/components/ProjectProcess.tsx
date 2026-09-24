@@ -204,6 +204,7 @@ function StageCard({
                 <strong>{CONTACT_LABELS[stage.contact.kind] ?? stage.contact.kind}</strong>
                 {stage.contact.planned_date && <> até {formatDatePt(stage.contact.planned_date)}</>}
                 {stage.contact.overdue && <Badge tone="danger">por fazer</Badge>}
+                {stage.contact.done && stage.contact.source === "legacy" && <span className="small muted"> (importado do legado)</span>}
                 {stage.contact.note && <span className="muted"> — {stage.contact.note}</span>}
               </span>
             </label>
@@ -220,7 +221,8 @@ function StageCard({
                   />
                   <span className={t.done ? "process__done" : undefined}>{t.title}</span>
                 </label>
-                {t.done && (t.done_by_display_name || t.done_at) && (
+                {t.done && t.source === "legacy" && <span className="small muted">importado do legado</span>}
+                {t.done && t.source !== "legacy" && (t.done_by_display_name || t.done_at) && (
                   <span className="small muted">
                     {t.done_by_display_name ?? ""}
                     {t.done_at ? ` · ${formatDatePt(t.done_at.slice(0, 10))}` : ""}

@@ -21,6 +21,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 from app.audit.log import record_project_change
@@ -146,6 +147,7 @@ def build_project_process(db: Session, project: Project, ctx: AuthContext, today
                         done=done,
                         done_at=progress.done_at if done and progress else None,
                         done_by_display_name=names.get(progress.done_by_person_id) if done and progress and progress.done_by_person_id else None,
+                        source=progress.source if done and progress else "ui",
                     )
                 )
             stage_done = bool(subtasks) and done_count == len(subtasks)
@@ -170,6 +172,7 @@ def build_project_process(db: Session, project: Project, ctx: AuthContext, today
                     done=contact_done,
                     done_at=cp.contact_done_at if contact_done and cp else None,
                     overdue=contact_overdue,
+                    source=cp.source if contact_done and cp else "ui",
                 )
             dep = stage_by_id.get(stage.depends_on_stage_id) if stage.depends_on_stage_id else None
             stage_reads.append(
@@ -224,6 +227,25 @@ def build_project_process(db: Session, project: Project, ctx: AuthContext, today
             overdue_contacts=overdue_contacts,
         ),
     )
+
+
+def progress_percent_by_project(db: Session, project_ids: list[uuid.UUID]) -> dict[uuid.UUID, int] | None:
+    """Percentagem do processo (subtarefas feitas / total do catálogo) de vários projetos, em
+    **duas queries** (nunca uma por projeto). `None` se o catálogo ainda não foi carregado —
+    quem chama usa então a alternativa antiga (as tarefas padrão)."""
+    total = db.query(func.count(WorkflowSubtask.id)).scalar() or 0
+    if total == 0:
+        return None
+    if not project_ids:
+        return {}
+    rows = (
+        db.query(ProjectSubtaskProgress.project_id, func.count(ProjectSubtaskProgress.id))
+        .filter(ProjectSubtaskProgress.project_id.in_(project_ids), ProjectSubtaskProgress.done.is_(True))
+        .group_by(ProjectSubtaskProgress.project_id)
+        .all()
+    )
+    done = dict(rows)
+    return {pid: round(100 * done.get(pid, 0) / total) for pid in project_ids}
 
 
 # --- escrita -----------------------------------------------------------------
