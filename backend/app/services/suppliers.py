@@ -3,24 +3,13 @@ as rotas e o comando de carregamento inicial usam as mesmas funções, por isso
 a normalização de nomes e de tipos é uma só."""
 from __future__ import annotations
 
-import unicodedata
 import uuid
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.supplier import Supplier, SupplierMaterialType, supplier_material_type_links
-
-
-def normalize_key(text: str) -> str:
-    """Minúsculas, sem acentos e com espaços colapsados: "  Estruturas  de
-    Fixação " e "estruturas de fixacao" são o mesmo tipo."""
-    decomposed = unicodedata.normalize("NFKD", " ".join(text.split()).lower())
-    return "".join(c for c in decomposed if not unicodedata.combining(c))
-
-
-def clean_display(text: str) -> str:
-    return " ".join(text.split())
+from app.utils.text import clean_display, normalize_key
 
 
 def get_or_create_material_types(db: Session, names: list[str]) -> list[SupplierMaterialType]:

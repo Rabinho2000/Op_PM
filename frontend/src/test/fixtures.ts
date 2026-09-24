@@ -64,6 +64,11 @@ export function makeProject(overrides: Partial<Project> = {}): Project {
     pm_display_name: "PM Sintético Um",
     start_date: "2026-09-01",
     lifecycle_status: "construcao",
+    installer_id: null,
+    installer_team_id: null,
+    work_start_date: null,
+    work_end_date: null,
+    work_dates_estimated: false,
     clickup_status_mirror: null,
     role: null,
     equipment_notes: null,
@@ -91,6 +96,10 @@ export function makeProject(overrides: Partial<Project> = {}): Project {
     editable_fields: [],
     can_manage_tasks: false,
     can_change_status: false,
+    can_plan_work: false,
+    installer_name: null,
+    installer_team_name: null,
+    installer_team_leader_name: null,
     ...overrides,
   };
 }

@@ -80,6 +80,21 @@ def can_change_project_status(ctx: AuthContext, project: Project) -> bool:
     return ctx.has_permission("project.change_status") and can_view_project(ctx, project)
 
 
+def can_plan_project_work(ctx: AuthContext, project: Project) -> bool:
+    """Instalador, equipa e datas da obra: exige `project.plan_work` e que o
+    projeto seja visível (todos, ou só os próprios como PM)."""
+    return ctx.has_permission("project.plan_work") and can_view_project(ctx, project)
+
+
+def can_view_installers(ctx: AuthContext) -> bool:
+    """Quem consegue ver projetos vê os instaladores (o nome faz parte da obra)."""
+    return ctx.has_permission("project.view_all") or ctx.has_permission("project.view_own")
+
+
+def can_manage_installers(ctx: AuthContext) -> bool:
+    return ctx.has_permission("installer.manage")
+
+
 def can_view_project(ctx: AuthContext, project: Project) -> bool:
     if ctx.has_permission("project.view_all"):
         return True

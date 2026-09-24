@@ -67,6 +67,7 @@ from app.models.task import (
 )
 from app.models.workflow import Phase, WorkflowStage, WorkflowSubtask
 from app.security.catalog import PERMISSIONS, ROLE_PERMISSIONS, ROLES
+from app.models.installer import Installer, InstallerTeam
 from app.services.suppliers import get_or_create_material_types
 from app.services.tasks import ensure_default_tasks_for_project
 from app.utils.timezones import today_lisbon
@@ -967,6 +968,40 @@ def assert_seed_allowed_environment(app_env: str) -> None:
         )
 
 
+def seed_installers_and_work_plan(db: Session) -> None:
+    """Dois instaladores sintéticos (um com duas equipas) e a atribuição a alguns
+    projetos, com datas de obra relativas a hoje — para o calendário de obras
+    ficar demonstrável logo depois do seed."""
+    if db.query(Installer).count() > 0:
+        return
+    alfa = Installer(name="Instalador Sintético Alfa", name_key="instalador sintetico alfa")
+    beta = Installer(name="Instalador Sintético Beta", name_key="instalador sintetico beta")
+    db.add_all([alfa, beta])
+    db.flush()
+    equipa1 = InstallerTeam(installer_id=alfa.id, name="Equipa 1", name_key="equipa 1", leader_name="Chefe Sintético Um", leader_phone="+351 210 000 011")
+    equipa2 = InstallerTeam(installer_id=alfa.id, name="Equipa 2", name_key="equipa 2", leader_name="Chefe Sintético Dois")
+    db.add_all([equipa1, equipa2])
+    db.flush()
+
+    today = today_lisbon()
+
+    def plan(name_like: str, installer, team, start_offset: int, days: int) -> None:
+        project = db.query(Project).filter(Project.name.like(name_like)).first()
+        if project is None:
+            return
+        project.installer_id = installer.id
+        project.installer_team_id = team.id if team else None
+        project.work_start_date = today + dt.timedelta(days=start_offset)
+        project.work_end_date = today + dt.timedelta(days=start_offset + days)
+        project.work_dates_estimated = False
+
+    plan("%de Demonstração", alfa, equipa1, -3, 9)
+    plan("%Início Próximo%", alfa, equipa2, 5, 8)
+    plan("%B — Atrasada%", beta, None, -20, 6)
+    plan("%G — Trabalho Urgente%", alfa, equipa1, 12, 6)
+    db.flush()
+
+
 def run_seed() -> None:
     assert_seed_allowed_environment(get_settings().app_env)
     Base.metadata.create_all(bind=engine)
@@ -976,6 +1011,7 @@ def run_seed() -> None:
         seed_workflow(db)
         seed_people_and_users(db, role_objs)
         seed_sample_projects(db)
+        seed_installers_and_work_plan(db)
         seed_absences(db)
         seed_map_and_inventory(db)
         seed_calendar_events(db)

@@ -267,6 +267,7 @@ export default function ProjectsList() {
                           <span className="cell-sub">
                             {p.client_name ?? "Cliente por identificar"}
                             {p.start_date && ` · início ${formatDatePt(p.start_date)}`}
+                            {p.installer_name && ` · ${p.installer_name}${p.installer_team_name ? ` / ${p.installer_team_name}` : ""}`}
                           </span>
                         </td>
                         <td className="nowrap">

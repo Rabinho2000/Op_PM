@@ -39,6 +39,7 @@ import {
 } from "../api/client";
 import Icon from "../components/Icon";
 import { LifecycleStatusControl, useLifecycleStatuses } from "../components/LifecycleStatus";
+import WorkPlanCard from "../components/WorkPlan";
 import TaskFormModal from "../components/TaskForm";
 import TaskStatusControl, { useTaskStatusChange } from "../components/TaskStatusControl";
 import { useToast } from "../components/Toast";
@@ -820,6 +821,7 @@ export default function ProjectDetail() {
               </dl>
             </Card>
             <div className="grid">
+              <WorkPlanCard project={project} onChanged={setProject} />
               <Card title="Próximo passo" icon="flag" tone="info">
                 {project.next_task_title ? (
                   <>

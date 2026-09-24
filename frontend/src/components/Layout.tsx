@@ -37,6 +37,7 @@ export const NAV_ITEMS: NavItem[] = [
 ];
 
 export const ADMIN_NAV_ITEMS: NavItem[] = [
+  { to: "/installers", label: "Instaladores", icon: "wrench", permission: "installer.manage" },
   { to: "/reconciliation", label: "Reconciliação de PM", icon: "link", permission: "migration.view" },
   { to: "/status", label: "Estado do sistema", icon: "activity" },
 ];
@@ -47,6 +48,7 @@ const PAGE_TITLES: [string, string][] = [
   ["/tasks", "Tarefas"],
   ["/inventory", "Inventário"],
   ["/suppliers", "Fornecedores"],
+  ["/installers", "Instaladores"],
   ["/map", "Mapa"],
   ["/planning", "Planeamento"],
   ["/performance", "Metas e indicadores"],

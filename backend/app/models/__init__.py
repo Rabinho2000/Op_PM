@@ -1,6 +1,7 @@
 """Modelos SQLAlchemy. Importar este pacote garante que todas as tabelas
 estão registadas em `Base.metadata` antes de `create_all`/Alembic correrem.
 """
+from app.models.installer import Installer, InstallerTeam  # noqa: F401
 from app.models.identity import AuthAuditLog, Permission, Role, RolePermission, User, UserRole  # noqa: F401
 from app.models.people import Person  # noqa: F401
 from app.models.workflow import Phase, WorkflowStage, WorkflowSubtask  # noqa: F401

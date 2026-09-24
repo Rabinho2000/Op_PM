@@ -239,6 +239,13 @@ export interface Project {
   start_date: string | null;
   // Estado do ciclo de vida (D-069) — código estável; a lista vem de getLifecycleStatuses().
   lifecycle_status: string | null;
+  // Obra (D-071): instalador, equipa e datas.
+  installer_id: string | null;
+  installer_team_id: string | null;
+  work_start_date: string | null;
+  work_end_date: string | null;
+  // Datas derivadas do modelo do processo e ainda não confirmadas por ninguém.
+  work_dates_estimated: boolean;
   clickup_status_mirror: string | null;
   role: string | null;
   equipment_notes: string | null;
@@ -270,6 +277,10 @@ export interface Project {
   editable_fields: string[];
   can_manage_tasks: boolean;
   can_change_status: boolean;
+  can_plan_work: boolean;
+  installer_name: string | null;
+  installer_team_name: string | null;
+  installer_team_leader_name: string | null;
 }
 
 export type ProjectStatus = Project["status"];
@@ -321,6 +332,49 @@ export const getProject = (id: string) => apiGet<Project>(`/api/projects/${id}`)
 export const updateProject = (id: string, changes: Partial<Project>) =>
   apiPatch<Project>(`/api/projects/${id}`, changes);
 export const getProjectHistory = (id: string) => apiGet<ProjectHistoryEntry[]>(`/api/projects/${id}/history`);
+
+// --- Instaladores, equipas e plano de obra (D-071) ---
+export interface InstallerTeam {
+  id: string;
+  name: string;
+  leader_name: string | null;
+  leader_phone: string | null;
+  is_active: boolean;
+  project_count: number;
+}
+
+export interface Installer {
+  id: string;
+  name: string;
+  is_active: boolean;
+  teams: InstallerTeam[];
+  project_count: number;
+}
+
+export interface WorkPlanInput {
+  installer_id?: string | null;
+  installer_team_id?: string | null;
+  work_start_date?: string | null;
+  work_end_date?: string | null;
+  // Só `false`: confirma as datas atuais (estimadas) sem as alterar.
+  work_dates_estimated?: false;
+}
+
+export const listInstallers = () => apiGet<Installer[]>("/api/installers");
+export const createInstaller = (name: string) => apiPost<Installer>("/api/installers", { name });
+export const updateInstaller = (id: string, changes: { name?: string; is_active?: boolean }) =>
+  apiPatch<Installer>(`/api/installers/${id}`, changes);
+export const createInstallerTeam = (
+  installerId: string,
+  payload: { name: string; leader_name?: string | null; leader_phone?: string | null }
+) => apiPost<Installer>(`/api/installers/${installerId}/teams`, payload);
+export const updateInstallerTeam = (
+  installerId: string,
+  teamId: string,
+  changes: { name?: string; leader_name?: string | null; leader_phone?: string | null; is_active?: boolean }
+) => apiPatch<Installer>(`/api/installers/${installerId}/teams/${teamId}`, changes);
+export const updateProjectWorkPlan = (id: string, plan: WorkPlanInput) =>
+  apiPatch<Project>(`/api/projects/${id}/work-plan`, plan);
 
 // --- Estado do ciclo de vida do projeto (D-069) ---
 export interface LifecycleStatus {
