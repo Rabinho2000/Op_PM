@@ -30,6 +30,7 @@ class MapProjectRead(BaseModel):
     pm_person_id: uuid.UUID | None = None
     pm_display_name: str | None
     status: str
+    lifecycle_status: str | None = None
     lat: float | None
     lon: float | None
     power_kwp: float | None

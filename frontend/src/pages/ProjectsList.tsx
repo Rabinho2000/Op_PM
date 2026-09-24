@@ -11,6 +11,7 @@ import {
   ProjectStatus,
 } from "../api/client";
 import Icon from "../components/Icon";
+import { LifecycleBadge, useLifecycleStatuses } from "../components/LifecycleStatus";
 import { Avatar, Badge, EmptyState, ErrorState, LoadingState, PageHeader, ProgressBar } from "../components/ui";
 import { useSession } from "../session/SessionContext";
 import { formatDatePt, relativeDayLabel, todayIsoLisbon } from "../utils/dates";
@@ -21,13 +22,14 @@ type ActiveFilter = "active" | "inactive" | "all";
 interface Filters {
   search: string;
   status: ProjectStatus | "";
+  lifecycle: string[];
   pm: string;
   active: ActiveFilter;
   startFrom: string;
   startTo: string;
 }
 
-const EMPTY_FILTERS: Filters = { search: "", status: "", pm: "", active: "active", startFrom: "", startTo: "" };
+const EMPTY_FILTERS: Filters = { search: "", status: "", lifecycle: [], pm: "", active: "active", startFrom: "", startTo: "" };
 
 // Todos os filtros são aplicados pelo servidor (GET /api/projects) — a
 // visibilidade (PM só vê os seus) também.
@@ -35,6 +37,7 @@ export function toApiFilters(f: Filters): ProjectFilters {
   return {
     q: f.search.trim() || undefined,
     status: f.status || undefined,
+    lifecycle_status: f.lifecycle.length > 0 ? f.lifecycle : undefined,
     pm_person_id: f.pm || undefined,
     is_active: f.active === "all" ? undefined : f.active === "active",
     start_from: f.startFrom || undefined,
@@ -57,6 +60,7 @@ export default function ProjectsList() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
+  const lifecycleStatuses = useLifecycleStatuses();
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -71,18 +75,20 @@ export default function ProjectsList() {
     return () => window.clearTimeout(handle);
   }, [filters.search]);
 
-  const { status, pm, active, startFrom, startTo } = filters;
+  const { status, lifecycle, pm, active, startFrom, startTo } = filters;
+  const lifecycleKey = lifecycle.join(",");
   useEffect(() => {
     let cancelled = false;
     setError(null);
     setProjects(null);
-    listProjects(toApiFilters({ search: debouncedSearch, status, pm, active, startFrom, startTo }))
+    listProjects(toApiFilters({ search: debouncedSearch, status, lifecycle, pm, active, startFrom, startTo }))
       .then((result) => !cancelled && setProjects(result))
       .catch((e) => !cancelled && setError(e instanceof ApiError ? e.detail : "Não foi possível contactar o servidor."));
     return () => {
       cancelled = true;
     };
-  }, [debouncedSearch, status, pm, active, startFrom, startTo, reloadKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearch, status, lifecycleKey, pm, active, startFrom, startTo, reloadKey]);
 
   const set = <K extends keyof Filters>(key: K, value: Filters[K]) => setFilters((f) => ({ ...f, [key]: value }));
   const hasFilters = JSON.stringify(filters) !== JSON.stringify(EMPTY_FILTERS);
@@ -118,20 +124,45 @@ export default function ProjectsList() {
           </div>
         </div>
         <div className="field">
-          <label htmlFor="f-status">Estado</label>
+          <label htmlFor="f-status">Tarefas</label>
           <select
             id="f-status"
             className="select"
             value={filters.status}
             onChange={(e) => set("status", e.target.value as ProjectStatus | "")}
           >
-            <option value="">Todos os estados</option>
+            <option value="">Todas</option>
             {(Object.keys(PROJECT_STATUS_LABELS) as ProjectStatus[]).map((s) => (
               <option key={s} value={s}>
                 {PROJECT_STATUS_LABELS[s]}
               </option>
             ))}
           </select>
+        </div>
+        <div className="field field--wide" role="group" aria-labelledby="f-lifecycle-label">
+          <span id="f-lifecycle-label" className="field__label">
+            Estado do projeto
+          </span>
+          <div className="chips">
+            {lifecycleStatuses.map((s) => {
+              const checked = filters.lifecycle.includes(s.code);
+              return (
+                <label key={s.code} className={`chip ${checked ? "chip--on" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() =>
+                      set(
+                        "lifecycle",
+                        checked ? filters.lifecycle.filter((c) => c !== s.code) : [...filters.lifecycle, s.code]
+                      )
+                    }
+                  />
+                  {s.label}
+                </label>
+              );
+            })}
+          </div>
         </div>
         <div className="field">
           <label htmlFor="f-pm">PM</label>
@@ -217,7 +248,7 @@ export default function ProjectsList() {
                     <th scope="col" className="col-main">Projeto</th>
                     <th scope="col">PM</th>
                     <th scope="col">Estado</th>
-                    <th scope="col">Progresso</th>
+                    <th scope="col">Tarefas e progresso</th>
                     <th scope="col">Próxima tarefa</th>
                     <th scope="col">Atrasadas</th>
                     <th scope="col">Avisos</th>
@@ -249,9 +280,7 @@ export default function ProjectsList() {
                           )}
                         </td>
                         <td>
-                          <Badge tone={PROJECT_STATUS_TONES[p.status]} dot>
-                            {PROJECT_STATUS_LABELS[p.status]}
-                          </Badge>
+                          <LifecycleBadge status={p.lifecycle_status} statuses={lifecycleStatuses} />
                           {!p.is_active && (
                             <div style={{ marginTop: 4 }}>
                               <Badge>Inativo</Badge>
@@ -259,6 +288,9 @@ export default function ProjectsList() {
                           )}
                         </td>
                         <td style={{ minWidth: 150 }}>
+                          <div style={{ marginBottom: 4 }}>
+                            <Badge tone={PROJECT_STATUS_TONES[p.status]}>{PROJECT_STATUS_LABELS[p.status]}</Badge>
+                          </div>
                           <ProgressBar value={p.workflow_progress_percent} label={`Progresso de ${p.name}`} />
                         </td>
                         <td>

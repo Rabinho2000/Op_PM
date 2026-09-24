@@ -309,6 +309,7 @@ def seed_sample_projects(db: Session) -> None:
 
     demo = Project(
         name="Instalação Sintética de Demonstração",
+        lifecycle_status="construcao",
         client_name="Cliente Sintético",
         client_contact="Contacto Sintético",
         client_email="cliente.sintetico@example.invalid",
@@ -323,6 +324,7 @@ def seed_sample_projects(db: Session) -> None:
 
     incompleta = Project(
         name="Instalação Sintética Incompleta",
+        lifecycle_status="preparacao",
         client_name=None,
         client_contact=None,
         client_email=None,
@@ -338,6 +340,7 @@ def seed_sample_projects(db: Session) -> None:
 
     starting_soon = Project(
         name="Instalação Sintética A — Início Próximo",
+        lifecycle_status="preparacao",
         client_name="Cliente Sintético A",
         client_contact="Contacto Sintético A",
         client_email="cliente.a.sintetico@example.invalid",
@@ -353,6 +356,7 @@ def seed_sample_projects(db: Session) -> None:
 
     overdue_project = Project(
         name="Instalação Sintética B — Atrasada",
+        lifecycle_status="construcao",
         client_name="Cliente Sintético B",
         client_contact="Contacto Sintético B",
         client_email="cliente.b.sintetico@example.invalid",
@@ -368,6 +372,7 @@ def seed_sample_projects(db: Session) -> None:
 
     photos_pending_project = Project(
         name="Instalação Sintética C — Fotos Pendentes",
+        lifecycle_status="construido",
         client_name="Cliente Sintético C",
         client_contact="Contacto Sintético C",
         client_email="cliente.c.sintetico@example.invalid",
@@ -383,6 +388,7 @@ def seed_sample_projects(db: Session) -> None:
 
     missing_pm_project = Project(
         name="Instalação Sintética E — Sem PM Atribuído",
+        lifecycle_status="on_hold_cliente",
         client_name="Cliente Sintético E",
         client_contact="Contacto Sintético E",
         client_email="cliente.e.sintetico@example.invalid",
@@ -398,6 +404,7 @@ def seed_sample_projects(db: Session) -> None:
 
     legacy_pm_project = Project(
         name="Instalação Sintética F — PM Legado",
+        lifecycle_status="entregue_cliente",
         client_name="Cliente Sintético F",
         client_contact="Contacto Sintético F",
         client_email="cliente.f.sintetico@example.invalid",
@@ -413,6 +420,7 @@ def seed_sample_projects(db: Session) -> None:
 
     urgent_project = Project(
         name="Instalação Sintética G — Trabalho Urgente",
+        lifecycle_status="construcao",
         client_name="Cliente Sintético G",
         client_contact="Contacto Sintético G",
         client_email="cliente.g.sintetico@example.invalid",
@@ -428,6 +436,7 @@ def seed_sample_projects(db: Session) -> None:
 
     inactive_project = Project(
         name="Instalação Sintética H — Inativa",
+        lifecycle_status="certificado_final",
         client_name="Cliente Sintético H",
         pm_person_id=None,
         is_active=False,

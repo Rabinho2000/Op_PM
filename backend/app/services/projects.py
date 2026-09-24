@@ -16,7 +16,14 @@ from app.audit.log import record_project_change
 from app.models.project import Project
 from app.models.task import DEFAULT_TASK_TYPES, OPEN_TASK_STATUSES, STATUS_DONE, TASK_TYPE_FOTOS_DRIVE, TASK_TYPES_REQUIRE_PHOTOS, Task
 from app.schemas.projects import ProjectUpdate
-from app.security.permissions import AuthContext, PermissionDenied, can_edit_project, can_view_project
+from app.security.permissions import (
+    AuthContext,
+    PermissionDenied,
+    can_change_project_status,
+    can_edit_project,
+    can_view_project,
+)
+from app.services.project_lifecycle import LIFECYCLE_STATUS_CODES, status_change_warning
 from app.security.project_fields import PM_EDITABLE_PROJECT_FIELDS
 
 _STANDARD_TASK_TYPES = frozenset(code for code, _ in DEFAULT_TASK_TYPES)
@@ -112,8 +119,11 @@ def list_projects(
     search: str | None = None,
     start_from: dt.date | None = None,
     start_to: dt.date | None = None,
+    lifecycle_statuses: list[str] | None = None,
 ) -> list[Project]:
     query = visible_projects_query(db, ctx)
+    if lifecycle_statuses:
+        query = query.filter(Project.lifecycle_status.in_(lifecycle_statuses))
     if pm_person_id is not None:
         query = query.filter(Project.pm_person_id == pm_person_id)
     if is_active is not None:
@@ -200,3 +210,39 @@ def update_project(
     db.commit()
     db.refresh(project)
     return project
+
+
+def change_lifecycle_status(
+    db: Session,
+    *,
+    project: Project,
+    new_status: str,
+    note: str,
+    ctx: AuthContext,
+) -> tuple[Project, str | None]:
+    """Só isto altera `Project.lifecycle_status` a partir da API. Verifica a
+    permissão primeiro, valida o código, escreve uma entrada de
+    `project_history` (quem, quando, de/para, nota) e devolve, além do
+    projeto, um aviso opcional quando a mudança salta estados (D6 — livre, só
+    avisa). Repetir o estado atual é um no-op: sem histórico, sem aviso."""
+    if not can_change_project_status(ctx, project):
+        raise PermissionDenied("project.change_status")
+    if new_status not in LIFECYCLE_STATUS_CODES:
+        raise ValueError(f"Estado de projeto inválido: {new_status!r}")
+    old_status = project.lifecycle_status
+    if old_status == new_status:
+        return project, None
+    record_project_change(
+        db,
+        project_id=project.id,
+        field_name="lifecycle_status",
+        old_value=old_status,
+        new_value=new_status,
+        source="ui",
+        changed_by_person_id=ctx.person_id,
+        note=note.strip() or "Mudança de estado via API.",
+    )
+    project.lifecycle_status = new_status
+    db.commit()
+    db.refresh(project)
+    return project, status_change_warning(old_status, new_status)

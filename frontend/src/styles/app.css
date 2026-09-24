@@ -672,6 +672,44 @@ a:hover {
   flex: 2 1 240px;
 }
 
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 4px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.chip input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  cursor: pointer;
+}
+
+.chip--on {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  color: var(--brand-strong);
+  font-weight: 600;
+}
+
+.chip:focus-within {
+  box-shadow: var(--focus);
+}
+
 .toolbar__end {
   margin-left: auto;
   display: flex;

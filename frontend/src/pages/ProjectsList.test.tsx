@@ -4,17 +4,29 @@ import { makeMe, makeProject } from "../test/fixtures";
 import { renderWithProviders } from "../test/render";
 import ProjectsList, { toApiFilters } from "./ProjectsList";
 
-const { listProjects, listPeople } = vi.hoisted(() => ({ listProjects: vi.fn(), listPeople: vi.fn() }));
+const { listProjects, listPeople, getLifecycleStatuses } = vi.hoisted(() => ({
+  listProjects: vi.fn(),
+  listPeople: vi.fn(),
+  getLifecycleStatuses: vi.fn(),
+}));
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
-  return { ...actual, listProjects, listPeople };
+  return { ...actual, listProjects, listPeople, getLifecycleStatuses };
 });
+
+const LIFECYCLE = [
+  { code: "on_hold_cliente", label: "On hold pelo cliente", flow_position: null },
+  { code: "preparacao", label: "Preparação", flow_position: 1 },
+  { code: "construcao", label: "Construção", flow_position: 2 },
+];
 
 describe("ProjectsList (filtros)", () => {
   beforeEach(() => {
     listProjects.mockReset();
     listPeople.mockReset();
+    getLifecycleStatuses.mockReset();
+    getLifecycleStatuses.mockResolvedValue(LIFECYCLE);
     listPeople.mockResolvedValue([{ id: "p-pm", display_name: "PM Sintético Um", email: null, is_active: true }]);
     listProjects.mockResolvedValue([
       makeProject(),
@@ -47,7 +59,7 @@ describe("ProjectsList (filtros)", () => {
     await screen.findByText("Projeto Sintético Sem PM");
     await screen.findByRole("option", { name: "PM Sintético Um" });
 
-    fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "concluido" } });
+    fireEvent.change(screen.getByLabelText("Tarefas"), { target: { value: "concluido" } });
     fireEvent.change(screen.getByLabelText("PM"), { target: { value: "p-pm" } });
     fireEvent.change(screen.getByLabelText("Início a partir de"), { target: { value: "2026-09-01" } });
     fireEvent.change(screen.getByLabelText("Início até"), { target: { value: "2026-09-30" } });
@@ -61,6 +73,32 @@ describe("ProjectsList (filtros)", () => {
         start_from: "2026-09-01",
         start_to: "2026-09-30",
       })
+    );
+  });
+
+  it("mostra o estado do projeto e filtra por vários estados no servidor", async () => {
+    listProjects.mockResolvedValue([
+      makeProject({ lifecycle_status: "construcao" }),
+      makeProject({ id: "proj-2", name: "Projeto Sintético Sem PM", lifecycle_status: null }),
+    ]);
+    renderWithProviders(<ProjectsList />, { me: makeMe() });
+    await screen.findByText("Projeto Sintético Sem PM");
+
+    // Rótulo vindo do servidor (não do código) e "Sem estado" quando não há.
+    expect(await screen.findAllByText("Construção")).not.toHaveLength(0);
+    expect(screen.getByText("Sem estado")).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByLabelText("On hold pelo cliente"));
+    fireEvent.click(screen.getByLabelText("Preparação"));
+    await waitFor(() =>
+      expect(listProjects).toHaveBeenLastCalledWith(
+        expect.objectContaining({ lifecycle_status: ["on_hold_cliente", "preparacao"] })
+      )
+    );
+
+    fireEvent.click(screen.getByLabelText("On hold pelo cliente"));
+    await waitFor(() =>
+      expect(listProjects).toHaveBeenLastCalledWith(expect.objectContaining({ lifecycle_status: ["preparacao"] }))
     );
   });
 
@@ -85,9 +123,10 @@ describe("ProjectsList (filtros)", () => {
   });
 
   it("toApiFilters traduz 'todos' para ausência de filtro", () => {
-    expect(toApiFilters({ search: "  ", status: "", pm: "", active: "all", startFrom: "", startTo: "" })).toEqual({
+    expect(toApiFilters({ search: "  ", status: "", lifecycle: [], pm: "", active: "all", startFrom: "", startTo: "" })).toEqual({
       q: undefined,
       status: undefined,
+      lifecycle_status: undefined,
       pm_person_id: undefined,
       is_active: undefined,
       start_from: undefined,

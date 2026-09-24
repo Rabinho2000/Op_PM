@@ -10,6 +10,7 @@ function project(overrides: Partial<MapProject> = {}): MapProject {
     pm_person_id: "pm-1",
     pm_display_name: "PM Um",
     status: "em_curso",
+    lifecycle_status: "construcao",
     lat: 1,
     lon: 1,
     power_kwp: null,
@@ -38,6 +39,15 @@ const withMaterial = project({ id: "m", name: "Material", has_material_on_site: 
 const all = [green, yellow, red, withMaterial];
 
 describe("filterMapProjects", () => {
+  it("filtra pelo estado do projeto (ciclo de vida), independente do estado das tarefas", () => {
+    const hold = project({ id: "h", name: "Em espera", lifecycle_status: "on_hold_cliente" });
+    const none = project({ id: "n", name: "Sem estado", lifecycle_status: null });
+    const list = [green, hold, none];
+    expect(filterMapProjects(list, { ...EMPTY_MAP_FILTERS, lifecycle: "on_hold_cliente" })).toEqual([hold]);
+    expect(filterMapProjects(list, { ...EMPTY_MAP_FILTERS, lifecycle: "construcao" })).toEqual([green]);
+    expect(filterMapProjects(list, EMPTY_MAP_FILTERS)).toHaveLength(3);
+  });
+
   it("sem filtros devolve tudo", () => {
     expect(filterMapProjects(all, EMPTY_MAP_FILTERS)).toHaveLength(4);
   });

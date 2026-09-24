@@ -47,6 +47,7 @@ import { useSession } from "../session/SessionContext";
 import { PROJECT_STATUS_LABELS } from "../api/client";
 import { PROJECT_STATUS_TONES } from "../utils/labels";
 import { formatDatePt, formatDateTimePt, lisbonWallClockToIso } from "../utils/dates";
+import { useLifecycleStatuses } from "../components/LifecycleStatus";
 import { canFilterByMaterial, EMPTY_MAP_FILTERS, filterMapProjects, MapFilters } from "../utils/mapFilters";
 
 type LayerKey = "projects" | "suppliers" | "pickups" | "issues";
@@ -670,6 +671,7 @@ export default function MapPage() {
   const [data, setData] = useState<MapData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState<MapFilters>(EMPTY_MAP_FILTERS);
+  const lifecycleStatuses = useLifecycleStatuses();
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>({
     projects: true,
     suppliers: true,
@@ -936,7 +938,18 @@ export default function MapPage() {
           </select>
         </div>
         <div className="field">
-          <label htmlFor="map-status">Estado</label>
+          <label htmlFor="map-lifecycle">Estado do projeto</label>
+          <select id="map-lifecycle" className="select" value={filters.lifecycle} onChange={(e) => setFilters({ ...filters, lifecycle: e.target.value })}>
+            <option value="">Todos</option>
+            {lifecycleStatuses.map((s) => (
+              <option key={s.code} value={s.code}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="map-status">Tarefas</label>
           <select id="map-status" className="select" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
             <option value="">Todos</option>
             {Object.entries(PROJECT_STATUS_LABELS).map(([k, v]) => (

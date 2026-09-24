@@ -26,6 +26,7 @@ PERMISSIONS: dict[str, str] = {
     "project.view_own": "Ver os projetos próprios (como PM)",
     "project.edit_all": "Editar identidade/atribuição de qualquer projeto",
     "project.edit_own_progress": "Editar progresso/checklist dos projetos próprios",
+    "project.change_status": "Alterar o estado do ciclo de vida dos projetos visíveis (todos, ou só os próprios como PM)",
     "cost.view": "Ver custos e margens",
     "cost.edit_estimate": "Editar custo estimado/orçamentado",
     "cost.edit_real": "Editar/importar custo real (normalmente espelhado do Financial)",
@@ -93,6 +94,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
     ROLE_CHEFE_OPERACOES: [
         "project.view_all",
         "project.edit_all",
+        "project.change_status",
         "cost.view",
         "cost.edit_estimate",
         "inventory.view",
@@ -141,6 +143,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
     ROLE_PM: [
         "project.view_own",
         "project.edit_own_progress",
+        "project.change_status",
         "cost.view",
         "inventory.view",
         "material_request.create",

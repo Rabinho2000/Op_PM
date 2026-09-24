@@ -62,6 +62,7 @@ from app.db import new_uuid
 from app.migration.people_reconciliation import classify_pm_name
 from app.models.migration import ImportBatch, StagingProjectRecord
 from app.models.project import Project, ProjectExternalId, ProjectHistory
+from app.services.project_lifecycle import lifecycle_status_from_legacy
 
 SOURCE_LEGACY_JSON = "legacy_json"
 
@@ -76,6 +77,7 @@ _CANONICAL_TEXT_FIELDS = (
     "client_contact",
     "client_email",
     "clickup_status_mirror",
+    "lifecycle_status",
     "role",
     "equipment_notes",
     "injection_notes",
@@ -174,6 +176,9 @@ def _build_canonical_fields(mapped: dict) -> dict:
         "power_raw": str(mapped["power_raw"]) if mapped.get("power_raw") is not None else None,
         "start_date": _parse_legacy_date(mapped.get("start_date_raw")),
         "clickup_status_mirror": mapped.get("clickup_status") or None,
+        # D-069: o estado inicial vem do estado ClickUp do legado; depois disso
+        # o Op_PM é a fonte (ver a promoção: nunca sobrescreve um estado já atribuído).
+        "lifecycle_status": lifecycle_status_from_legacy(mapped.get("clickup_status")),
         "role": mapped.get("role") or None,
         "equipment_notes": mapped.get("equipment_notes") or None,
         "injection_notes": mapped.get("injection_notes") or None,
@@ -673,6 +678,10 @@ def promote_staging_record(
             raise ValueError(f"projeto alvo não encontrado: {target_project_id}")
 
         fields_to_apply = dict(canonical)
+        # O estado do ciclo de vida é do Op_PM (D-069): reimportar nunca
+        # sobrescreve um estado já atribuído; só preenche se estiver vazio.
+        if project.lifecycle_status is not None:
+            fields_to_apply.pop("lifecycle_status", None)
         if pm_person is not None:
             fields_to_apply["pm_person_id"] = pm_person.id
 
