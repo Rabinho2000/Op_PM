@@ -1570,9 +1570,20 @@ export const planTrip = (stops: { kind: RouteStopKind; id: string }[], roundTrip
   apiPost<TripPlan>("/api/map/trip-plan", { stops, round_trip: roundTrip });
 
 // --- Fornecedores (D-070) ---
+export interface SupplierContact {
+  id?: string;
+  name: string;
+  department: string | null;
+  phone: string | null;
+  email: string | null;
+}
+
 export interface Supplier extends MapSupplier {
   phone: string | null;
   website: string | null;
+  // Ligação ao mapa (localização exata) e contactos (pessoas/departamentos) — D-079.
+  maps_url: string | null;
+  contacts: SupplierContact[];
   notes: string;
   // Vários tipos por fornecedor, por ordem alfabética.
   material_types: string[];
@@ -1586,6 +1597,8 @@ export interface SupplierInput {
   email: string | null;
   website: string | null;
   address: string | null;
+  maps_url: string | null;
+  contacts: SupplierContact[];
   lat: number | null;
   lon: number | null;
   is_preferred: boolean;

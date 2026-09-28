@@ -3021,3 +3021,11 @@ restantes já estavam completos; repetição sem alterações. Um projeto entreg
 **Decisão.** A lista (`GET /api/projects`) ordena por estado (On hold, Preparação, Construção, Construído, Entregue, Certificado, sem estado) e, dentro de cada estado, por ordem cronológica de entrada no programa (mais antigo primeiro), com desempate pela data de ligação (`upac_connection_date_raw`, ISO) e depois pelo nome. Nova coluna `projects.entered_at`: projetos novos ficam com o momento da criação; os do legado com a data de início (a do ClickUp), porque o export não traz outra data de criação. A migração `b4d8f2a6c1e3` preenche os existentes (data de início, ou a criação do registo se faltar).
 
 **Consequências.** `entered_at` não é editável nem exposto na API. Se surgir a data de criação real do ClickUp, basta reescrever esta coluna.
+
+## D-079 — Fornecedores: vários contactos e ligação ao mapa
+
+**Contexto.** Um fornecedor tem várias pessoas/departamentos de contacto (ex. Backoffice e Comercial), cada um com telefone e email, e a localização vem de uma ligação do Google Maps. O modelo só tinha uma pessoa, um telefone e um email.
+
+**Decisão.** Nova tabela `supplier_contacts` (nome, departamento opcional, telefone, email, ordem) e coluna `suppliers.maps_url`. A API aceita `contacts` (a lista enviada substitui a anterior; omitida = não mexe) e valida email, telefone e ligação (`http(s)://`). A pesquisa passa a encontrar o fornecedor pelo nome, departamento ou email de um contacto. O formulário edita os contactos em linhas e a lista mostra-os com ligações `tel:`/`mailto:` e "Abrir localização". `contact`/`phone`/`email` do fornecedor mantêm-se (contacto geral).
+
+**Dados reais.** Nomes de pessoas nunca vão para o Git: os contactos indicados pelo utilizador ficam só na base local e em `Downloads/fornecedores_contactos.json`; os testes usam dados sintéticos. Migração `d7a2c5e9b3f1`.

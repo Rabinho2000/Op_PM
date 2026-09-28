@@ -27,6 +27,8 @@ function makeSupplier(overrides: Partial<Supplier> = {}): Supplier {
     email: "info@fornecedor-a.example",
     website: "https://www.fornecedor-a.example/",
     address: "Rua de Lamas 541, Rio Covo",
+    maps_url: null,
+    contacts: [],
     lat: null,
     lon: null,
     is_preferred: false,
@@ -85,6 +87,52 @@ describe("Suppliers (lista)", () => {
     // Sem dados: traço; inativo assinalado; "Ver no mapa" só com coordenadas.
     expect(screen.getByText("Inativo")).toBeInTheDocument();
     expect(screen.getAllByRole("link", { name: "Ver no mapa" })).toHaveLength(1);
+  });
+
+  it("mostra os contactos (pessoa, departamento, telefone, email) e a ligação à localização", async () => {
+    listSuppliers.mockResolvedValue([
+      makeSupplier({
+        maps_url: "https://maps.example.invalid/abc",
+        contacts: [
+          { id: "c-1", name: "Contacto Sintético", department: "Backoffice", phone: "910 000 001", email: "c1@example.invalid" },
+          { id: "c-2", name: "Geral", department: null, phone: "21 931 8046", email: null },
+        ],
+      }),
+    ]);
+    renderWithProviders(<Suppliers />, { me: viewOnly() });
+
+    expect(await screen.findByText("Contacto Sintético")).toBeInTheDocument();
+    expect(screen.getByText(/(Backoffice)/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "910 000 001" })).toHaveAttribute("href", "tel:910000001");
+    expect(screen.getByRole("link", { name: "c1@example.invalid" })).toHaveAttribute("href", "mailto:c1@example.invalid");
+    expect(screen.getByText("Geral")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Abrir localização" })).toHaveAttribute("href", "https://maps.example.invalid/abc");
+  });
+
+  it("edita os contactos e envia a lista completa (valida antes)", async () => {
+    updateSupplier.mockResolvedValue(makeSupplier());
+    renderWithProviders(<Suppliers />, { me: withManage() });
+    await screen.findByText("Fornecedor A");
+
+    fireEvent.click(screen.getAllByRole("button", { name: /Editar Fornecedor A/ })[0]);
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Adicionar contacto" }));
+    fireEvent.change(within(dialog).getByLabelText("Nome do contacto 1"), { target: { value: "Contacto Sintético" } });
+    fireEvent.change(within(dialog).getByLabelText("Email do contacto 1"), { target: { value: "sem-arroba" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Guardar fornecedor" }));
+    expect(await within(dialog).findByText("Contacto 1: o email não parece válido.")).toBeInTheDocument();
+    expect(updateSupplier).not.toHaveBeenCalled();
+
+    fireEvent.change(within(dialog).getByLabelText("Email do contacto 1"), { target: { value: "c1@example.invalid" } });
+    fireEvent.change(within(dialog).getByLabelText("Departamento do contacto 1"), { target: { value: "Comercial" } });
+    fireEvent.change(within(dialog).getByLabelText("Ligação ao mapa (Google Maps…)"), { target: { value: "https://maps.example.invalid/x" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Guardar fornecedor" }));
+
+    await waitFor(() => expect(updateSupplier).toHaveBeenCalled());
+    expect(updateSupplier.mock.calls[0][1]).toMatchObject({
+      maps_url: "https://maps.example.invalid/x",
+      contacts: [{ name: "Contacto Sintético", department: "Comercial", phone: null, email: "c1@example.invalid" }],
+    });
   });
 
   it("carrega só fornecedores ativos por omissão e envia os filtros ao servidor", async () => {
@@ -154,6 +202,8 @@ describe("Suppliers (lista)", () => {
       phone: "210 000 000",
       email: "geral@novaloja.pt",
       address: null,
+      maps_url: null,
+      contacts: [],
       website: null,
       contact: null,
       notes: "",
