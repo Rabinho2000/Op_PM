@@ -49,6 +49,51 @@ def _validate_website(value: str | None) -> str | None:
     return value
 
 
+def _validate_maps_url(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if len(value) > 1024 or " " in value or not re.match(r"^https?://\S+\.\S+", value, flags=re.IGNORECASE):
+        raise ValueError("Ligação ao mapa inválida: tem de começar por http:// ou https://.")
+    return value
+
+
+class SupplierContactRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    department: str | None
+    phone: str | None
+    email: str | None
+
+
+class SupplierContactInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=256)
+    department: OptionalText = Field(default=None, max_length=128)
+    phone: OptionalText = None
+    email: OptionalText = None
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("O nome do contacto é obrigatório.")
+        return value
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, value: str | None) -> str | None:
+        return _validate_email(value)
+
+    @field_validator("phone")
+    @classmethod
+    def _phone(cls, value: str | None) -> str | None:
+        return _validate_phone(value)
+
+
 class SupplierRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -60,6 +105,7 @@ class SupplierRead(BaseModel):
     email: str | None
     website: str | None
     address: str | None
+    maps_url: str | None
     lat: float | None
     lon: float | None
     is_preferred: bool
@@ -68,6 +114,7 @@ class SupplierRead(BaseModel):
     notes: str
     is_active: bool
     material_types: list[str] = []
+    contacts: list[SupplierContactRead] = []
 
     @field_validator("material_types", mode="before")
     @classmethod
@@ -90,6 +137,7 @@ class SupplierBase(BaseModel):
     email: OptionalText = None
     website: OptionalText = None
     address: OptionalText = Field(default=None, max_length=512)
+    maps_url: OptionalText = None
     lat: float | None = Field(default=None, ge=-90, le=90)
     lon: float | None = Field(default=None, ge=-180, le=180)
     is_preferred: bool = False
@@ -97,6 +145,12 @@ class SupplierBase(BaseModel):
     materials: str = ""
     notes: str = ""
     material_types: list[str] = Field(default_factory=list, max_length=30)
+    contacts: list[SupplierContactInput] = Field(default_factory=list, max_length=30)
+
+    @field_validator("maps_url")
+    @classmethod
+    def _maps_url(cls, value: str | None) -> str | None:
+        return _validate_maps_url(value)
 
     @field_validator("email")
     @classmethod
@@ -142,6 +196,7 @@ class SupplierUpdate(SupplierBase):
     materials: str | None = None  # type: ignore[assignment]
     notes: str | None = None  # type: ignore[assignment]
     material_types: list[str] | None = Field(default=None, max_length=30)  # type: ignore[assignment]
+    contacts: list[SupplierContactInput] | None = Field(default=None, max_length=30)  # type: ignore[assignment]
 
     @field_validator("name")
     @classmethod
