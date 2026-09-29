@@ -19,7 +19,15 @@ const api = vi.hoisted(() => ({
   listAbsences: vi.fn(),
   getDashboardSummary: vi.fn(),
   getHealth: vi.fn(),
+  hasActiveSession: vi.fn(() => false),
 }));
+
+const routerNavigate = vi.hoisted(() => vi.fn());
+
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
+  return { ...actual, useNavigate: () => routerNavigate };
+});
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
@@ -48,6 +56,8 @@ function absence(overrides: Partial<Absence> = {}): Absence {
 
 beforeEach(() => {
   Object.values(api).forEach((fn) => fn.mockReset());
+  routerNavigate.mockReset();
+  api.hasActiveSession.mockReturnValue(false);
   api.getProjectHistory.mockResolvedValue([]);
   api.listPeople.mockResolvedValue([]);
   api.listTasks.mockResolvedValue([makeTask()]);
@@ -166,5 +176,20 @@ describe("Login — separação entre demo e login Microsoft", () => {
     expect(await screen.findByText("Este servidor não aceita o modo demonstração.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Chefe de Operações/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Entrar com Microsoft/ })).toBeInTheDocument();
+  });
+
+  it("com sessão já ativa (regresso do login Microsoft) segue para a aplicação", async () => {
+    api.getHealth.mockResolvedValue({ status: "ok", app_env: "local", database_dialect: "sqlite", integrations: {} });
+    api.hasActiveSession.mockReturnValue(true);
+    renderWithProviders(<Login />);
+    await waitFor(() => expect(routerNavigate).toHaveBeenCalledWith("/", { replace: true }));
+  });
+
+  it("não redireciona quando o servidor recusou a sessão (evita ciclo)", async () => {
+    api.getHealth.mockResolvedValue({ status: "ok", app_env: "local", database_dialect: "sqlite", integrations: {} });
+    api.hasActiveSession.mockReturnValue(true);
+    renderWithProviders(<Login />, { route: "/login?sessionExpired=1" });
+    expect(await screen.findByText("A sua sessão expirou. Inicie sessão novamente.")).toBeInTheDocument();
+    expect(routerNavigate).not.toHaveBeenCalled();
   });
 });

@@ -54,7 +54,7 @@ Não é urgente agora, mas convém já pedir ou combinar:
 | Tenant ID | `ENTRA_TENANT_ID` e `VITE_ENTRA_TENANT_ID` |
 | Client ID da API | `ENTRA_CLIENT_ID` |
 | Client ID da SPA | `VITE_ENTRA_CLIENT_ID` |
-| Âmbito completo `api://<client-id-da-API>/access_as_user` | `ENTRA_REQUIRED_SCOPE` e `VITE_ENTRA_API_SCOPE` |
+| Âmbito completo `api://<client-id-da-API>/access_as_user` | `VITE_ENTRA_API_SCOPE` (o backend usa só o nome curto: `ENTRA_REQUIRED_SCOPE=access_as_user`, que é o valor que vem no claim `scp`) |
 
 **Não enviem client secrets por email nem chat.** Para o login não é preciso
 nenhum. Se um dia for preciso (Graph em modo aplicação), combina-se um canal
