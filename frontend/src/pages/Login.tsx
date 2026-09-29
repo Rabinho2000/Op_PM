@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { getHealth, HealthResponse, setDevUser } from "../api/client";
+import { getHealth, HealthResponse, hasActiveSession, setDevUser } from "../api/client";
 import { devLoginEnabled, isEntraConfigured, loginWithMicrosoft } from "../auth/msal";
 import Icon from "../components/Icon";
 import { Alert, Avatar } from "../components/ui";
@@ -60,6 +60,15 @@ export default function Login() {
   const [searchParams] = useSearchParams();
   const sessionExpired = searchParams.get("sessionExpired") === "1";
   const demoUnavailable = searchParams.get("demoUnavailable") === "1";
+
+  // Já com sessão (ex. regresso do login Microsoft a /login, ou utilizador
+  // que abre /login com sessão ativa): segue para a aplicação. Não se aplica
+  // quando o servidor acabou de recusar a sessão (sessionExpired) nem quando
+  // o modo demo foi recusado, para não entrar num ciclo /login ↔ /.
+  const alreadySignedIn = !sessionExpired && !demoUnavailable && hasActiveSession();
+  useEffect(() => {
+    if (alreadySignedIn) navigate("/", { replace: true });
+  }, [alreadySignedIn, navigate]);
 
   useEffect(() => {
     document.title = "Entrar · Solcor Operações";
