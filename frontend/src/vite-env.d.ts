@@ -14,6 +14,9 @@ interface ImportMetaEnv {
   // específico (ver backend/app/config.py).
   readonly VITE_ENTRA_API_SCOPE?: string;
   readonly VITE_ENTRA_REDIRECT_URI?: string;
+  // Instância interna com dados operacionais reais, apesar de manter
+  // DEMO_MODE para desativar integrações externas.
+  readonly VITE_REAL_DATA_INSTANCE?: string;
   // Por omissão: ligado em `vite dev`/testes, desligado num build de
   // produção — só um "true"/"false" explícito aqui substitui essa
   // omissão (ver src/auth/msal.ts:devLoginEnabled).

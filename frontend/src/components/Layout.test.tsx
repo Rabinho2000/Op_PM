@@ -1,4 +1,4 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { HealthResponse } from "../api/client";
 import { COMERCIAL_ME, makeMe } from "../test/fixtures";
@@ -13,6 +13,33 @@ function renderLayout(route: string, me = makeMe(), health: HealthResponse | nul
     { me, route, health }
   );
 }
+
+describe("Layout (barra inferior no telemóvel, D-079)", () => {
+  it("mostra os destinos diários e um botão Mais que abre o menu completo", () => {
+    renderLayout("/tasks");
+    const bottom = within(screen.getByRole("navigation", { name: "Navegação rápida" }));
+    const links = bottom.getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href")]);
+    expect(links).toEqual(
+      expect.arrayContaining([
+        ["Painel", "/"],
+        ["Projetos", "/projects"],
+        ["Tarefas", "/tasks"],
+      ])
+    );
+    expect(bottom.getByRole("link", { name: "Tarefas" })).toHaveAttribute("aria-current", "page");
+    const more = bottom.getByRole("button", { name: "Mais" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(more);
+    expect(more).toHaveAttribute("aria-expanded", "true");
+    expect(document.getElementById("menu-principal")).toHaveClass("open");
+  });
+
+  it("não mostra na barra inferior destinos sem permissão", () => {
+    renderLayout("/", makeMe({ permissions: [] }));
+    const bottom = within(screen.getByRole("navigation", { name: "Navegação rápida" }));
+    expect(bottom.queryByRole("link", { name: "Agenda" })).not.toBeInTheDocument();
+  });
+});
 
 describe("Layout (navegação principal)", () => {
   it("mostra as secções principais com ligações corretas", () => {
@@ -33,8 +60,9 @@ describe("Layout (navegação principal)", () => {
 
   it("assinala a página atual e mostra o título no cabeçalho", () => {
     renderLayout("/tasks");
-    expect(screen.getByRole("link", { name: "Tarefas" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: "Painel" })).not.toHaveAttribute("aria-current");
+    const nav = within(screen.getByRole("navigation", { name: "Navegação principal" }));
+    expect(nav.getByRole("link", { name: "Tarefas" })).toHaveAttribute("aria-current", "page");
+    expect(nav.getByRole("link", { name: "Painel" })).not.toHaveAttribute("aria-current");
     expect(screen.getByRole("banner")).toHaveTextContent("Tarefas");
   });
 

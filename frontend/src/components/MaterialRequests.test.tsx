@@ -234,10 +234,11 @@ describe("Criar pedido de material", () => {
     { id: "proj-1", name: "Instalação Sintética Um" },
     { id: "proj-2", name: "Instalação Sintética Dois" },
   ];
-  const CABLE = { id: "item-1", name: "Cabo solar 6mm", unit: "m" } as InventoryItem;
+  const CABLE = { id: "item-1", name: "Cabo solar 6mm", unit: "m", is_active: true } as InventoryItem;
+  const INACTIVE_CABLE = { id: "item-inactive", name: "Cabo inativo", unit: "m", is_active: false } as InventoryItem;
 
-  function renderCreate() {
-    api.listInventoryItems.mockResolvedValue([CABLE]);
+  function renderCreate(items: InventoryItem[] = [CABLE]) {
+    api.listInventoryItems.mockResolvedValue(items);
     const onDone = vi.fn();
     renderWithProviders(
       <CreateMaterialRequestModal supplierId="sup-1" supplierName="Fornecedor Sintético" projects={PROJECTS} onClose={vi.fn()} onDone={onDone} />,
@@ -245,6 +246,14 @@ describe("Criar pedido de material", () => {
     );
     return { onDone };
   }
+
+  it("mantém artigos ativos e exclui artigos inativos do seletor de material do projeto", async () => {
+    renderCreate([CABLE, INACTIVE_CABLE]);
+    const itemSelector = await screen.findByLabelText("Item da linha 1");
+
+    expect(within(itemSelector).getByRole("option", { name: "Cabo solar 6mm (m)" })).toBeInTheDocument();
+    expect(within(itemSelector).queryByRole("option", { name: "Cabo inativo (m)" })).not.toBeInTheDocument();
+  });
 
   it("exige o projeto e linhas válidas antes de chamar o servidor", async () => {
     renderCreate();

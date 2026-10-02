@@ -4,7 +4,7 @@ import datetime as dt
 import uuid
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class GoalPeriodRead(BaseModel):
@@ -43,7 +43,7 @@ class GoalPeriodCreate(BaseModel):
     semester: int | None = None
     month: int | None = None
     metric: str
-    target_value: Decimal
+    target_value: Decimal = Field(ge=0, max_digits=14, decimal_places=3)
     scope: str = "company"
     pm_person_id: uuid.UUID | None = None
     notes: str = ""
@@ -52,7 +52,7 @@ class GoalPeriodCreate(BaseModel):
 class GoalPeriodUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    target_value: Decimal | None = None
+    target_value: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=3)
     notes: str | None = None
 
 

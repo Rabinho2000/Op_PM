@@ -63,6 +63,7 @@ def _make_engine():
     is_sqlite = url.startswith("sqlite")
     if is_sqlite:
         connect_args["check_same_thread"] = False
+        connect_args["timeout"] = 30.0
         # garante que a pasta ./data existe antes do SQLite tentar abrir o ficheiro
         if ":memory:" not in url:
             from pathlib import Path

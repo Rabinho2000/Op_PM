@@ -1,7 +1,7 @@
 // Separador "Inventário" do detalhe do projeto — material no local, e as
 // ações entregar/recolher (D-064). O servidor continua a validar tudo
 // (recolher mais do que o que está no local, permissões por projeto).
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { InventoryItem, ProjectInventorySummary } from "../api/client";
 import { makeMe, makeProject, makeTask } from "../test/fixtures";
@@ -38,6 +38,14 @@ const PANEL: InventoryItem = {
   total_reserved: "10",
   below_min_stock: false,
 } as InventoryItem;
+
+const INACTIVE_PANEL: InventoryItem = {
+  ...PANEL,
+  id: "item-inactive",
+  sku: "PAINEL-INATIVO",
+  name: "Painel inativo",
+  is_active: false,
+};
 
 function summary(overrides: Partial<ProjectInventorySummary> = {}): ProjectInventorySummary {
   return { project_id: "proj-1", requirements: [], reservations: [], on_site: [], ...overrides };
@@ -106,6 +114,16 @@ describe("Detalhe do projeto — material no local", () => {
       })
     );
     expect(api.collectProjectMaterial).not.toHaveBeenCalled();
+  });
+
+  it("mantém artigos ativos e exclui artigos inativos do seletor de movimentos", async () => {
+    api.listInventoryItems.mockResolvedValue([PANEL, INACTIVE_PANEL]);
+    await openInventoryTab();
+    fireEvent.click(await screen.findByRole("button", { name: /movimento/i }));
+
+    const itemSelector = await screen.findByLabelText("Item *");
+    expect(within(itemSelector).getByRole("option", { name: "Painel 450 W (un)" })).toBeInTheDocument();
+    expect(within(itemSelector).queryByRole("option", { name: "Painel inativo (un)" })).not.toBeInTheDocument();
   });
 
   it("regista uma recolha e mostra o erro do servidor se exceder o que está no local", async () => {

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.schemas.works import UnscheduledProjectRead, WorkItemRead, WorksCalendarRead, WorksSummary
 from app.security.current_user import get_auth_context
-from app.security.permissions import AuthContext, can_view_installers
+from app.security.permissions import AuthContext, can_plan_project_work, can_view_installers
 from app.services.project_lifecycle import LIFECYCLE_STATUS_CODES
 from app.services.works_calendar import WindowError, get_works_calendar
 
@@ -67,6 +67,7 @@ def works_calendar_endpoint(
             work_end_date=e.project.work_end_date,
             work_dates_estimated=e.project.work_dates_estimated,
             conflict=e.conflict,
+            can_plan_work=can_plan_project_work(ctx, e.project),
         )
         for e in calendar.works
     ]

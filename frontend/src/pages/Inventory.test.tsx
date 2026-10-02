@@ -1,7 +1,7 @@
 // Inventário: stock central visível a quem tem inventory.view; "Registar
 // movimento" só a quem tem inventory.manage_central (D-051, mesmo padrão
 // de permissões.test.tsx).
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { InventoryItem, InventoryMovement } from "../api/client";
 import { makeMe } from "../test/fixtures";
@@ -10,8 +10,17 @@ import Inventory from "./Inventory";
 
 const api = vi.hoisted(() => ({
   listInventoryItems: vi.fn(),
+  listInventoryLocations: vi.fn(),
   listInventoryMovements: vi.fn(),
+  reactivateInventoryItem: vi.fn(),
   createCentralMovement: vi.fn(),
+  createInventoryItem: vi.fn(),
+  updateInventoryItem: vi.fn(),
+  deactivateInventoryItem: vi.fn(),
+  createInventoryLocation: vi.fn(),
+  updateInventoryLocation: vi.fn(),
+  deactivateInventoryLocation: vi.fn(),
+  createOpeningStock: vi.fn(),
 }));
 
 vi.mock("../api/client", async () => {
@@ -25,6 +34,7 @@ function item(overrides: Partial<InventoryItem> = {}): InventoryItem {
     sku: "CABO-DC-6MM",
     name: "Cabo solar DC 6mm²",
     unit: "km",
+    category: null,
     min_stock: "10.000",
     preferred_supplier_id: null,
     lead_time_days: null,
@@ -60,7 +70,30 @@ function movement(overrides: Partial<InventoryMovement> = {}): InventoryMovement
 beforeEach(() => {
   Object.values(api).forEach((fn) => fn.mockReset());
   api.listInventoryItems.mockResolvedValue([item()]);
+  api.listInventoryLocations.mockResolvedValue([]);
   api.listInventoryMovements.mockResolvedValue([movement()]);
+  api.createInventoryItem.mockResolvedValue(item());
+  api.updateInventoryItem.mockResolvedValue(item());
+  api.reactivateInventoryItem.mockResolvedValue(item());
+  api.deactivateInventoryItem.mockResolvedValue(item({ is_active: false }));
+  api.createInventoryLocation.mockResolvedValue({
+    id: "location-1",
+    code: "CENTRAL",
+    name: "Armazém central",
+    location_type: "central",
+    project_id: null,
+    is_active: true,
+  });
+  api.updateInventoryLocation.mockResolvedValue({
+    id: "location-1",
+    code: "CENTRAL",
+    name: "Armazém central",
+    location_type: "central",
+    project_id: null,
+    is_active: true,
+  });
+  api.deactivateInventoryLocation.mockResolvedValue({});
+  api.createOpeningStock.mockResolvedValue(movement());
 });
 
 describe("Inventário", () => {
@@ -95,5 +128,53 @@ describe("Inventário", () => {
   it("lista os movimentos recentes", async () => {
     renderWithProviders(<Inventory />, { me: makeMe({ permissions: ["inventory.view"] }) });
     expect(await screen.findByText("Entrada sintética")).toBeInTheDocument();
+  });
+
+  it("oferece criar artigo no estado vazio a quem gere o catálogo", async () => {
+    api.listInventoryItems.mockResolvedValue([]);
+    api.listInventoryMovements.mockResolvedValue([]);
+    renderWithProviders(<Inventory />, {
+      me: makeMe({ permissions: ["inventory.view", "inventory.manage_catalog"] }),
+    });
+    expect(await screen.findByRole("button", { name: /criar artigo/i })).toBeInTheDocument();
+  });
+
+  it("cria um artigo a partir do estado vazio", async () => {
+    api.listInventoryItems.mockResolvedValue([]);
+    api.listInventoryMovements.mockResolvedValue([]);
+    renderWithProviders(<Inventory />, {
+      me: makeMe({ permissions: ["inventory.view", "inventory.manage_catalog"] }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /criar artigo/i }));
+    fireEvent.change(screen.getByLabelText("SKU"), { target: { value: "CAT-NEW" } });
+    fireEvent.change(screen.getByLabelText("Nome"), { target: { value: "Artigo novo" } });
+    fireEvent.change(screen.getByLabelText("Unidade"), { target: { value: "un" } });
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /^criar artigo$/i }));
+    await waitFor(() => expect(api.createInventoryItem).toHaveBeenCalledWith(expect.objectContaining({ sku: "CAT-NEW", name: "Artigo novo" })));
+  });
+
+  it("regista stock inicial pela ação do artigo", async () => {
+    renderWithProviders(<Inventory />, {
+      me: makeMe({ permissions: ["inventory.view", "inventory.manage_central"] }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /stock inicial/i }));
+    fireEvent.change(screen.getByLabelText("Quantidade"), { target: { value: "12.5" } });
+    fireEvent.change(screen.getByLabelText("Referência"), { target: { value: "Inventário físico" } });
+    fireEvent.click(screen.getByRole("button", { name: /registar entrada/i }));
+    await waitFor(() =>
+      expect(api.createOpeningStock).toHaveBeenCalledWith(
+        expect.objectContaining({ item_id: "item-1", quantity: "12.5", reference: "Inventário físico" }),
+      ),
+    );
+  });
+
+  it("oferece reativar artigos inativos e chama o cliente da API", async () => {
+    api.listInventoryItems.mockResolvedValue([item({ is_active: false })]);
+    api.reactivateInventoryItem.mockResolvedValue(item({ is_active: true }));
+    renderWithProviders(<Inventory />, {
+      me: makeMe({ permissions: ["inventory.view", "inventory.manage_catalog"] }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Reativar" }));
+    await waitFor(() => expect(api.reactivateInventoryItem).toHaveBeenCalledWith("item-1"));
   });
 });

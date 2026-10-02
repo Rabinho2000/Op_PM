@@ -1,12 +1,13 @@
 // Estrutura das páginas autenticadas: sidebar de navegação, cabeçalho com
 // o utilizador atual, banner do modo demonstração e área de conteúdo.
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { SolcorLogo } from "./SolcorLogo";
 import { getDevUser, getSessionDisplayName, logoutCurrentSession } from "../api/client";
 import { useSession } from "../session/SessionContext";
 import Icon, { IconName } from "./Icon";
 import { Avatar } from "./ui";
+import { observeTableCardLabels } from "./tableCardLabels";
 
 interface NavItem {
   to: string;
@@ -43,6 +44,12 @@ export const ADMIN_NAV_ITEMS: NavItem[] = [
   { to: "/status", label: "Estado do sistema", icon: "activity" },
 ];
 
+// Barra inferior no telemóvel (D-079): os destinos de uso diário. O resto
+// continua acessível em "Mais", que abre a gaveta com o menu completo.
+export const MOBILE_TAB_PATHS = ["/", "/projects", "/tasks", "/planning"];
+
+const MOBILE_TAB_LABELS: Record<string, string> = { "/planning": "Agenda" };
+
 const PAGE_TITLES: [string, string][] = [
   ["/projects/", "Detalhe do projeto"],
   ["/projects", "Projetos"],
@@ -71,7 +78,14 @@ export default function Layout({ children }: { children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
+  const mainRef = useRef<HTMLElement>(null);
+
   useEffect(() => setMenuOpen(false), [location.pathname]);
+
+  useEffect(() => {
+    if (!mainRef.current) return undefined;
+    return observeTableCardLabels(mainRef.current);
+  }, []);
 
   useEffect(() => {
     document.title = `${pageTitle(location.pathname)} · Solcor Operações`;
@@ -80,6 +94,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   const displayName = me?.display_name ?? getSessionDisplayName() ?? "Utilizador";
   const roleLabel = me?.role_labels?.join(", ") || me?.roles.join(", ") || "";
   const usingDevLogin = getDevUser() !== null;
+  const usesRealOperationalData = import.meta.env.VITE_REAL_DATA_INSTANCE === "true";
   const showDemoBanner = Boolean(health?.demo_mode) || usingDevLogin;
 
   async function handleLogout() {
@@ -106,6 +121,9 @@ export default function Layout({ children }: { children: ReactNode }) {
   };
   const mainItems = NAV_ITEMS.filter(hasNavPermission);
   const adminItems = ADMIN_NAV_ITEMS.filter(hasNavPermission);
+  const mobileTabs = MOBILE_TAB_PATHS.map((path) => mainItems.find((item) => item.to === path)).filter(
+    (item): item is NavItem => Boolean(item),
+  );
 
   return (
     <div className="app-shell">
@@ -128,7 +146,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         </nav>
         <div className="sidebar__footer">
           {health ? `Ambiente: ${health.app_env}` : "Op_PM"}
-          {health?.demo_mode && " · demonstração"}
+          {usesRealOperationalData ? " · dados reais" : health?.demo_mode && " · demonstração"}
         </div>
       </aside>
       <div className={`backdrop ${menuOpen ? "open" : ""}`} onClick={() => setMenuOpen(false)} aria-hidden="true" />
@@ -137,7 +155,9 @@ export default function Layout({ children }: { children: ReactNode }) {
         {showDemoBanner && (
           <div className="demo-banner" role="note">
             <Icon name="info" size={16} />
-            Modo demonstração — todos os dados apresentados são sintéticos. Nenhuma integração externa está ativa.
+            {usesRealOperationalData
+              ? "Instância interna — contém dados operacionais reais. As integrações externas continuam inativas."
+              : "Modo demonstração — todos os dados apresentados são sintéticos. Nenhuma integração externa está ativa."}
           </div>
         )}
         <header className="topbar">
@@ -171,10 +191,29 @@ export default function Layout({ children }: { children: ReactNode }) {
             <Icon name="logout" />
           </button>
         </header>
-        <main id="conteudo" className="content" tabIndex={-1}>
+        <main id="conteudo" className="content" tabIndex={-1} ref={mainRef}>
           {children}
         </main>
       </div>
+
+      <nav className="bottom-nav" aria-label="Navegação rápida">
+        {mobileTabs.map((item) => (
+          <NavLink key={item.to} to={item.to} end={item.end} className="bottom-nav__link">
+            <Icon name={item.icon} size={22} />
+            <span>{MOBILE_TAB_LABELS[item.to] ?? item.label}</span>
+          </NavLink>
+        ))}
+        <button
+          type="button"
+          className={`bottom-nav__link ${menuOpen ? "active" : ""}`}
+          aria-expanded={menuOpen}
+          aria-controls="menu-principal"
+          onClick={() => setMenuOpen((v) => !v)}
+        >
+          <Icon name="menu" size={22} />
+          <span>Mais</span>
+        </button>
+      </nav>
     </div>
   );
 }

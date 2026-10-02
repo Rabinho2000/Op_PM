@@ -65,6 +65,7 @@ PERMISSIONS: dict[str, str] = {
     "absence.manage_own": "Registar/cancelar as próprias férias",
     # --- MVP de Operações (ver docs/PLAN_OPERATIONS_MVP.md) ---
     "inventory.manage_central": "Registar entradas/ajustes no stock físico central (armazém IdealMinde)",
+    "inventory.manage_catalog": "Criar, editar e desativar artigos e localizações de inventário",
     "inventory.allocate_project": "Reservar material do stock central para um projeto",
     "inventory.consume_project": "Consumir material reservado de um projeto",
     "inventory.release_project": "Libertar uma reserva de material de um projeto",
@@ -124,6 +125,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "absence.manage_all",
         # MVP de Operações — Chefe opera qualquer projeto/inventário/mapa.
         "inventory.manage_central",
+        "inventory.manage_catalog",
         "inventory.allocate_project",
         "inventory.consume_project",
         "inventory.release_project",

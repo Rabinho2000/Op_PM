@@ -1,13 +1,14 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Installer, WorkItem, WorksCalendar } from "../api/client";
+import { ApiError, type Installer, type WorkItem, type WorksCalendar } from "../api/client";
 import { makeMe } from "../test/fixtures";
 import { renderWithProviders } from "../test/render";
 import { todayIsoLisbon } from "../utils/dates";
-import { defaultWindow, shiftWindow, totalDays, windowFrom } from "../utils/worksTimeline";
+import { addDays, defaultWindow, shiftWindow, totalDays, windowFrom } from "../utils/worksTimeline";
 import Works from "./Works";
 
-const { getWorksCalendar, listInstallers, listPeople, getLifecycleStatuses } = vi.hoisted(() => ({
+const { getWorksCalendar, listInstallers, listPeople, getLifecycleStatuses, updateProjectWorkPlan } = vi.hoisted(() => ({
+  updateProjectWorkPlan: vi.fn(),
   getWorksCalendar: vi.fn(),
   listInstallers: vi.fn(),
   listPeople: vi.fn(),
@@ -16,8 +17,20 @@ const { getWorksCalendar, listInstallers, listPeople, getLifecycleStatuses } = v
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
-  return { ...actual, getWorksCalendar, listInstallers, listPeople, getLifecycleStatuses };
+  return { ...actual, getWorksCalendar, listInstallers, listPeople, getLifecycleStatuses, updateProjectWorkPlan };
 });
+
+// O jsdom não implementa PointerEvent: sem isto o clientX/clientY dos eventos perdia-se.
+if (typeof window.PointerEvent === "undefined") {
+  class PointerEventPolyfill extends MouseEvent {
+    pointerId: number;
+    constructor(type: string, init: PointerEventInit = {}) {
+      super(type, init);
+      this.pointerId = init.pointerId ?? 1;
+    }
+  }
+  (window as unknown as { PointerEvent: unknown }).PointerEvent = PointerEventPolyfill;
+}
 
 const STATUSES = [
   { code: "on_hold_cliente", label: "On hold pelo cliente", flow_position: null },
@@ -82,7 +95,7 @@ const lastParams = () => getWorksCalendar.mock.calls[getWorksCalendar.mock.calls
 
 describe("Works (calendário de obras)", () => {
   beforeEach(() => {
-    [getWorksCalendar, listInstallers, listPeople, getLifecycleStatuses].forEach((m) => m.mockReset());
+    [getWorksCalendar, listInstallers, listPeople, getLifecycleStatuses, updateProjectWorkPlan].forEach((m) => m.mockReset());
     listInstallers.mockResolvedValue(INSTALLERS);
     listPeople.mockResolvedValue([{ id: "p-pm", display_name: "PM Um", email: null, is_active: true }]);
     getLifecycleStatuses.mockResolvedValue(STATUSES);
@@ -270,5 +283,64 @@ describe("Works (calendário de obras)", () => {
     getWorksCalendar.mockRejectedValueOnce(new actual.ApiError(403, "Sem permissão para ver o calendário de obras."));
     renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
     expect(await screen.findByText("Sem permissão para ver o calendário de obras.")).toBeInTheDocument();
+  });
+
+  describe("arrastar para replanear", () => {
+    const dragBar = (name: string, dx: number) => {
+      const bar = screen.getByRole("link", { name: new RegExp(name) });
+      fireEvent.pointerDown(bar, { button: 0, clientX: 100, clientY: 0, pointerId: 1 });
+      fireEvent.pointerMove(bar, { clientX: 100 + dx, clientY: 0, pointerId: 1 });
+      fireEvent.pointerUp(bar, { clientX: 100 + dx, clientY: 0, pointerId: 1 });
+      return bar;
+    };
+    const withRights = (can: boolean) => {
+      const today = todayIsoLisbon();
+      getWorksCalendar.mockResolvedValue(calendar([work("a", today, today, { name: "Obra Alfa", can_plan_work: can })]));
+    };
+
+    it("grava as novas datas ao largar e oferece Anular", async () => {
+      withRights(true);
+      updateProjectWorkPlan.mockResolvedValue({});
+      renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+      await screen.findByText("Obra Alfa");
+      dragBar("Obra Alfa", 12); // 12 px = 2 dias na escala de meses (6 px/dia)
+      await waitFor(() => expect(updateProjectWorkPlan).toHaveBeenCalledTimes(1));
+      const today = todayIsoLisbon();
+      const [id, body] = updateProjectWorkPlan.mock.calls[0];
+      expect(id).toBe("a");
+      expect(body.work_start_date).toBe(addDays(today, 2));
+      expect(body.work_end_date).toBe(addDays(today, 2));
+      expect(body).not.toHaveProperty("installer_id");
+
+      fireEvent.click(await screen.findByRole("button", { name: "Anular" }));
+      await waitFor(() => expect(updateProjectWorkPlan).toHaveBeenCalledTimes(2));
+      expect(updateProjectWorkPlan.mock.calls[1]).toEqual(["a", { work_start_date: today, work_end_date: today }]);
+    });
+
+    it("um clique sem arrastar não grava nada", async () => {
+      withRights(true);
+      renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+      await screen.findByText("Obra Alfa");
+      dragBar("Obra Alfa", 1);
+      expect(updateProjectWorkPlan).not.toHaveBeenCalled();
+    });
+
+    it("sem permissão para planear a barra não é arrastável", async () => {
+      withRights(false);
+      renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+      await screen.findByText("Obra Alfa");
+      dragBar("Obra Alfa", 30);
+      expect(updateProjectWorkPlan).not.toHaveBeenCalled();
+    });
+
+    it("mostra o erro do servidor e não oferece Anular", async () => {
+      withRights(true);
+      updateProjectWorkPlan.mockRejectedValue(new ApiError(422, "O fim da obra não pode ser anterior ao início."));
+      renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+      await screen.findByText("Obra Alfa");
+      dragBar("Obra Alfa", 30);
+      expect(await screen.findByText("O fim da obra não pode ser anterior ao início.")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Anular" })).toBeNull();
+    });
   });
 });
