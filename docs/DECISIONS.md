@@ -3021,3 +3021,25 @@ restantes já estavam completos; repetição sem alterações. Um projeto entreg
 **Decisão.** A lista (`GET /api/projects`) ordena por estado (On hold, Preparação, Construção, Construído, Entregue, Certificado, sem estado) e, dentro de cada estado, por ordem cronológica de entrada no programa (mais antigo primeiro), com desempate pela data de ligação (`upac_connection_date_raw`, ISO) e depois pelo nome. Nova coluna `projects.entered_at`: projetos novos ficam com o momento da criação; os do legado com a data de início (a do ClickUp), porque o export não traz outra data de criação. A migração `b4d8f2a6c1e3` preenche os existentes (data de início, ou a criação do registo se faltar).
 
 **Consequências.** `entered_at` não é editável nem exposto na API. Se surgir a data de criação real do ClickUp, basta reescrever esta coluna.
+
+## D-078 — Catálogo de inventário e stock inicial append-only
+
+**Decisão.** O catálogo de artigos e localizações é gerido pela permissão
+`inventory.manage_catalog`, provisionada pela migração `8a1d3f4c6b90`. Existe
+exatamente uma localização central ativa; alterações ao catálogo geram histórico
+de auditoria na mesma transação. O stock inicial é registado como movimento
+append-only e aceita replay idempotente através da chave e do fingerprint
+canónico do pedido.
+
+**Consequências.** A localização central é resolvida no servidor e não pode ser
+duplicada ou removida sem manter o invariante. Replays com a mesma chave e
+pedido divergente devolvem conflito; referências entretanto inativas continuam
+a permitir o replay já existente.
+
+**Verificado.** No snapshot final desta fase: SQLite 738 testes de backend passaram e 2 foram ignorados; PostgreSQL 16 passou 737 e ignorou 3 (2 avisos em ambos). O frontend passou 244 testes Vitest em 27 ficheiros; `tsc` e `vite build` concluíram com sucesso. As migrações passaram `upgrade head` → `downgrade -1` → `upgrade head`; lint e diff-check concluíram com sucesso. A execução PostgreSQL cobriu a suite, mas os três testes de concorrência específicos continuam marcados como incompatíveis com o fixture SQLite e não têm equivalente concorrente PostgreSQL neste snapshot.
+
+## D-079 — Uso no telemóvel: barra inferior, tabelas em cartões, instalável
+
+**Decisão.** Otimização simples, sem reescrever páginas: abaixo de 760 px aparece uma barra inferior (Painel, Projetos, Tarefas, Agenda + "Mais", que abre o menu completo; respeita permissões); todas as `.table` passam a cartões só com CSS (o `Layout` copia o nome da coluna para `data-label` com um `MutationObserver`); botões/inputs com ≥ 44 px e inputs a 16 px (sem zoom no iOS); modais em ecrã inteiro com rodapé fixo; planeamento um dia por linha; listas e badges quebram linha. `manifest.webmanifest` + ícones permitem "Adicionar ao ecrã principal" (sem service worker / offline).
+
+**Consequências.** Só frontend; sem API nem migração. Desktop inalterado.

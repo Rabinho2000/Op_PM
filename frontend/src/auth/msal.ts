@@ -108,8 +108,15 @@ export function getActiveMsalAccount(): AccountInfo | null {
 // Authorization Code + PKCE — loginRedirect é o único fluxo interativo do
 // MSAL browser para SPAs (nunca implicit flow). Pede logo o âmbito da API
 // no login, para o primeiro acquireTokenSilent já ter consentimento.
+//
+// redirectStartPage: depois do login, o MSAL navega para esta página (por
+// omissão seria a página onde o botão foi carregado, ou seja /login, o que
+// deixava o utilizador parado no ecrã de login com a sessão já iniciada).
 export function loginWithMicrosoft(): Promise<void> {
-  return msalInstance.loginRedirect({ scopes: apiScopes.length > 0 ? apiScopes : ["User.Read"] });
+  return msalInstance.loginRedirect({
+    scopes: apiScopes.length > 0 ? apiScopes : ["User.Read"],
+    redirectStartPage: `${window.location.origin}/`,
+  });
 }
 
 export function logoutFromMicrosoft(): Promise<void> {

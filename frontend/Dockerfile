@@ -25,6 +25,7 @@ RUN npm ci --no-audit --no-fund
 
 COPY tsconfig.json vite.config.ts index.html ./
 COPY src ./src
+COPY public ./public
 
 ARG VITE_API_BASE_URL
 ARG VITE_ENTRA_CLIENT_ID

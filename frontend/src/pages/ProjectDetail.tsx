@@ -605,7 +605,7 @@ export default function ProjectDetail() {
       .catch(() => setPeople([]));
     if (canViewInventory) {
       listInventoryItems()
-        .then(setInventoryItems)
+        .then((items) => setInventoryItems(items.filter((item) => item.is_active)))
         .catch(() => setInventoryItems([]));
     }
   }, [canViewInventory]);

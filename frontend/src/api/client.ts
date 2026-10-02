@@ -479,6 +479,8 @@ export interface WorkItem {
   work_dates_estimated: boolean;
   // A mesma equipa tem outra obra sobreposta (só entre preparação e construção).
   conflict: boolean;
+  // O utilizador pode alterar o plano desta obra (arrastar no calendário).
+  can_plan_work?: boolean;
 }
 
 export interface UnscheduledProject {
@@ -893,6 +895,7 @@ export interface InventoryItem {
   sku: string;
   name: string;
   unit: string;
+  category: string | null;
   min_stock: string;
   preferred_supplier_id: string | null;
   lead_time_days: number | null;
@@ -904,6 +907,92 @@ export interface InventoryItem {
 }
 
 export const listInventoryItems = () => apiGet<InventoryItem[]>("/api/inventory/items");
+
+export interface InventoryLocation {
+  id: string;
+  code: string;
+  name: string;
+  location_type: "central" | "project" | "vehicle" | "supplier" | "office" | string;
+  project_id: string | null;
+  is_active: boolean;
+}
+
+export interface InventoryCatalogHistoryEntry {
+  id: string;
+  entity_type: "item" | "location" | string;
+  entity_id: string;
+  action: "create" | "edit" | "deactivate" | string;
+  changes: Record<string, unknown>;
+  changed_by_person_id: string | null;
+  changed_by_person_name: string | null;
+  changed_at: string;
+}
+
+export const listInventoryLocations = () => apiGet<InventoryLocation[]>("/api/inventory/locations");
+
+export const listInventoryCatalogHistory = (filters: { entity_id?: string; entity_type?: "item" | "location" } = {}) => {
+  const params = new URLSearchParams();
+  if (filters.entity_id) params.set("entity_id", filters.entity_id);
+  if (filters.entity_type) params.set("entity_type", filters.entity_type);
+  const query = params.toString();
+  return apiGet<InventoryCatalogHistoryEntry[]>(`/api/inventory/catalog-history${query ? `?${query}` : ""}`);
+};
+
+export const createInventoryItem = (payload: {
+  sku: string;
+  name: string;
+  unit: string;
+  min_stock?: string;
+  preferred_supplier_id?: string | null;
+  lead_time_days?: number | null;
+}) => apiPost<InventoryItem>("/api/inventory/items", payload);
+
+export const updateInventoryItem = (
+  id: string,
+  payload: Partial<{
+    sku: string;
+    name: string;
+    unit: string;
+    min_stock: string;
+    preferred_supplier_id: string | null;
+    lead_time_days: number | null;
+    is_active: boolean;
+  }>,
+) => apiPatch<InventoryItem>(`/api/inventory/items/${id}`, payload);
+
+export const reactivateInventoryItem = (id: string) =>
+  apiPatch<InventoryItem>(`/api/inventory/items/${id}`, { is_active: true });
+
+export const deactivateInventoryItem = (id: string) =>
+  apiPost<InventoryItem>(`/api/inventory/items/${id}/deactivate`);
+
+export const createInventoryLocation = (payload: {
+  code: string;
+  name: string;
+  location_type: "central" | "project" | "vehicle" | "supplier" | "office";
+  project_id?: string | null;
+}) => apiPost<InventoryLocation>("/api/inventory/locations", payload);
+
+export const updateInventoryLocation = (
+  id: string,
+  payload: Partial<{
+    code: string;
+    name: string;
+    location_type: "central" | "project" | "vehicle" | "supplier" | "office";
+    project_id: string | null;
+    is_active: boolean;
+  }>,
+) => apiPatch<InventoryLocation>(`/api/inventory/locations/${id}`, payload);
+
+export const deactivateInventoryLocation = (id: string) =>
+  apiPost<InventoryLocation>(`/api/inventory/locations/${id}/deactivate`);
+
+export const createOpeningStock = (payload: {
+  item_id: string;
+  quantity: string;
+  reference: string;
+  idempotency_key: string;
+}) => apiPost<InventoryMovement>("/api/inventory/opening-stock", payload);
 
 // --- Pedidos de material a fornecedores (D-067) ---
 // A máquina de estados vive no servidor: `allowed_actions` diz o que ESTE

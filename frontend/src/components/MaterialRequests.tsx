@@ -86,7 +86,9 @@ export function CreateMaterialRequestModal({
 
   useEffect(() => {
     // Sem inventory.view a lista de itens falha: continua a ser possível pedir por descrição livre.
-    listInventoryItems().then(setItems).catch(() => setItems([]));
+    listInventoryItems()
+      .then((loadedItems) => setItems(loadedItems.filter((item) => item.is_active)))
+      .catch(() => setItems([]));
   }, []);
 
   function setLine(index: number, changes: Partial<LineDraft>) {

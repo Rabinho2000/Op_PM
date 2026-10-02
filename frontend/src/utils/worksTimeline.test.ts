@@ -4,6 +4,7 @@ import {
   addDays,
   addMonths,
   barGeometry,
+  buildPlanChange,
   buildRows,
   dayPosition,
   daysBetween,
@@ -12,6 +13,9 @@ import {
   formatIsoPt,
   monthTicks,
   packLanes,
+  pixelsToDays,
+  rowAtOffset,
+  shiftDates,
   shiftWindow,
   startOfWeek,
   totalDays,
@@ -215,5 +219,66 @@ describe("cabeçalho", () => {
     const ticks = weekTicks({ from: "2026-09-09", to: "2026-09-30" }, 10); // quarta
     expect(ticks.map((t) => t.iso)).toEqual(["2026-09-14", "2026-09-21", "2026-09-28"]);
     expect(ticks[0]).toMatchObject({ left: 50, day: 14 });
+  });
+});
+
+
+describe("arrastar e redimensionar", () => {
+  it("converte píxeis em dias inteiros", () => {
+    expect(pixelsToDays(13, 6)).toBe(2);
+    expect(pixelsToDays(-13, 6)).toBe(-2);
+    expect(pixelsToDays(1, 6)).toBe(0);
+    expect(Object.is(pixelsToDays(-1, 6), 0)).toBe(true);
+  });
+
+  it("mover desloca início e fim e mantém a duração", () => {
+    expect(shiftDates("2026-03-30", "2026-04-02", "move", 3)).toEqual({ start: "2026-04-02", end: "2026-04-05" });
+    expect(shiftDates("2026-03-02", "2026-03-04", "move", -2)).toEqual({ start: "2026-02-28", end: "2026-03-02" });
+  });
+
+  it("redimensionar mexe numa ponta e nunca a passa para o outro lado", () => {
+    expect(shiftDates("2026-05-10", "2026-05-20", "resize-start", 3)).toEqual({ start: "2026-05-13", end: "2026-05-20" });
+    expect(shiftDates("2026-05-10", "2026-05-20", "resize-start", 30)).toEqual({ start: "2026-05-20", end: "2026-05-20" });
+    expect(shiftDates("2026-05-10", "2026-05-20", "resize-end", -4)).toEqual({ start: "2026-05-10", end: "2026-05-16" });
+    expect(shiftDates("2026-05-10", "2026-05-20", "resize-end", -30)).toEqual({ start: "2026-05-10", end: "2026-05-10" });
+  });
+
+  const installers: Installer[] = [
+    {
+      id: "i1",
+      name: "Inst",
+      is_active: true,
+      project_count: 1,
+      teams: [{ id: "t1", name: "Eq 1", leader_name: null, leader_phone: null, is_active: true, project_count: 1 }],
+    },
+  ];
+
+  it("a linha sob uma posição vertical ignora cabeçalhos", () => {
+    const rows = buildRows([work("a", "2026-05-01", "2026-05-02", { installer_id: "i1", installer_team_id: "t1" }), work("b", "2026-05-01", "2026-05-02")], installers);
+    const h = (r: { kind: string }) => (r.kind === "header" ? 30 : 50);
+    expect(rowAtOffset(rows, h, 10)).toBeNull(); // cabeçalho do instalador
+    expect(rowAtOffset(rows, h, 40)?.teamId).toBe("t1");
+    expect(rowAtOffset(rows, h, 100)?.installerId).toBeNull(); // "Sem instalador"
+    expect(rowAtOffset(rows, h, 9999)).toBeNull();
+  });
+
+  it("só envia o que mudou: datas, instalador/equipa, ambos ou nada", () => {
+    const w = work("a", "2026-05-01", "2026-05-05", { installer_id: "i1", installer_team_id: "t1" });
+    const same = { installerId: "i1", teamId: "t1" };
+    expect(buildPlanChange(w, { start: "2026-05-01", end: "2026-05-05" }, same)).toBeNull();
+    expect(buildPlanChange(w, { start: "2026-05-02", end: "2026-05-06" }, same)).toEqual({
+      work_start_date: "2026-05-02",
+      work_end_date: "2026-05-06",
+    });
+    expect(buildPlanChange(w, { start: "2026-05-01", end: "2026-05-05" }, { installerId: null, teamId: null })).toEqual({
+      installer_id: null,
+      installer_team_id: null,
+    });
+    expect(buildPlanChange(w, { start: "2026-05-03", end: "2026-05-05" }, { installerId: "i1", teamId: null })).toEqual({
+      work_start_date: "2026-05-03",
+      work_end_date: "2026-05-05",
+      installer_id: "i1",
+      installer_team_id: null,
+    });
   });
 });
