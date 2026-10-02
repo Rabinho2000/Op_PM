@@ -39,12 +39,13 @@ import {
 } from "../api/client";
 import Icon from "../components/Icon";
 import { LifecycleStatusControl, useLifecycleStatuses } from "../components/LifecycleStatus";
+import PmInlineSelect from "../components/PmInlineSelect";
 import ProjectProcess from "../components/ProjectProcess";
 import WorkPlanCard from "../components/WorkPlan";
 import TaskFormModal from "../components/TaskForm";
 import TaskStatusControl, { useTaskStatusChange } from "../components/TaskStatusControl";
 import { useToast } from "../components/Toast";
-import { Alert, Avatar, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, ProgressBar } from "../components/ui";
+import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, ProgressBar } from "../components/ui";
 import { useSession } from "../session/SessionContext";
 import { formatDatePt, formatDateTimePt, relativeDayLabel, todayIsoLisbon } from "../utils/dates";
 import {
@@ -704,13 +705,7 @@ export default function ProjectDetail() {
           <h1 id="project-title">{project.name}</h1>
           <div className="muted small" style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
             <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-              {project.pm_display_name ? (
-                <>
-                  <Avatar name={project.pm_display_name} small /> PM: {project.pm_display_name}
-                </>
-              ) : (
-                <Badge tone="warning">Sem PM atribuído</Badge>
-              )}
+              <PmInlineSelect project={project} people={people} onChanged={setProject} />
             </span>
             <span>Cliente: {project.client_name ?? "por identificar"}</span>
             <span>Início: {formatDatePt(project.start_date)}</span>
