@@ -3169,3 +3169,21 @@ diferido para não segurar o lock de escrita durante todo o teste.
 Verificado: `tests/test_sqlite_concurrency.py` (3 testes; 2 falham contra o `db.py` anterior);
 suite SQLite 914 passed / 2 skipped; PostgreSQL 913 passed / 3 skipped; concorrência repetida 5×
 sem falhas. Ainda não validado em produção (instância Tailscale não alterada).
+
+## D-088 — Metas anuais não inferem o ano a partir do estado atual
+
+A classificação derivada do portefólio continua a considerar
+`entregue_cliente` e `certificado_final` como `concluido`, mas esse estado atual
+não contém uma data de entrega/conclusão fiável. Por isso, não pode ser usado
+para contar todas essas instalações na meta do ano selecionado: isso colocaria
+instalações antigas no ano corrente.
+
+As metas dependentes de período voltam a contar apenas projetos com tarefa de
+comissionamento concluída (`status == "done"`) e `completed_at` dentro do
+período. O estado final do ciclo de vida só será incluído numa meta temporal
+quando existir uma fonte de verdade para a respetiva data de entrega ou
+certificação. Datas de importação, `updated_at`, `entered_at` ou histórico de
+migração não são substitutos válidos.
+
+Esta decisão supersede a tentativa D-087 de incluir todos os estados finais sem
+filtro temporal, que foi revertida por sobrecontar instalações fora do ano.

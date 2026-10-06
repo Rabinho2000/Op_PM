@@ -4,10 +4,13 @@ Ver app/api/routes_performance.py e app/services/performance.py.
 from __future__ import annotations
 
 import datetime as dt
+from decimal import Decimal
 
 from app.models.people import Person
+from app.models.performance import GoalPeriod
 from app.models.project import Project
 from app.models.task import STATUS_DONE, TASK_TYPE_COMISSIONAMENTO, Task
+from app.services.performance import compute_goal_progress
 
 
 def _headers(email: str) -> dict:
@@ -148,6 +151,29 @@ def test_completed_lifecycle_changes_portfolio_not_historical_yearly_metrics(db_
 
     assert after["portfolio"]["completed"] == before["portfolio"]["completed"] + 1
     assert current_year_after == current_year
+
+
+def test_final_lifecycle_status_without_completion_date_does_not_count_in_goal(db_session):
+    year = dt.date.today().year
+    goal = GoalPeriod(
+        period_type="year",
+        year=year,
+        metric="installations",
+        target_value=Decimal("100"),
+    )
+    before = compute_goal_progress(db_session, goal).realized
+
+    db_session.add(
+        Project(
+            name="Projeto Sintético Certificado Sem Data de Conclusão",
+            lifecycle_status="certificado_final",
+            power_kwp=987.5,
+        )
+    )
+    db_session.flush()
+
+    after = compute_goal_progress(db_session, goal).realized
+    assert after == before
 
 
 def test_pm_sees_own_goals_and_company_wide_goals(db_session, api_client):
