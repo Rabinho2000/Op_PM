@@ -3169,3 +3169,13 @@ diferido para não segurar o lock de escrita durante todo o teste.
 Verificado: `tests/test_sqlite_concurrency.py` (3 testes; 2 falham contra o `db.py` anterior);
 suite SQLite 914 passed / 2 skipped; PostgreSQL 913 passed / 3 skipped; concorrência repetida 5×
 sem falhas. Ainda não validado em produção (instância Tailscale não alterada).
+
+## D-087 — Fornecedores: vários contactos e ligação ao mapa
+
+**Contexto.** Um fornecedor tem várias pessoas/departamentos de contacto (ex. Backoffice e Comercial), cada um com telefone e email, e a localização vem de uma ligação do Google Maps. O modelo só tinha uma pessoa, um telefone e um email.
+
+**Decisão.** Nova tabela `supplier_contacts` (nome, departamento opcional, telefone, email, ordem) e coluna `suppliers.maps_url`. A API aceita `contacts` (a lista enviada substitui a anterior; omitida = não mexe) e valida email, telefone e ligação (`http(s)://`). A pesquisa passa a encontrar o fornecedor pelo nome, departamento ou email de um contacto. O formulário edita os contactos em linhas e a lista mostra-os com ligações `tel:`/`mailto:` e "Abrir localização". `contact`/`phone`/`email` do fornecedor mantêm-se (contacto geral).
+
+**Dados reais.** Nomes de pessoas nunca vão para o Git: os contactos indicados pelo utilizador ficam só na base local e em `Downloads/fornecedores_contactos.json`; os testes usam dados sintéticos. Migração `d7a2c5e9b3f1`.
+
+Verificado: migração up/down/up, suite SQLite e PostgreSQL, tsc/Vitest/build (ver PR). Refeito sobre o main de 2026-10-06 (migração reencadeada sobre `a7c1e5d9f3b2`); originalmente D-079 no #31.
