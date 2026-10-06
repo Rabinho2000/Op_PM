@@ -36,6 +36,62 @@ def test_chefe_can_create_item_with_catalog_permission_without_admin_users(db_se
     assert body["is_active"] is True
 
 
+def test_item_category_is_free_text_optional_and_editable(db_session, api_client):
+    """F1 do backlog: categorias sugeridas no frontend, mas sem enum fechado no
+    servidor — qualquer texto é aceite e pode ser editado ou limpo depois."""
+    without_category = api_client.post(
+        "/api/inventory/items",
+        json={"sku": "CAT-SEM-CATEGORIA", "name": "Sem categoria", "unit": "un"},
+        headers=_headers(),
+    )
+    assert without_category.status_code == 201, without_category.text
+    assert without_category.json()["category"] is None
+
+    with_category = api_client.post(
+        "/api/inventory/items",
+        json={"sku": "CAT-INVERSOR", "name": "Inversor sintético", "unit": "un", "category": "Inversores"},
+        headers=_headers(),
+    )
+    assert with_category.status_code == 201, with_category.text
+    assert with_category.json()["category"] == "Inversores"
+
+    custom_category = api_client.post(
+        "/api/inventory/items",
+        json={"sku": "CAT-NOVA", "name": "Categoria nova", "unit": "un", "category": "Ferramentas"},
+        headers=_headers(),
+    )
+    assert custom_category.status_code == 201, custom_category.text
+    assert custom_category.json()["category"] == "Ferramentas"
+
+    item_id = with_category.json()["id"]
+    cleared = api_client.patch(
+        f"/api/inventory/items/{item_id}",
+        json={"category": None},
+        headers=_headers(),
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["category"] is None
+
+
+def test_office_is_a_valid_location_type(db_session, api_client):
+    """F3 do backlog: o escritório é uma localização de material como as
+    outras (central/project/vehicle/supplier), sem singularidade imposta."""
+    office = api_client.post(
+        "/api/inventory/locations",
+        json={"code": "ESCRITORIO-1", "name": "Escritório", "location_type": "office"},
+        headers=_headers(),
+    )
+    assert office.status_code == 201, office.text
+    assert office.json()["location_type"] == "office"
+
+    second_office = api_client.post(
+        "/api/inventory/locations",
+        json={"code": "ESCRITORIO-2", "name": "Segundo escritório", "location_type": "office"},
+        headers=_headers(),
+    )
+    assert second_office.status_code == 201, second_office.text
+
+
 def test_chefe_can_edit_and_deactivate_item_with_append_only_history(db_session, api_client):
     create = api_client.post(
         "/api/inventory/items",
