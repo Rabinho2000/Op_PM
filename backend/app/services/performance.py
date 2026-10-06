@@ -2,18 +2,25 @@
 áreas separadas de menu). Todo o cálculo aqui, nunca no frontend a partir
 de listas completas (mesma regra já aplicada ao dashboard, D-041).
 
-Para metas históricas dependentes de datas e para os indicadores anuais
-(`yearly`) de instalações e kWp, uma instalação só conta como concluída
-quando a tarefa padrão de comissionamento (`Task.task_type ==
-TASK_TYPE_COMISSIONAMENTO`) está `done`, na data em que `Task.completed_at`
-ficou preenchido. Um `lifecycle_status` final não cria nem substitui esse
-evento histórico.
+Para as metas de `installations`, `projects_completed`, `kwp`,
+`power_installed` e `power_delivered`, o realizado é a união deduplicada por
+`Project.id` de (a) tarefas padrão de comissionamento concluídas (`done`) com
+`completed_at` dentro do período selecionado e (b) todos os projetos cujo
+`lifecycle_status` atual é `entregue_cliente` ou `certificado_final`. A fonte
+(b) é deliberadamente não temporal: a base não tem datas de conclusão fiáveis
+para todos esses projetos, por isso nenhum evento histórico é fabricado.
+
+Para os indicadores anuais (`yearly`) de instalações e kWp, uma instalação só
+conta como concluída quando a tarefa padrão de comissionamento
+(`Task.task_type == TASK_TYPE_COMISSIONAMENTO`) está `done`, na data em que
+`Task.completed_at` ficou preenchido. Esses indicadores continuam
+exclusivamente baseados em datas, tal como `projects_certified`, que usa
+`ProjectLicensingData.certificate_date`.
 
 No estado derivado do portefólio, `compute_project_task_summary` também
 classifica como `concluido` os projetos com `lifecycle_status` igual a
 `entregue_cliente` ou `certificado_final`, mesmo com a checklist incompleta,
-conforme D-085. Essa classificação não altera as métricas históricas baseadas
-em tarefas de comissionamento e `completed_at`.
+conforme D-085.
 """
 from __future__ import annotations
 
@@ -29,6 +36,7 @@ from app.models.project import Project
 from app.models.project_data import ProjectLicensingData
 from app.models.task import STATUS_DONE, TASK_TYPE_COMISSIONAMENTO, Task
 from app.security.permissions import AuthContext
+from app.services.project_lifecycle import COMPLETED_LIFECYCLE_STATUSES
 
 ZERO = Decimal("0")
 
@@ -87,14 +95,35 @@ def _completed_projects_query(db: Session, *, start: dt.date, end: dt.date, pm_p
     ]
 
 
+def _goal_realized_projects(
+    db: Session, *, start: dt.date, end: dt.date, pm_person_id: uuid.UUID | None
+) -> list[Project]:
+    """Projetos realizados nas metas, por tarefa datada ou estado final.
+
+    O dicionário torna explícita a deduplicação por `Project.id`: um projeto
+    pode satisfazer as duas fontes, ou ter mais de uma tarefa de
+    comissionamento concluída.
+    """
+    projects_by_id = {
+        project.id: project
+        for _, project in _completed_projects_query(db, start=start, end=end, pm_person_id=pm_person_id)
+    }
+    lifecycle_query = db.query(Project).filter(Project.lifecycle_status.in_(COMPLETED_LIFECYCLE_STATUSES))
+    if pm_person_id is not None:
+        lifecycle_query = lifecycle_query.filter(Project.pm_person_id == pm_person_id)
+    for project in lifecycle_query.all():
+        projects_by_id[project.id] = project
+    return list(projects_by_id.values())
+
+
 def _realized_value(
     db: Session, *, metric: str, start: dt.date, end: dt.date, pm_person_id: uuid.UUID | None
 ) -> Decimal:
     if metric in ("installations", "projects_completed"):
-        return Decimal(len(_completed_projects_query(db, start=start, end=end, pm_person_id=pm_person_id)))
+        return Decimal(len(_goal_realized_projects(db, start=start, end=end, pm_person_id=pm_person_id)))
     if metric in ("kwp", "power_installed", "power_delivered"):
-        rows = _completed_projects_query(db, start=start, end=end, pm_person_id=pm_person_id)
-        total = sum((Decimal(str(project.power_kwp)) for _, project in rows if project.power_kwp), start=ZERO)
+        projects = _goal_realized_projects(db, start=start, end=end, pm_person_id=pm_person_id)
+        total = sum((Decimal(str(project.power_kwp)) for project in projects if project.power_kwp), start=ZERO)
         return total
     if metric == "projects_certified":
         query = (

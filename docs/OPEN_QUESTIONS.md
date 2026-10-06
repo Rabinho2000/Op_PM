@@ -491,10 +491,13 @@ produção real vs. potência nominal instalada).
 (ex. `power_delivered` vir de `ProjectLicensingData.annual_production_kwh`
 em vez de `Project.power_kwp`).
 
-**Decisão assumida:** todas usam hoje o mesmo cálculo (potência nominal
-dos projetos com comissionamento concluído no período) — ver
-`docs/PERFORMANCE_METRICS.md`. Revisível numa função isolada
-(`app/services/performance.py:_realized_value`) quando confirmado.
+**Decisão assumida:** todas usam hoje a mesma base de realização: a união
+(sem duplicados) dos projetos com comissionamento concluído no período e dos
+projetos atualmente em estado final (`entregue_cliente` ou
+`certificado_final`). A potência nominal vem de `Project.power_kwp` — ver
+`docs/PERFORMANCE_METRICS.md`. A distinção entre as métricas é revisível numa
+função isolada (`app/services/performance.py:_realized_value`) quando houver
+fontes específicas confirmadas.
 
 ### 32. UI do mapa, calendário, e das tabs de dados de projeto — **RESOLVIDA**
 
