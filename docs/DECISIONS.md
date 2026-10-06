@@ -3169,25 +3169,3 @@ diferido para não segurar o lock de escrita durante todo o teste.
 Verificado: `tests/test_sqlite_concurrency.py` (3 testes; 2 falham contra o `db.py` anterior);
 suite SQLite 914 passed / 2 skipped; PostgreSQL 913 passed / 3 skipped; concorrência repetida 5×
 sem falhas. Ainda não validado em produção (instância Tailscale não alterada).
-
-## D-087 — Metas: estados finais contam sem filtro temporal
-
-Para as metas `installations`, `projects_completed`, `kwp`, `power_installed` e
-`power_delivered`, o realizado passa a ser a união deduplicada por `Project.id`
-de duas fontes: tarefas de comissionamento concluídas com `completed_at` dentro
-do período selecionado e todos os projetos cujo `lifecycle_status` atual seja
-`entregue_cliente` ou `certificado_final`. A segunda fonte é filtrada por
-`Project.pm_person_id` nas metas de PM, tal como a primeira.
-
-A inclusão dos estados finais é deliberadamente não temporal. A base não tem
-datas de conclusão fiáveis para todos esses projetos; atribuir-lhes uma data ou
-um período inventaria um facto histórico e faria os indicadores parecerem mais
-precisos do que os dados permitem. Por isso, esses projetos contam nas metas
-independentemente do período selecionado, enquanto `yearly` continua baseado
-em `Task.completed_at` e `projects_certified` continua baseado em
-`ProjectLicensingData.certificate_date`. Quando as duas fontes apontam para o
-mesmo projeto, conta-se uma vez e a potência soma-se uma vez.
-
-Verificado: testes focados cobrem os dois estados finais fora do período,
-potência, deduplicação, PM scoping e a preservação da regra de
-`projects_certified`.

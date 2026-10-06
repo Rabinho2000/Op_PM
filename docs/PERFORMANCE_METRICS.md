@@ -9,39 +9,22 @@ O menu tem só **"Metas e indicadores"** (`/performance`) — nunca "Metas" e
 ser o painel operacional do dia a dia (Fase 1.5); esta página é sobre
 objetivos e progresso ao longo do tempo.
 
-## Regras de conclusão: metas, indicadores históricos e estado derivado
+## Regras de conclusão: métricas históricas e estado derivado
 
-Há três regras complementares, consoante o indicador:
+Há duas regras complementares, consoante o indicador:
 
-- **Metas de `installations`, `projects_completed`, `kwp`,
-  `power_installed` e `power_delivered`:** o realizado é a união deduplicada
-  por `Project.id` de (a) projetos com uma `Task` de comissionamento (`task_type
-  == "comissionamento"`, `status == "done"`) cujo `completed_at` está dentro
-  do período selecionado e (b) todos os projetos cujo `lifecycle_status` atual
-  é `entregue_cliente` ou `certificado_final`. A fonte (b) conta em qualquer
-  período, mesmo quando não existe tarefa datada no período, e é filtrada pelo
-  `Project.pm_person_id` quando a meta é de um PM.
-- **Indicadores anuais (`yearly`) de instalações e kWp:** uma instalação só
-  conta como concluída quando existe uma `Task` de comissionamento concluída,
-  na data em que `completed_at` ficou preenchido. `lifecycle_status` não cria
-  nem substitui um evento histórico nesta série.
-- **`projects_certified`:** conta exclusivamente
-  `ProjectLicensingData.certificate_date` dentro do período; o estado final do
-  ciclo de vida não substitui essa data.
-
-A inclusão não temporal dos estados finais nas metas é deliberada: a base não
-possui datas de conclusão fiáveis para todos esses projetos. Não se inventa
-uma data nem se atribui o projeto a um período histórico; apenas se reflete o
-estado atual nas metas. A deduplicação evita contar duas vezes um projeto que
-tenha simultaneamente comissionamento datado no período e estado final.
-
+- **Metas históricas dependentes de datas e indicadores anuais (`yearly`) de
+  instalações e kWp:** uma instalação só conta como concluída quando existe
+  uma `Task` com `task_type == "comissionamento"` e `status == "done"`, na data
+  em que `completed_at` ficou preenchido. `lifecycle_status` não cria um
+  evento histórico nem substitui `completed_at`.
 - **Estado derivado do portefólio:** `compute_project_task_summary` também
   classifica como `concluido` um projeto cujo `lifecycle_status` seja
   `entregue_cliente` ou `certificado_final`, mesmo que a checklist de tarefas
-  esteja incompleta, conforme D-085. Esta regra é independente das métricas
-  acima.
+  esteja incompleta, conforme D-085. Esta regra altera a classificação
+  derivada usada no portefólio, não as métricas históricas baseadas em datas.
 
-A regra dos indicadores históricos é reaproveitada tal e qual do dashboard
+A regra das métricas históricas é reaproveitada tal e qual do dashboard
 (`app/services/dashboard.py`) — nunca uma segunda definição divergente. Se o
 negócio confirmar uma fonte mais adequada (ex. `ProjectLicensingData.certificate_date`),
 rever aqui e em `app/services/performance.py:_realized_value` ao mesmo tempo,
@@ -51,8 +34,8 @@ nunca só num dos dois sítios.
 
 | Código | Cálculo |
 |---|---|
-| `installations` / `projects_completed` | Contagem da união de projetos com comissionamento concluído no período e projetos atualmente em estado final (`entregue_cliente`/`certificado_final`), deduplicada por projeto |
-| `kwp` / `power_installed` / `power_delivered` | Soma de `Project.power_kwp` dessa mesma união de projetos (as três métricas produzem hoje o mesmo valor — ver nota) |
+| `installations` / `projects_completed` | Contagem de projetos com comissionamento concluído no período (mesmo cálculo para as duas — ver nota abaixo) |
+| `kwp` / `power_installed` / `power_delivered` | Soma de `Project.power_kwp` desses mesmos projetos (as três métricas produzem hoje o mesmo valor — ver nota) |
 | `projects_certified` | Contagem de `ProjectLicensingData.certificate_date` dentro do período |
 
 **Nota sobre métricas equivalentes:** o pedido original lista
