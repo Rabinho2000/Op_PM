@@ -3148,3 +3148,24 @@ do período; mudar o estado do ciclo de vida não inventa um evento histórico.
 `backend/tests/test_map_api.py` e `backend/tests/test_performance_api.py` cobrem
 os dois estados finais, a preservação dos indicadores de trabalho e a ausência
 de alteração nas métricas históricas baseadas em datas.
+
+## D-086 — SQLite: WAL, `BEGIN IMMEDIATE` nas escritas e leituras sem lock de escrita
+
+Rajadas de pedidos ler→escrever (ex. marcar várias subtarefas) falhavam com `database is locked`
+mesmo com `timeout=30`: uma transação diferida que lê e depois tenta escrever sobre um snapshot
+antigo falha de imediato, sem esperar. Reproduzido com 12 threads × 20 operações: 52 de 240 falhavam
+no motor anterior. Passa a aplicar-se **só em SQLite** (PostgreSQL inalterado): `journal_mode=WAL`,
+`synchronous=NORMAL`, `busy_timeout` igual ao timeout de ligação, e `BEGIN IMMEDIATE` por omissão —
+os escritores esperam em fila. Pedidos `GET/HEAD/OPTIONS` (`get_db`) usam `BEGIN` normal
+(`sqlite_read_only`), por isso leitores concorrem com o escritor. Medido: 240/240 sem erros e
+contador final correto.
+
+Consequências operacionais: a BD passa a ter `-wal` e `-shm` ao lado; **copiar só o ficheiro `.db`
+(`docker cp`, `shutil.copy2`) pode perder dados**. Backups têm de usar a API de backup do SQLite
+(`scripts/op_pm_backup.sh`, fora do repo). Os 3 testes que copiavam o ficheiro passam a usar
+`sqlite3.Connection.backup`. A fixture `db_session` mantém a transação exterior em `BEGIN`
+diferido para não segurar o lock de escrita durante todo o teste.
+
+Verificado: `tests/test_sqlite_concurrency.py` (3 testes; 2 falham contra o `db.py` anterior);
+suite SQLite 914 passed / 2 skipped; PostgreSQL 913 passed / 3 skipped; concorrência repetida 5×
+sem falhas. Ainda não validado em produção (instância Tailscale não alterada).

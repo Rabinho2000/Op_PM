@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -30,6 +29,19 @@ from sqlalchemy.orm import sessionmaker
 CHEFE_EMAIL = "chefe.sintetico@example.invalid"
 
 
+def _copy_sqlite_db(source: Path, target: str) -> None:
+    """Cópia consistente da BD SQLite (em WAL, `shutil.copy2` perderia o conteúdo do -wal)."""
+    import sqlite3
+
+    src = sqlite3.connect(str(source), timeout=30)
+    dst = sqlite3.connect(target)
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+
+
 def _headers() -> dict[str, str]:
     return {"X-Dev-User-Email": CHEFE_EMAIL}
 
@@ -44,7 +56,7 @@ def test_database_rejects_second_active_central_location(db_session):
 
     db_session.rollback()
     assert db_session.get(InventoryLocation, central.id) is not None
-    indexes = {index["name"] for index in inspect(engine).get_indexes("inventory_locations")}
+    indexes = {index["name"] for index in inspect(db_session.connection()).get_indexes("inventory_locations")}
     assert "uq_inventory_locations_one_active_central" in indexes
 
 
@@ -72,7 +84,7 @@ def test_concurrent_central_creation_leaves_one_row_and_translates_unique_race(d
     copied_fd, copied_name = tempfile.mkstemp(prefix="op-pm-inventory-central-", suffix=".db")
     os.close(copied_fd)
     Path(copied_name).unlink()
-    shutil.copy2(source, copied_name)
+    _copy_sqlite_db(source, copied_name)
     local_engine = create_engine(
         f"sqlite:///{copied_name}",
         connect_args={"check_same_thread": False, "timeout": 30.0},
@@ -571,7 +583,7 @@ def test_concurrent_idempotency_unique_race_returns_one_winner(db_session, monke
     copied_fd, copied_name = tempfile.mkstemp(prefix="op-pm-inventory-idempotency-", suffix=".db")
     os.close(copied_fd)
     Path(copied_name).unlink()
-    shutil.copy2(source, copied_name)
+    _copy_sqlite_db(source, copied_name)
     local_engine = create_engine(
         f"sqlite:///{copied_name}",
         connect_args={"check_same_thread": False, "timeout": 30.0},
@@ -642,7 +654,7 @@ def test_concurrent_reservations_serialize_per_item_and_never_overreserve(db_ses
     copied_fd, copied_name = tempfile.mkstemp(prefix="op-pm-inventory-concurrency-", suffix=".db")
     os.close(copied_fd)
     Path(copied_name).unlink()
-    shutil.copy2(source, copied_name)
+    _copy_sqlite_db(source, copied_name)
     local_engine = create_engine(
         f"sqlite:///{copied_name}",
         connect_args={"check_same_thread": False, "timeout": 30.0},
