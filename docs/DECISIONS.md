@@ -3128,3 +3128,23 @@ partilha acidental.
 O export v11 lista várias "Pessoas de contacto no local"; antes ficavam como campo desconhecido. Passam a ser extraídas (`contactos`): a primeira é o contacto principal do projeto, as restantes vão para as notas. Sem alteração de esquema nem migração.
 
 Verificado: testes `test_v11_multiple_contact_people_*` e `test_contactos_payload_is_validated_as_hostile_input`; export real v11 extraído e validado (contacto principal preenchido, "Pessoas de contacto" já não aparece como campo desconhecido).
+
+## D-085 — Estados finais do ciclo de vida classificam a instalação como concluída
+
+**Decisão.** Um projeto com `lifecycle_status` igual a `entregue_cliente`
+(Entregue ao cliente) ou `certificado_final` (Certificado final) tem o estado
+derivado `concluido`, mesmo quando a checklist de tarefas está incompleta.
+A regra é centralizada em `COMPLETED_LIFECYCLE_STATUSES` e aplicada ao resumo
+partilhado por lista/detalhe de projetos, mapa e portefólio.
+
+Isto altera apenas a **classificação derivada**. Não marca tarefas como feitas,
+não altera o progresso real do workflow/processo, e preserva a próxima tarefa,
+contagem de atrasos e aviso de fotos calculados a partir das tarefas. Também não
+cria datas: os indicadores históricos de instalações/ potência continuam a
+contar apenas tarefas de comissionamento concluídas com `completed_at` dentro
+do período; mudar o estado do ciclo de vida não inventa um evento histórico.
+
+**Verificado.** Testes de regressão em `backend/tests/test_project_task_summary.py`,
+`backend/tests/test_map_api.py` e `backend/tests/test_performance_api.py` cobrem
+os dois estados finais, a preservação dos indicadores de trabalho e a ausência
+de alteração nas métricas históricas baseadas em datas.

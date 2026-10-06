@@ -1,8 +1,9 @@
 """Estado do ciclo de vida de um projeto (D-069): On hold pelo cliente,
 Preparação, Construção, Construído, Entregue ao cliente, Certificado final.
 
-Distinto de `Project.status` (derivado das tarefas: nao_iniciado/em_curso/
-concluido — ver `app/services/projects.py`). O Op_PM é a fonte de verdade deste
+Distinto de `Project.status` (derivado das tarefas e, nos estados finais,
+do ciclo de vida: nao_iniciado/em_curso/concluido — ver
+`app/services/projects.py`). O Op_PM é a fonte de verdade deste
 estado; `clickup_status_mirror` continua a ser só um espelho e só serve para
 inicializar o valor na importação.
 
@@ -24,6 +25,10 @@ LIFECYCLE_STATUSES: tuple[tuple[str, str], ...] = (
 )
 LIFECYCLE_STATUS_CODES = frozenset(code for code, _ in LIFECYCLE_STATUSES)
 LIFECYCLE_STATUS_LABELS = dict(LIFECYCLE_STATUSES)
+
+# Estados que classificam o projeto como concluído nas vistas derivadas,
+# independentemente do progresso da checklist de tarefas.
+COMPLETED_LIFECYCLE_STATUSES = frozenset({"entregue_cliente", "certificado_final"})
 
 # Sequência normal de uma obra. `on_hold_cliente` fica fora: pode entrar-se e
 # sair dele em qualquer ponto (D6 — transições livres).

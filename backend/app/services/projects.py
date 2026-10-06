@@ -23,7 +23,12 @@ from app.security.permissions import (
     can_edit_project,
     can_view_project,
 )
-from app.services.project_lifecycle import LIFECYCLE_FLOW, LIFECYCLE_STATUS_CODES, status_change_warning
+from app.services.project_lifecycle import (
+    COMPLETED_LIFECYCLE_STATUSES,
+    LIFECYCLE_FLOW,
+    LIFECYCLE_STATUS_CODES,
+    status_change_warning,
+)
 from app.security.project_fields import PM_EDITABLE_PROJECT_FIELDS
 
 _STANDARD_TASK_TYPES = frozenset(code for code, _ in DEFAULT_TASK_TYPES)
@@ -33,7 +38,8 @@ _STANDARD_TASK_TYPES = frozenset(code for code, _ in DEFAULT_TASK_TYPES)
 class ProjectTaskSummary:
     """Indicadores de tarefas de um projeto, para a lista/detalhe de
     projetos (ver docs sobre Fase 1.5 — MVP dashboard/workflow). Calculado
-    sempre a partir das tarefas reais em base de dados, nunca hardcoded."""
+    a partir das tarefas reais; o `status` também considera os estados finais
+    do ciclo de vida definidos em `project_lifecycle.py`."""
 
     status: str  # nao_iniciado | em_curso | concluido
     next_task_title: str | None
@@ -44,19 +50,26 @@ class ProjectTaskSummary:
 
 
 def compute_project_task_summary(db: Session, project_id: uuid.UUID) -> ProjectTaskSummary:
+    project = db.get(Project, project_id)
     tasks = db.query(Task).filter(Task.project_id == project_id).all()
-    return compute_project_task_summary_from_tasks(tasks)
+    return compute_project_task_summary_from_tasks(
+        tasks,
+        lifecycle_status=project.lifecycle_status if project else None,
+    )
 
 
-def compute_project_task_summary_from_tasks(tasks: list[Task]) -> ProjectTaskSummary:
+def compute_project_task_summary_from_tasks(
+    tasks: list[Task], *, lifecycle_status: str | None = None
+) -> ProjectTaskSummary:
     """Mesmo cálculo de `compute_project_task_summary`, mas a partir de uma
     lista de tarefas já carregada — usada por quem precisa do resumo de
     vários projetos de uma vez (ex. app/services/map.py) sem repetir uma
     query de tarefas por projeto (padrão N+1 — ver docs/DECISIONS.md,
-    mapa operacional)."""
+    mapa operacional). `lifecycle_status` só altera o estado derivado;
+    os restantes indicadores continuam a refletir as tarefas recebidas."""
     if not tasks:
         return ProjectTaskSummary(
-            status="nao_iniciado",
+            status="concluido" if lifecycle_status in COMPLETED_LIFECYCLE_STATUSES else "nao_iniciado",
             next_task_title=None,
             next_task_due_date=None,
             overdue_tasks_count=0,
@@ -75,6 +88,9 @@ def compute_project_task_summary_from_tasks(tasks: list[Task]) -> ProjectTaskSum
         status = "em_curso"
     else:
         status = "nao_iniciado"
+
+    if lifecycle_status in COMPLETED_LIFECYCLE_STATUSES:
+        status = "concluido"
 
     open_tasks = [t for t in tasks if t.status in OPEN_TASK_STATUSES]
     next_task = None

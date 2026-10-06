@@ -1,10 +1,12 @@
-"""Indicadores de tarefas derivados no `ProjectRead` (estado, próxima
-tarefa, tarefas atrasadas, progresso, aviso de fotos) — ver
-app/services/projects.py:compute_project_task_summary. Nunca hardcoded:
-sempre recalculado a partir das tarefas reais."""
+"""Indicadores derivados no `ProjectRead` (estado da checklist/ciclo de vida,
+próxima tarefa, tarefas atrasadas, progresso, aviso de fotos) — ver
+app/services/projects.py:compute_project_task_summary. Os campos de trabalho
+continuam sempre recalculados a partir das tarefas reais."""
 from __future__ import annotations
 
 import datetime as dt
+
+import pytest
 
 from app.models.project import Project
 from app.models.task import Task
@@ -40,6 +42,52 @@ def test_project_with_all_standard_tasks_done_is_concluded(db_session):
     assert summary.status == "concluido"
     assert summary.workflow_progress_percent == 100
     assert summary.photos_pending_warning is False
+
+
+@pytest.mark.parametrize("lifecycle_status", ["entregue_cliente", "certificado_final"])
+def test_completed_lifecycle_derives_concluded_without_changing_task_indicators(
+    db_session, api_client, lifecycle_status
+):
+    project = Project(name=f"Projeto Sintético {lifecycle_status}", lifecycle_status=lifecycle_status)
+    db_session.add(project)
+    db_session.flush()
+    db_session.add_all(
+        [
+            Task(project_id=project.id, title="Visita técnica", task_type="visita_tecnica", status="done"),
+            Task(
+                project_id=project.id,
+                title="Preparação atrasada",
+                task_type="preparacao_instalacao",
+                due_date=dt.date(2000, 1, 1),
+            ),
+            Task(
+                project_id=project.id,
+                title="Instalação futura",
+                task_type="instalacao",
+                due_date=dt.date(2099, 1, 1),
+            ),
+            Task(project_id=project.id, title="Comissionamento", task_type="comissionamento"),
+            Task(project_id=project.id, title="Fotos", task_type="fotos_drive"),
+        ]
+    )
+    db_session.flush()
+
+    summary = compute_project_task_summary(db_session, project.id)
+
+    assert summary.status == "concluido"
+    assert summary.workflow_progress_percent == 20
+    assert summary.next_task_title == "Preparação atrasada"
+    assert summary.next_task_due_date == dt.date(2000, 1, 1)
+    assert summary.overdue_tasks_count == 1
+    assert summary.photos_pending_warning is True
+
+    response = api_client.get(
+        f"/api/projects/{project.id}", headers={"X-Dev-User-Email": "chefe.sintetico@example.invalid"}
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "concluido"
+    assert response.json()["overdue_tasks_count"] == 1
+    assert response.json()["photos_pending_warning"] is True
 
 
 def test_next_task_is_earliest_open_task_by_due_date(db_session):

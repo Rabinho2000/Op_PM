@@ -55,9 +55,10 @@ class ProjectRead(BaseModel):
     has_coordinates: bool = False
     has_contact: bool = False
 
-    # Derivados de tarefas (ver app/services/projects.py:compute_project_task_summary)
-    # — nao_iniciado | em_curso | concluido, calculado a partir das tarefas
-    # reais, nunca hardcoded.
+    # Derivados das tarefas e do estado do ciclo de vida final (ver
+    # app/services/projects.py:compute_project_task_summary).
+    # — nao_iniciado | em_curso | concluido; o estado final do ciclo de vida
+    # pode classificar o projeto como concluído sem alterar os restantes campos.
     status: str = "nao_iniciado"
     next_task_title: str | None = None
     next_task_due_date: dt.date | None = None

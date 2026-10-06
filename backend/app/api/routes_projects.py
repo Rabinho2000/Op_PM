@@ -133,8 +133,9 @@ def list_projects_endpoint(
     )
     percents = progress_percent_by_project(db, [p.id for p in projects])
     result = [_to_read(db, p, ctx, percents) for p in projects]
-    # O estado é derivado das tarefas (compute_project_task_summary), por
-    # isso o filtro aplica-se depois do cálculo — nunca uma segunda regra.
+    # Estado derivado da checklist e dos estados finais do ciclo de vida
+    # (compute_project_task_summary), por isso o filtro aplica-se depois do
+    # cálculo — nunca uma segunda regra.
     if status is not None:
         result = [r for r in result if r.status == status]
     return result

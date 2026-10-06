@@ -126,6 +126,30 @@ def test_portfolio_breakdown_present_in_summary(api_client):
     assert len(body["yearly"]) == 5
 
 
+def test_completed_lifecycle_changes_portfolio_not_historical_yearly_metrics(db_session, api_client):
+    headers = _headers("chefe.sintetico@example.invalid")
+    before_response = api_client.get("/api/performance/summary", headers=headers)
+    assert before_response.status_code == 200
+    before = before_response.json()
+    current_year = next(item for item in before["yearly"] if item["year"] == dt.date.today().year)
+
+    project = Project(
+        name="Projeto Sintético Entregue Sem Datas de Histórico",
+        lifecycle_status="certificado_final",
+        power_kwp=987.5,
+    )
+    db_session.add(project)
+    db_session.flush()
+
+    after_response = api_client.get("/api/performance/summary", headers=headers)
+    assert after_response.status_code == 200
+    after = after_response.json()
+    current_year_after = next(item for item in after["yearly"] if item["year"] == dt.date.today().year)
+
+    assert after["portfolio"]["completed"] == before["portfolio"]["completed"] + 1
+    assert current_year_after == current_year
+
+
 def test_pm_sees_own_goals_and_company_wide_goals(db_session, api_client):
     pm = db_session.query(Person).filter(Person.display_name == "PM Sintético Um").one()
     api_client.post(

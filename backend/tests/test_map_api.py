@@ -32,6 +32,34 @@ def test_map_data_includes_projects_suppliers_pickups_and_issues(api_client):
     assert body["config"]["provider_enabled"] is False  # sem MAP_TILE_URL configurado por omissão
 
 
+def test_completed_lifecycle_derives_concluded_without_changing_map_work_indicators(db_session, api_client):
+    project = _own_project(db_session)
+    before_response = api_client.get("/api/map/data", headers=_headers("chefe.sintetico@example.invalid"))
+    assert before_response.status_code == 200
+    before_projects = before_response.json()["projects"] + before_response.json()["projects_without_coordinates"]
+    before = next(item for item in before_projects if item["id"] == str(project.id))
+
+    project.lifecycle_status = "entregue_cliente"
+    db_session.flush()
+
+    after_response = api_client.get("/api/map/data", headers=_headers("chefe.sintetico@example.invalid"))
+    assert after_response.status_code == 200
+    after_projects = after_response.json()["projects"] + after_response.json()["projects_without_coordinates"]
+    after = next(item for item in after_projects if item["id"] == str(project.id))
+
+    assert after["status"] == "concluido"
+    for field in (
+        "open_tasks_count",
+        "attention",
+        "operational_tasks_count",
+        "overdue_operational_tasks_count",
+        "blocked_operational_tasks_count",
+        "urgent_operational_tasks_count",
+        "next_operational_task",
+    ):
+        assert after[field] == before[field]
+
+
 def test_project_without_coordinates_appears_in_separate_list(api_client):
     resp = api_client.get("/api/map/data", headers=_headers("chefe.sintetico@example.invalid"))
     body = resp.json()

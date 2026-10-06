@@ -2,12 +2,18 @@
 áreas separadas de menu). Todo o cálculo aqui, nunca no frontend a partir
 de listas completas (mesma regra já aplicada ao dashboard, D-041).
 
-Regra de "instalação concluída" (fonte de verdade única, reaproveitada do
-dashboard — ver app/services/dashboard.py e
-docs/PERFORMANCE_METRICS.md): uma instalação está concluída quando a
-tarefa padrão de comissionamento (`Task.task_type ==
-TASK_TYPE_COMISSIONAMENTO`) está `done`, na data em que ficou `done`
-(`Task.completed_at`).
+Para metas históricas dependentes de datas e para os indicadores anuais
+(`yearly`) de instalações e kWp, uma instalação só conta como concluída
+quando a tarefa padrão de comissionamento (`Task.task_type ==
+TASK_TYPE_COMISSIONAMENTO`) está `done`, na data em que `Task.completed_at`
+ficou preenchido. Um `lifecycle_status` final não cria nem substitui esse
+evento histórico.
+
+No estado derivado do portefólio, `compute_project_task_summary` também
+classifica como `concluido` os projetos com `lifecycle_status` igual a
+`entregue_cliente` ou `certificado_final`, mesmo com a checklist incompleta,
+conforme D-085. Essa classificação não altera as métricas históricas baseadas
+em tarefas de comissionamento e `completed_at`.
 """
 from __future__ import annotations
 

@@ -103,8 +103,9 @@ class Project(UUIDPk, TimestampMixin, Base):
     work_dates_estimated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Estado do ciclo de vida (D-069) — fonte de verdade: Op_PM. Códigos em
-    # `app/services/project_lifecycle.py`. Distinto de `status` (derivado das
-    # tarefas). `None` = sem estado atribuído.
+    # `app/services/project_lifecycle.py`. Distinto de `status` (derivado da
+    # checklist, com estados finais do ciclo de vida a classificarem concluído).
+    # `None` = sem estado atribuído.
     lifecycle_status: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     # Quando o projeto entrou no programa (D-077): ordena a lista, dentro de cada estado.
     # Novos projetos = momento da criação; legado = data de início (ClickUp) — ver migração.

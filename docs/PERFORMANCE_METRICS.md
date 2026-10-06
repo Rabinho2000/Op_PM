@@ -9,18 +9,26 @@ O menu tem só **"Metas e indicadores"** (`/performance`) — nunca "Metas" e
 ser o painel operacional do dia a dia (Fase 1.5); esta página é sobre
 objetivos e progresso ao longo do tempo.
 
-## Regra de "instalação concluída" (fonte de verdade única)
+## Regras de conclusão: métricas históricas e estado derivado
 
-```
-concluída ⟺ existe uma Task com task_type == "comissionamento" e status == "done",
-             na data em que completed_at ficou preenchido
-```
+Há duas regras complementares, consoante o indicador:
 
-Reaproveitada tal e qual do dashboard (`app/services/dashboard.py`) —
-nunca uma segunda definição divergente. Se o negócio confirmar uma fonte
-mais adequada (ex. `ProjectLicensingData.certificate_date`), rever aqui e
-em `app/services/performance.py:_realized_value` ao mesmo tempo, nunca só
-num dos dois sítios.
+- **Metas históricas dependentes de datas e indicadores anuais (`yearly`) de
+  instalações e kWp:** uma instalação só conta como concluída quando existe
+  uma `Task` com `task_type == "comissionamento"` e `status == "done"`, na data
+  em que `completed_at` ficou preenchido. `lifecycle_status` não cria um
+  evento histórico nem substitui `completed_at`.
+- **Estado derivado do portefólio:** `compute_project_task_summary` também
+  classifica como `concluido` um projeto cujo `lifecycle_status` seja
+  `entregue_cliente` ou `certificado_final`, mesmo que a checklist de tarefas
+  esteja incompleta, conforme D-085. Esta regra altera a classificação
+  derivada usada no portefólio, não as métricas históricas baseadas em datas.
+
+A regra das métricas históricas é reaproveitada tal e qual do dashboard
+(`app/services/dashboard.py`) — nunca uma segunda definição divergente. Se o
+negócio confirmar uma fonte mais adequada (ex. `ProjectLicensingData.certificate_date`),
+rever aqui e em `app/services/performance.py:_realized_value` ao mesmo tempo,
+nunca só num dos dois sítios.
 
 ## Métricas suportadas (`GoalPeriod.metric`)
 

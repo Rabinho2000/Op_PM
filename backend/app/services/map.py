@@ -246,7 +246,7 @@ def get_map_projects(db: Session, ctx: AuthContext) -> tuple[list[MapProject], l
 
         entry = MapProject(
             project=project,
-            task_summary=compute_project_task_summary_from_tasks(tasks),
+            task_summary=compute_project_task_summary_from_tasks(tasks, lifecycle_status=project.lifecycle_status),
             open_tasks_count=sum(1 for t in tasks if t.status in OPEN_TASK_STATUSES),
             issues_count=issue_counts_by_project.get(project.id, 0),
             attention=_compute_attention(
