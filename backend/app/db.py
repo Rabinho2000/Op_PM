@@ -11,6 +11,7 @@ from __future__ import annotations
 import uuid
 from typing import Generator
 
+from fastapi import Request
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.types import CHAR, TypeDecorator
@@ -85,9 +86,26 @@ def _make_engine():
         def _sqlite_disable_pysqlite_transaction_control(dbapi_connection, connection_record):
             dbapi_connection.isolation_level = None
 
+        # BEGIN IMMEDIATE por omissão: um escritor toma o lock de escrita logo à
+        # entrada e os restantes esperam em fila (busy_timeout) em vez de falharem
+        # com `database is locked` quando uma leitura tenta passar a escrita sobre
+        # um snapshot antigo (D-0xx). Pedidos só de leitura (GET) usam a opção
+        # `sqlite_read_only=True` e ficam em BEGIN normal, concorrentes em WAL.
         @event.listens_for(new_engine, "begin")
         def _sqlite_emit_explicit_begin(conn):
-            conn.exec_driver_sql("BEGIN")
+            if conn.get_execution_options().get("sqlite_read_only"):
+                conn.exec_driver_sql("BEGIN")
+            else:
+                conn.exec_driver_sql("BEGIN IMMEDIATE")
+
+        if ":memory:" not in url:
+            # WAL: leitores não bloqueiam o escritor. NORMAL é seguro em WAL (só
+            # arrisca a última transação num corte de energia, nunca a integridade).
+            @event.listens_for(new_engine, "connect")
+            def _sqlite_wal_pragmas(dbapi_connection, connection_record):
+                dbapi_connection.execute("PRAGMA journal_mode=WAL")
+                dbapi_connection.execute("PRAGMA synchronous=NORMAL")
+                dbapi_connection.execute(f"PRAGMA busy_timeout={int(connect_args['timeout'] * 1000)}")
 
     return new_engine
 
@@ -96,8 +114,14 @@ engine = _make_engine()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
 
-def get_db() -> Generator[Session, None, None]:
+_READ_ONLY_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def get_db(request: Request) -> Generator[Session, None, None]:
     db = SessionLocal()
+    if request.method in _READ_ONLY_METHODS and engine.dialect.name == "sqlite":
+        # Pedidos de leitura: transação normal (não toma o lock de escrita).
+        db.connection(execution_options={"sqlite_read_only": True})
     try:
         yield db
     finally:

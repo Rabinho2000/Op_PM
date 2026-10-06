@@ -83,7 +83,10 @@ def db_session():
     transação exterior por completo, incluindo tudo o que foi "commitado"
     lá dentro.
     """
-    connection = engine.connect()
+    # BEGIN diferido (como antes do BEGIN IMMEDIATE de produção, ver app/db.py):
+    # a transação exterior fica aberta durante todo o teste e, se tomasse o lock
+    # de escrita, bloquearia os testes que usam threads/processos concorrentes.
+    connection = engine.connect().execution_options(sqlite_read_only=True)
     trans = connection.begin()
     session = SessionLocal(bind=connection)
 
