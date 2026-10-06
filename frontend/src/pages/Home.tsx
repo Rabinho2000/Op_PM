@@ -242,7 +242,7 @@ interface StatDef {
 }
 
 function buildStats(s: DashboardSummary): StatDef[] {
-  return [
+  const stats: StatDef[] = [
     { label: "Projetos ativos", value: s.active_projects_count, icon: "folder", tone: "brand", to: "/projects?estado=todos" },
     {
       label: "A começar nos próximos 30 dias",
@@ -285,6 +285,17 @@ function buildStats(s: DashboardSummary): StatDef[] {
       alert: true,
     },
   ];
+  if ((s.pending_absences_count ?? 0) > 0) {
+    stats.push({
+      label: "Férias por aprovar",
+      value: s.pending_absences_count ?? 0,
+      icon: "calendar",
+      tone: "warning",
+      to: "/vacations?status=pendente",
+      alert: true,
+    });
+  }
+  return stats;
 }
 
 export default function Home() {
@@ -340,6 +351,15 @@ export default function Home() {
     return (
       <>
         <PageHeader title={title} />
+        {(summary.pending_absences_count ?? 0) > 0 && (
+          <div className="grid grid--stats section-gap" aria-label="Pedidos pendentes">
+            {buildStats(summary)
+              .filter((stat) => stat.label === "Férias por aprovar")
+              .map((stat) => (
+                <StatCard key={stat.label} {...stat} />
+              ))}
+          </div>
+        )}
         <div className="card">
           <EmptyState
             icon="lock"

@@ -32,7 +32,7 @@ def test_pm_can_register_own_absence(db_session, api_client):
         headers=_headers("pm.um.sintetico@example.invalid"),
     )
     assert resp.status_code == 201
-    assert resp.json()["status"] == "aprovada"
+    assert resp.json()["status"] == "pendente"
 
 
 def test_pm_cannot_register_absence_for_someone_else(db_session, api_client):
@@ -130,9 +130,8 @@ def test_pm_can_cancel_own_absence(db_session, api_client):
     db.add(absence)
     db.commit()
 
-    resp = api_client.patch(
-        f"/api/absences/{absence.id}",
-        json={"status": "cancelada"},
+    resp = api_client.post(
+        f"/api/absences/{absence.id}/cancel",
         headers=_headers("pm.um.sintetico@example.invalid"),
     )
     assert resp.status_code == 200
@@ -150,12 +149,11 @@ def test_pm_cannot_cancel_someone_elses_absence(db_session, api_client):
     db.add(absence)
     db.commit()
 
-    resp = api_client.patch(
-        f"/api/absences/{absence.id}",
-        json={"status": "cancelada"},
+    resp = api_client.post(
+        f"/api/absences/{absence.id}/cancel",
         headers=_headers("pm.um.sintetico@example.invalid"),
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 404
 
 
 def test_unauthenticated_request_is_rejected(api_client):

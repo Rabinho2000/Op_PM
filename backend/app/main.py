@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes_absences import router as absences_router
+from app.api.routes_client_reports import router as client_reports_router
 from app.api.routes_dashboard import router as dashboard_router
 from app.api.routes_health import router as health_router
 from app.api.routes_imports import router as imports_router
@@ -19,6 +20,8 @@ from app.api.routes_planning import router as planning_router
 from app.api.routes_project_data import router as project_data_router
 from app.api.routes_projects import router as projects_router
 from app.api.routes_process import router as process_router
+from app.api.routes_my_process import router as my_process_router
+from app.api.routes_support_delegations import router as support_delegations_router
 from app.api.routes_installers import router as installers_router
 from app.api.routes_suppliers import router as suppliers_router
 from app.api.routes_works import router as works_router
@@ -48,8 +51,11 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(me_router)
+app.include_router(client_reports_router)
 app.include_router(projects_router)
 app.include_router(process_router)
+app.include_router(my_process_router)
+app.include_router(support_delegations_router)
 app.include_router(migration_router)
 app.include_router(people_router)
 app.include_router(tasks_router)

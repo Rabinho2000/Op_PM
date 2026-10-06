@@ -4,7 +4,7 @@ import datetime as dt
 import uuid
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class InventoryLocationRead(BaseModel):
@@ -25,6 +25,7 @@ class InventoryItemRead(BaseModel):
     sku: str
     name: str
     unit: str
+    category: str | None = None
     min_stock: Decimal
     preferred_supplier_id: uuid.UUID | None
     lead_time_days: int | None
@@ -68,9 +69,10 @@ class InventoryMovementCreate(BaseModel):
 
     item_id: uuid.UUID
     movement_type: str
-    quantity: Decimal
+    quantity: Decimal = Field(max_digits=14, decimal_places=3)
+    location_id: uuid.UUID | None = None
     reference: str = ""
-    unit_cost: Decimal | None = None
+    unit_cost: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     idempotency_key: str | None = None
 
 
@@ -78,7 +80,7 @@ class ProjectInventoryOperationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     item_id: uuid.UUID
-    quantity: Decimal
+    quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=3)
     reference: str = ""
     idempotency_key: str | None = None
 
@@ -108,14 +110,14 @@ class ProjectMaterialRequirementCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     item_id: uuid.UUID
-    quantity_required: Decimal
+    quantity_required: Decimal = Field(gt=0, max_digits=14, decimal_places=3)
     notes: str = ""
 
 
 class ProjectMaterialRequirementUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    quantity_required: Decimal | None = None
+    quantity_required: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=3)
     notes: str | None = None
 
 

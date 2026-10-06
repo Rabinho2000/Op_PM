@@ -116,9 +116,15 @@ def visible_projects_query(db: Session, ctx: AuthContext) -> Query:
     e filtra depois em Python (evita esquecer o filtro nalgum sítio)."""
     if ctx.has_permission("project.view_all"):
         return db.query(Project)
+
+    conditions = []
     if ctx.has_permission("project.view_own"):
-        return db.query(Project).filter(Project.pm_person_id == ctx.person_id)
-    # Sem nenhuma das duas permissões: nada visível.
+        conditions.append(Project.pm_person_id == ctx.person_id)
+    if ctx.has_permission("project.view_delegated") and ctx.delegating_pm_ids:
+        conditions.append(Project.pm_person_id.in_(ctx.delegating_pm_ids))
+    if conditions:
+        return db.query(Project).filter(or_(*conditions))
+    # Sem nenhuma das permissões, ou sem delegações atribuídas: nada visível.
     return db.query(Project).filter(False)
 
 

@@ -19,10 +19,21 @@ import datetime as dt
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db import Base, GUID
+from app.db import GUID, Base
 from app.models.base import TimestampMixin, UUIDPk
 from app.models.cost import MONEY
 
@@ -38,8 +49,19 @@ LOCATION_TYPE_CENTRAL = "central"
 LOCATION_TYPE_PROJECT = "project"
 LOCATION_TYPE_VEHICLE = "vehicle"
 LOCATION_TYPE_SUPPLIER = "supplier"
+# Escritório — localização fixa para material que não está nem no armazém
+# central nem alocado a um projeto/viatura/fornecedor (pedido do Sérgio,
+# backlog F3). Sem singularidade imposta na BD (ao contrário de `central`):
+# pode haver mais de um "escritório" se a operação vier a precisar.
+LOCATION_TYPE_OFFICE = "office"
 LOCATION_TYPES: frozenset[str] = frozenset(
-    {LOCATION_TYPE_CENTRAL, LOCATION_TYPE_PROJECT, LOCATION_TYPE_VEHICLE, LOCATION_TYPE_SUPPLIER}
+    {
+        LOCATION_TYPE_CENTRAL,
+        LOCATION_TYPE_PROJECT,
+        LOCATION_TYPE_VEHICLE,
+        LOCATION_TYPE_SUPPLIER,
+        LOCATION_TYPE_OFFICE,
+    }
 )
 
 # Código estável da localização central semeada por app/migration/seed_dev.py
@@ -84,6 +106,18 @@ MOVEMENT_TYPES: frozenset[str] = frozenset(
 class InventoryLocation(UUIDPk, TimestampMixin, Base):
     __tablename__ = "inventory_locations"
 
+    __table_args__ = (
+        # Partial unique indexes are supported by both PostgreSQL and SQLite.
+        # The Alembic migration creates the same invariant for existing DBs.
+        Index(
+            "uq_inventory_locations_one_active_central",
+            "location_type",
+            unique=True,
+            sqlite_where=text("location_type = 'central' AND is_active = 1"),
+            postgresql_where=text("location_type = 'central' AND is_active"),
+        ),
+    )
+
     code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     location_type: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -97,12 +131,35 @@ class InventoryItem(UUIDPk, TimestampMixin, Base):
     sku: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     unit: Mapped[str] = mapped_column(String(16), default="un")
+    # Categoria livre (não um enum fechado na BD): o catálogo sugere um
+    # conjunto inicial no frontend (inversores, painéis, cabo DC, cabo AC,
+    # contadores de produção, meters, estrutura, comunicação — pedido do
+    # Sérgio, backlog F1) mas permite adicionar categorias novas sem
+    # migração, porque o próprio pedido exige essa extensibilidade.
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True)
     min_stock: Mapped[Decimal] = mapped_column(QUANTITY, default=0)
     preferred_supplier_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("suppliers.id"), nullable=True
     )
     lead_time_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class InventoryCatalogHistory(UUIDPk, Base):
+    """Histórico append-only das alterações ao catálogo de inventário."""
+
+    __tablename__ = "inventory_catalog_history"
+
+    entity_type: Mapped[str] = mapped_column(String(16), nullable=False)  # item | location
+    entity_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)  # create | edit | deactivate
+    changes_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    changed_by_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("people.id"), nullable=True
+    )
+    changed_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc), nullable=False
+    )
 
 
 class InventoryMovement(UUIDPk, TimestampMixin, Base):
@@ -135,6 +192,7 @@ class InventoryMovement(UUIDPk, TimestampMixin, Base):
     # chave devolve o movimento já criado em vez de duplicar (ver
     # app/services/inventory.py).
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    idempotency_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_by_person_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("people.id"), nullable=True
     )

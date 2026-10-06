@@ -9,12 +9,18 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Query, Session
 
 from app.models.calendar import CalendarEvent
 from app.models.project import Project
 from app.models.task import Task
-from app.security.permissions import AuthContext, can_manage_calendar_event, can_view_calendar_event
+from app.security.permissions import (
+    AuthContext,
+    can_manage_calendar_event,
+    can_view_calendar_event,
+    has_only_delegated_project_scope,
+)
 
 
 class CalendarEventValidationError(ValueError):
@@ -38,7 +44,26 @@ def _validate_task_matches_project(db: Session, *, task_id: uuid.UUID | None, pr
 def visible_events_query(db: Session, ctx: AuthContext) -> Query:
     if not ctx.has_permission("calendar.view"):
         return db.query(CalendarEvent).filter(False)
-    return db.query(CalendarEvent)
+    if ctx.has_permission("project.view_all"):
+        return db.query(CalendarEvent)
+
+    project_conditions = []
+    if ctx.has_permission("project.view_own"):
+        project_conditions.append(Project.pm_person_id == ctx.person_id)
+    if ctx.has_permission("project.view_delegated") and ctx.delegating_pm_ids:
+        project_conditions.append(Project.pm_person_id.in_(ctx.delegating_pm_ids))
+    project_event = CalendarEvent.project_id.in_(select(Project.id).where(or_(*project_conditions))) if project_conditions else None
+
+    if has_only_delegated_project_scope(ctx):
+        conditions = [CalendarEvent.assigned_to_person_id == ctx.person_id]
+        if project_event is not None:
+            conditions.append(project_event)
+        return db.query(CalendarEvent).filter(or_(*conditions))
+
+    conditions = [CalendarEvent.project_id.is_(None)]
+    if project_event is not None:
+        conditions.append(project_event)
+    return db.query(CalendarEvent).filter(or_(*conditions))
 
 
 def list_calendar_events(
@@ -63,11 +88,15 @@ def list_calendar_events(
     if starts_to is not None:
         query = query.filter(CalendarEvent.starts_at <= starts_to)
     events = query.order_by(CalendarEvent.starts_at.asc()).all()
-    # Filtra por visibilidade de projeto individualmente (eventos sem
-    # projeto associado são visíveis a quem tem calendar.view, ver
-    # can_view_calendar_event) — não dá para exprimir isto só em SQL sem
-    # duplicar can_view_project.
-    return [e for e in events if can_view_calendar_event(ctx, e.project if e.project_id else None)]
+    return [
+        e
+        for e in events
+        if can_view_calendar_event(
+            ctx,
+            e.project if e.project_id else None,
+            assigned_to_person_id=e.assigned_to_person_id,
+        )
+    ]
 
 
 def get_visible_event(db: Session, ctx: AuthContext, event_id: uuid.UUID) -> CalendarEvent | None:
@@ -75,7 +104,9 @@ def get_visible_event(db: Session, ctx: AuthContext, event_id: uuid.UUID) -> Cal
     if event is None:
         return None
     project = event.project if event.project_id else None
-    if not can_view_calendar_event(ctx, project):
+    if not can_view_calendar_event(
+        ctx, project, assigned_to_person_id=event.assigned_to_person_id
+    ):
         return None
     return event
 

@@ -266,3 +266,10 @@ def test_query_count_does_not_grow_with_the_number_of_works(db_session, api_clie
         team = alfa.teams[n % len(alfa.teams)]
         _new(db_session, f"Extra {n}", start=today, end=today + dt.timedelta(days=n % 7), team=team, pm=pm_um.id)
     assert count() <= few + 2, "queries a crescer com o nº de obras — provável N+1"
+
+
+def test_each_work_tells_whether_the_user_can_plan_it(api_client):
+    chefe = _get(api_client).json()["works"]
+    assert chefe and all(w["can_plan_work"] for w in chefe)
+    comercial = _get(api_client, email=COMERCIAL).json()["works"]
+    assert comercial and not any(w["can_plan_work"] for w in comercial)

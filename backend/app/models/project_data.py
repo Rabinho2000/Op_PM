@@ -16,7 +16,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, Float, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base, GUID
@@ -37,9 +37,9 @@ class ProjectInstallationData(UUIDPk, TimestampMixin, Base):
     address: Mapped[str | None] = mapped_column(String(512), nullable=True)
     district: Mapped[str | None] = mapped_column(String(128), nullable=True)
     municipality: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    power_kwp: Mapped[float | None] = mapped_column(nullable=True)
+    power_kwp: Mapped[float | None] = mapped_column(Float, nullable=True)
     panel_count: Mapped[int | None] = mapped_column(nullable=True)
-    panel_power_wp: Mapped[float | None] = mapped_column(nullable=True)
+    panel_power_wp: Mapped[float | None] = mapped_column(Float, nullable=True)
     inverters: Mapped[str | None] = mapped_column(Text, nullable=True)
     batteries: Mapped[str | None] = mapped_column(Text, nullable=True)
     has_backup: Mapped[bool | None] = mapped_column(nullable=True)
@@ -67,7 +67,7 @@ class ProjectLicensingData(UUIDPk, TimestampMixin, Base):
     certificate_date: Mapped[dt.date | None] = mapped_column(nullable=True)
     installer: Mapped[str | None] = mapped_column(String(256), nullable=True)
     commercializer: Mapped[str | None] = mapped_column(String(256), nullable=True)
-    annual_production_kwh: Mapped[float | None] = mapped_column(nullable=True)
+    annual_production_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
     comments: Mapped[str] = mapped_column(Text, default="")
 
 

@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   ApiError,
   collectProjectMaterial,
@@ -39,12 +39,14 @@ import {
 } from "../api/client";
 import Icon from "../components/Icon";
 import { LifecycleStatusControl, useLifecycleStatuses } from "../components/LifecycleStatus";
+import PmInlineSelect from "../components/PmInlineSelect";
 import ProjectProcess from "../components/ProjectProcess";
+import ClientReport from "../components/ClientReport";
 import WorkPlanCard from "../components/WorkPlan";
 import TaskFormModal from "../components/TaskForm";
 import TaskStatusControl, { useTaskStatusChange } from "../components/TaskStatusControl";
 import { useToast } from "../components/Toast";
-import { Alert, Avatar, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, ProgressBar } from "../components/ui";
+import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, ProgressBar } from "../components/ui";
 import { useSession } from "../session/SessionContext";
 import { formatDatePt, formatDateTimePt, relativeDayLabel, todayIsoLisbon } from "../utils/dates";
 import {
@@ -54,7 +56,16 @@ import {
   TASK_TYPE_ICONS,
 } from "../utils/labels";
 
-type TabKey = "resumo" | "processo" | "instalacao" | "licenciamento" | "tarefas" | "inventario" | "historico" | "cliente";
+type TabKey =
+  | "resumo"
+  | "processo"
+  | "instalacao"
+  | "licenciamento"
+  | "tarefas"
+  | "inventario"
+  | "historico"
+  | "cliente"
+  | "relatorio";
 
 // Campos de texto oferecidos no formulário de edição, por ordem. Só são
 // mostrados os que o servidor indica em `project.editable_fields` (D-028).
@@ -529,8 +540,13 @@ function ProjectInventoryOperationModal({
   );
 }
 
+function isProjectTab(value: string | null): value is TabKey {
+  return ["resumo", "processo", "instalacao", "licenciamento", "tarefas", "inventario", "historico", "cliente", "relatorio"].includes(value ?? "");
+}
+
 export default function ProjectDetail() {
   const { projectId } = useParams<{ projectId: string }>();
+  const [searchParams] = useSearchParams();
   const { notify } = useToast();
   const { can } = useSession();
   const [project, setProject] = useState<Project | null>(null);
@@ -549,6 +565,11 @@ export default function ProjectDetail() {
   const [creatingTask, setCreatingTask] = useState(false);
   const [justDone, setJustDone] = useState<string | null>(null);
   const [operatingInventory, setOperatingInventory] = useState(false);
+
+  useEffect(() => {
+    const requestedTab = searchParams.get("tab");
+    if (isProjectTab(requestedTab)) setTab(requestedTab);
+  }, [searchParams]);
 
   const canViewInstallation = can("project.view_installation_data");
   const canEditInstallation = can("project.edit_installation_data");
@@ -605,7 +626,7 @@ export default function ProjectDetail() {
       .catch(() => setPeople([]));
     if (canViewInventory) {
       listInventoryItems()
-        .then(setInventoryItems)
+        .then((items) => setInventoryItems(items.filter((item) => item.is_active)))
         .catch(() => setInventoryItems([]));
     }
   }, [canViewInventory]);
@@ -674,6 +695,7 @@ export default function ProjectDetail() {
     ...(canViewInventory ? [{ key: "inventario" as TabKey, label: "Inventário", count: inventory?.reservations.length }] : []),
     { key: "historico", label: "Histórico", count: history?.length },
     { key: "cliente", label: "Cliente" },
+    { key: "relatorio", label: "Relatório semanal" },
   ];
 
   return (
@@ -704,13 +726,7 @@ export default function ProjectDetail() {
           <h1 id="project-title">{project.name}</h1>
           <div className="muted small" style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
             <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-              {project.pm_display_name ? (
-                <>
-                  <Avatar name={project.pm_display_name} small /> PM: {project.pm_display_name}
-                </>
-              ) : (
-                <Badge tone="warning">Sem PM atribuído</Badge>
-              )}
+              <PmInlineSelect project={project} people={people} onChanged={setProject} />
             </span>
             <span>Cliente: {project.client_name ?? "por identificar"}</span>
             <span>Início: {formatDatePt(project.start_date)}</span>
@@ -1125,6 +1141,8 @@ export default function ProjectDetail() {
             )}
           </Card>
         )}
+
+        {tab === "relatorio" && <ClientReport projectId={project.id} />}
 
         {tab === "cliente" && (
           <Card title="Informação do cliente" icon="user">

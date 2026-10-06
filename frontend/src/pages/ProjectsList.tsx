@@ -13,7 +13,8 @@ import {
 import Icon from "../components/Icon";
 import LifecycleMultiSelect from "../components/LifecycleMultiSelect";
 import { LifecycleBadge, useLifecycleStatuses } from "../components/LifecycleStatus";
-import { Avatar, Badge, EmptyState, ErrorState, LoadingState, PageHeader, ProgressBar } from "../components/ui";
+import PmInlineSelect from "../components/PmInlineSelect";
+import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, ProgressBar } from "../components/ui";
 import { useSession } from "../session/SessionContext";
 import { formatDatePt, relativeDayLabel, todayIsoLisbon } from "../utils/dates";
 import { PROJECT_STATUS_TONES } from "../utils/labels";
@@ -279,14 +280,13 @@ export default function ProjectsList() {
                           </span>
                         </td>
                         <td className="nowrap">
-                          {p.pm_display_name ? (
-                            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                              <Avatar name={p.pm_display_name} small />
-                              {p.pm_display_name}
-                            </span>
-                          ) : (
-                            <Badge tone="warning">Sem PM</Badge>
-                          )}
+                          <PmInlineSelect
+                            project={p}
+                            people={people}
+                            onChanged={(updated) =>
+                              setProjects((current) => current && current.map((row) => (row.id === updated.id ? updated : row)))
+                            }
+                          />
                         </td>
                         <td>
                           <LifecycleBadge status={p.lifecycle_status} statuses={lifecycleStatuses} />

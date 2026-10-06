@@ -8,11 +8,15 @@ import {
   listInstallers,
   listPeople,
   Person,
+  updateProjectWorkPlan,
+  WorkItem,
+  WorkPlanInput,
   WorksCalendar,
 } from "../api/client";
 import Icon from "../components/Icon";
 import { useLifecycleStatuses, LifecycleBadge } from "../components/LifecycleStatus";
 import { Badge, Card, EmptyState, ErrorState, LoadingState, PageHeader } from "../components/ui";
+import { useToast } from "../components/Toast";
 import WorksTimeline from "../components/WorksTimeline";
 import { todayIsoLisbon } from "../utils/dates";
 import { defaultWindow, formatIsoPt, shiftWindow, windowFrom, Zoom, ZOOMS } from "../utils/worksTimeline";
@@ -26,6 +30,7 @@ export default function Works() {
   const [params, setParams] = useSearchParams();
   const today = todayIsoLisbon();
   const statuses = useLifecycleStatuses();
+  const { notify } = useToast();
 
   const zoomParam = params.get("zoom");
   const zoom: Zoom = ZOOM_KEYS.includes(zoomParam as Zoom) ? (zoomParam as Zoom) : "months";
@@ -91,6 +96,36 @@ export default function Works() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [win.from, win.to, pm, lifecycleKey, installerId, teamId, reloadKey]);
 
+  // Arrastar/redimensionar uma obra: grava logo e oferece "Anular", que repõe os valores
+  // anteriores (o servidor confirma as datas ao gravar, por isso a anulação também as confirma).
+  async function changePlan(work: WorkItem, changes: WorkPlanInput) {
+    const undo: WorkPlanInput = {};
+    if ("work_start_date" in changes) {
+      undo.work_start_date = work.work_start_date;
+      undo.work_end_date = work.work_end_date;
+    }
+    if ("installer_id" in changes) {
+      undo.installer_id = work.installer_id;
+      undo.installer_team_id = work.installer_team_id;
+    }
+    try {
+      await updateProjectWorkPlan(work.project_id, changes);
+      setReloadKey((k) => k + 1);
+      notify(`Obra «${work.name}» atualizada.`, "success", {
+        label: "Anular",
+        onClick: () => {
+          updateProjectWorkPlan(work.project_id, undo)
+            .then(() => notify("Alteração anulada."))
+            .catch((e) => notify(e instanceof ApiError ? e.detail : "Não foi possível anular.", "error"))
+            .finally(() => setReloadKey((k) => k + 1));
+        },
+      });
+    } catch (e) {
+      notify(e instanceof ApiError ? e.detail : "Não foi possível gravar a alteração.", "error");
+      setReloadKey((k) => k + 1);
+    }
+  }
+
   const teamOptions = useMemo(() => {
     const scope = installerId ? installers.filter((i) => i.id === installerId) : installers;
     return scope.flatMap((i) => i.teams.map((t) => ({ id: t.id, label: installerId ? t.name : `${i.name} — ${t.name}` })));
@@ -103,7 +138,7 @@ export default function Works() {
     <>
       <PageHeader
         title="Calendário de obras"
-        subtitle="As obras ao longo do tempo, por instalador e equipa."
+        subtitle="As obras ao longo do tempo, por instalador e equipa. Arraste uma barra para a mover (ou mude de linha para mudar de instalador/equipa) e as pontas para ajustar as datas."
       />
 
       <div className="toolbar" role="search" aria-label="Filtros do calendário de obras">
@@ -244,6 +279,7 @@ export default function Works() {
                 today={today}
                 statuses={statuses}
                 showIdle={showIdle}
+                onPlanChange={changePlan}
               />
             </div>
           )}

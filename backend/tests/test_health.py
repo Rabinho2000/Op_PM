@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from app.config import Settings, get_settings
 from app.main import app
 
 
@@ -9,6 +10,7 @@ def test_health_reports_ok_and_integrations_disabled():
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
+    assert body["demo_real_data"] is False
     # Fase 0: nenhuma integração real deve estar ativa por omissão.
     assert body["integrations"] == {
         "graph_enabled": False,
@@ -16,6 +18,20 @@ def test_health_reports_ok_and_integrations_disabled():
         "financial_enabled": False,
         "claude_enabled": False,
     }
+
+
+def test_health_exposes_real_data_flag_inactive_demo(api_client):
+    settings = Settings(app_env="local", demo_mode=False, demo_real_data=True)
+    app.dependency_overrides[get_settings] = lambda: settings
+    try:
+        response = api_client.get("/health")
+    finally:
+        app.dependency_overrides.pop(get_settings, None)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["demo_mode"] is False
+    assert body["demo_real_data"] is True
 
 
 def test_me_requires_dev_header():

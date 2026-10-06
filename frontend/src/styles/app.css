@@ -635,6 +635,76 @@ a:hover {
   grid-column: span 2;
 }
 
+.form-grid__full {
+  grid-column: 1 / -1;
+}
+
+.email-list {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.email-list__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.email-list__row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.button-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.list--plain {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.danger-text {
+  color: var(--danger, #b42318);
+}
+
+.detail-list {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.detail-list > div {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.3fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.detail-list dt {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.detail-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.client-report__preview {
+  display: block;
+  width: 100%;
+  min-height: 420px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+
 .checkbox {
   display: inline-flex;
   align-items: center;
@@ -1569,6 +1639,16 @@ a.cell-title:hover {
   text-overflow: ellipsis;
 }
 
+.calendar__event--pending {
+  border: 1px dashed currentColor;
+  background: transparent;
+}
+
+.calendar__legend-pending {
+  border: 1px dashed var(--text-muted);
+  background: transparent;
+}
+
 .calendar__nav {
   display: flex;
   align-items: center;
@@ -2303,6 +2383,22 @@ a.cell-title:hover {
   color: var(--danger);
 }
 
+/* Arrastar e redimensionar (só quem pode planear a obra). */
+.works__bar--draggable { cursor: grab; touch-action: none; user-select: none; }
+.works__bar--dragging { cursor: grabbing; z-index: 3; opacity: 0.85; box-shadow: var(--shadow-lg); }
+.works__row--target { background: var(--brand-soft); }
+.works__handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+}
+.works__handle--start { left: 0; }
+.works__handle--end { right: 0; }
+.works__handle:hover { background: rgba(14, 29, 38, 0.18); }
+.toast__action { color: #fff; margin-inline-start: auto; text-decoration: underline; }
+
 .works__bar--clip-start { border-top-left-radius: 0; border-bottom-left-radius: 0; }
 .works__bar--clip-end { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 
@@ -2506,3 +2602,282 @@ a.cell-title:hover {
 }
 .multiselect__quick { display: flex; gap: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border, #d0d5dd); }
 .multiselect__option { display: flex; align-items: center; gap: 8px; white-space: nowrap; cursor: pointer; }
+
+/* ===================================================================
+   Telemóvel (D-079) — otimização simples, só CSS + barra inferior.
+   - barra de navegação inferior com os destinos diários + "Mais";
+   - tabelas viram cartões (rótulos vindos de data-label);
+   - alvos de toque >= 44px, inputs a 16px (evita zoom no iOS);
+   - modais em ecrã inteiro; calendário semanal numa só coluna.
+   =================================================================== */
+
+.bottom-nav {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .bottom-nav {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 34;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding-bottom: env(safe-area-inset-bottom);
+    box-shadow: 0 -2px 10px rgba(10, 17, 20, 0.06);
+  }
+
+  .bottom-nav__link {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-height: 56px;
+    padding: 6px 2px;
+    border: 0;
+    background: none;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .bottom-nav__link.active {
+    color: var(--brand);
+  }
+
+  /* espaço para a barra inferior não tapar o fim da página */
+  .content {
+    padding-top: 16px;
+    padding-bottom: calc(80px + env(safe-area-inset-bottom));
+  }
+
+  .main-area,
+  .content,
+  .content > *,
+  .grid > *,
+  .card {
+    min-width: 0;
+  }
+
+  .demo-banner {
+    font-size: 0.72rem;
+    padding: 4px 12px;
+  }
+
+  .page-header {
+    margin-bottom: 16px;
+  }
+
+  .page-header h1 {
+    font-size: 1.3rem;
+  }
+
+  .page-header__actions,
+  .page-header__actions .btn {
+    width: 100%;
+  }
+
+  .page-header__actions .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  /* alvos de toque e inputs sem zoom automático no iOS */
+  .btn {
+    min-height: 44px;
+  }
+
+  .btn--sm,
+  .select--compact {
+    min-height: 36px;
+  }
+
+  .btn--icon {
+    min-width: 44px;
+  }
+
+  .input,
+  .select,
+  .textarea,
+  .select--compact {
+    font-size: 16px;
+    min-height: 44px;
+  }
+
+  .nav-link {
+    min-height: 44px;
+  }
+
+  /* listas: deixar o título quebrar linha em vez de alargar a página */
+  .list__item {
+    padding: 12px 16px;
+  }
+
+  .list__title,
+  .list__meta {
+    white-space: normal;
+  }
+
+  .list__item {
+    flex-wrap: wrap;
+  }
+
+  .list__item .badge,
+  .table td .badge {
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  /* modais em ecrã inteiro */
+  .modal-backdrop {
+    padding: 0;
+    place-items: stretch;
+  }
+
+  .modal {
+    width: 100%;
+    max-height: none;
+    height: 100%;
+    border-radius: 0;
+  }
+
+  .modal__head,
+  .modal__body,
+  .modal__foot {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .modal__foot {
+    position: sticky;
+    bottom: 0;
+    background: var(--surface);
+    padding-bottom: calc(14px + env(safe-area-inset-bottom));
+  }
+
+  .modal__foot .btn {
+    flex: 1;
+    justify-content: center;
+  }
+
+  /* planeamento: um dia por linha */
+  .planning-week,
+  .planning-month {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .planning-week__day {
+    min-height: 0;
+  }
+
+  /* tabelas -> cartões */
+  .table-wrap {
+    overflow-x: visible;
+  }
+
+  .table,
+  .table tbody,
+  .table tr,
+  .table td {
+    display: block;
+    width: 100%;
+  }
+
+  /* os nomes das colunas passam para cada célula (data-label) */
+  .table thead {
+    display: none;
+  }
+
+  .table td .badges {
+    justify-content: flex-end;
+  }
+
+  .card__header {
+    flex-wrap: wrap;
+  }
+
+  .calendar__nav {
+    gap: 4px;
+    margin-left: auto;
+  }
+
+  .table tr {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .table tbody tr:hover {
+    background: transparent;
+  }
+
+  .table td {
+    display: flow-root;
+    padding: 4px 0;
+    border-bottom: 0;
+    min-width: 0 !important;
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+
+  .table td::before {
+    content: attr(data-label);
+    float: left;
+    margin-right: 12px;
+    max-width: 45%;
+    text-align: left;
+    font-size: 0.72rem;
+    font-weight: 650;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    padding-top: 2px;
+  }
+
+  .table td[data-label=""]::before {
+    content: none;
+  }
+
+  /* 1.ª coluna = título do cartão, ocupa a largura toda */
+  .table td:first-child {
+    display: block;
+    text-align: left;
+    padding-bottom: 6px;
+  }
+
+  .table td:first-child::before {
+    content: none;
+  }
+
+  .table td:first-child .cell-title {
+    font-size: 1rem;
+  }
+
+  .table td .cell-sub {
+    display: block;
+  }
+
+  .table tr.row--danger td:first-child,
+  .table tr.row--urgent td:first-child {
+    box-shadow: none;
+  }
+
+  .table tr.row--danger {
+    box-shadow: inset 3px 0 0 var(--danger);
+  }
+
+  .table tr.row--urgent {
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+
+  .nowrap {
+    white-space: normal;
+  }
+}

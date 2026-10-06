@@ -1,7 +1,7 @@
 // Lógica pura do calendário de obras (D-072) — testável sem DOM. Datas sempre
 // como texto ISO `YYYY-MM-DD` e contas em UTC, para o fuso e a hora de verão
 // nunca deslocarem um dia.
-import type { Installer, WorkItem } from "../api/client";
+import type { Installer, WorkItem, WorkPlanInput } from "../api/client";
 
 export type Zoom = "weeks" | "months" | "quarters";
 
@@ -142,11 +142,22 @@ export interface TimelineRow {
   lanes: Map<string, number>;
   laneCount: number;
   muted?: boolean;
+  /** Instalador/equipa que uma obra largada nesta linha passa a ter (só linhas "lane"). */
+  installerId: string | null;
+  teamId: string | null;
 }
 
-function laneRow(key: string, label: string, indent: boolean, works: WorkItem[], muted = false): TimelineRow {
+function laneRow(
+  key: string,
+  label: string,
+  indent: boolean,
+  works: WorkItem[],
+  installerId: string | null,
+  teamId: string | null,
+  muted = false
+): TimelineRow {
   const { lanes, count } = packLanes(works);
-  return { key, kind: "lane", label, indent, works, lanes, laneCount: Math.max(1, count), muted };
+  return { key, kind: "lane", label, indent, works, lanes, laneCount: Math.max(1, count), muted, installerId, teamId };
 }
 
 /** Agrupa as obras por instalador e equipa. Um instalador com equipas tem uma linha
@@ -168,24 +179,24 @@ export function buildRows(works: WorkItem[], installers: Installer[], showIdle =
     for (const team of installer.teams) {
       const teamWorks = own.filter((w) => w.installer_team_id === team.id);
       if (teamWorks.length > 0 || (showIdle && team.is_active)) {
-        teamRows.push(laneRow(`${installer.id}:${team.id}`, team.name, true, teamWorks, teamWorks.length === 0));
+        teamRows.push(laneRow(`${installer.id}:${team.id}`, team.name, true, teamWorks, installer.id, team.id, teamWorks.length === 0));
       }
     }
     const noTeam = own.filter((w) => w.installer_team_id === null);
     if (installer.teams.length === 0) {
       if (own.length > 0 || (showIdle && installer.is_active)) {
-        rows.push(laneRow(installer.id, installer.name, false, own, own.length === 0));
+        rows.push(laneRow(installer.id, installer.name, false, own, installer.id, null, own.length === 0));
       }
       continue;
     }
     if (teamRows.length === 0 && noTeam.length === 0) continue;
-    rows.push({ key: `${installer.id}:header`, kind: "header", label: installer.name, indent: false, works: [], lanes: new Map(), laneCount: 0 });
+    rows.push({ key: `${installer.id}:header`, kind: "header", label: installer.name, indent: false, works: [], lanes: new Map(), laneCount: 0, installerId: installer.id, teamId: null });
     rows.push(...teamRows);
-    if (noTeam.length > 0) rows.push(laneRow(`${installer.id}:none`, "Sem equipa", true, noTeam));
+    if (noTeam.length > 0) rows.push(laneRow(`${installer.id}:none`, "Sem equipa", true, noTeam, installer.id, null));
   }
 
   const orphan = byInstaller.get(null) ?? [];
-  if (orphan.length > 0) rows.push(laneRow("none", "Sem instalador", false, orphan));
+  if (orphan.length > 0) rows.push(laneRow("none", "Sem instalador", false, orphan, null, null));
   return rows;
 }
 
@@ -238,4 +249,70 @@ export function weekTicks(w: Window, dayPx: number): WeekTick[] {
 export function formatIsoPt(iso: string): string {
   const [y, m, d] = iso.split("-");
   return `${d}/${m}/${y}`;
+}
+
+// --- arrastar e redimensionar -------------------------------------------------------------
+
+export type DragMode = "move" | "resize-start" | "resize-end";
+
+/** Dias inteiros correspondentes a um deslocamento em píxeis. */
+export const pixelsToDays = (px: number, dayPx: number): number => Math.round(px / dayPx) || 0;
+
+/** Datas resultantes de arrastar `days` dias. Mover desloca as duas datas; redimensionar
+ * mexe numa ponta e nunca a passa para o outro lado (a obra tem sempre pelo menos 1 dia). */
+export function shiftDates(
+  start: string,
+  end: string,
+  mode: DragMode,
+  days: number
+): { start: string; end: string } {
+  if (mode === "move") return { start: addDays(start, days), end: addDays(end, days) };
+  if (mode === "resize-start") {
+    const next = addDays(start, days);
+    return { start: next > end ? end : next, end };
+  }
+  const next = addDays(end, days);
+  return { start, end: next < start ? start : next };
+}
+
+/** Altura (px) de cada linha, para converter uma posição vertical numa linha. */
+export function rowTops(rows: TimelineRow[], heightOf: (row: TimelineRow) => number): number[] {
+  const tops: number[] = [];
+  let acc = 0;
+  for (const row of rows) {
+    tops.push(acc);
+    acc += heightOf(row);
+  }
+  return tops;
+}
+
+/** Linha de obras (nunca um cabeçalho de instalador) sob a posição vertical `y`, relativa ao
+ * topo da primeira linha; `null` fora das linhas ou sobre um cabeçalho. */
+export function rowAtOffset(rows: TimelineRow[], heightOf: (row: TimelineRow) => number, y: number): TimelineRow | null {
+  let acc = 0;
+  for (const row of rows) {
+    const h = heightOf(row);
+    if (y >= acc && y < acc + h) return row.kind === "lane" ? row : null;
+    acc += h;
+  }
+  return null;
+}
+
+/** Corpo do PATCH `/work-plan` para uma obra largada com `dates` na linha `target`.
+ * Só inclui o que mudou; `null` se nada mudou. */
+export function buildPlanChange(
+  work: WorkItem,
+  dates: { start: string; end: string },
+  target: Pick<TimelineRow, "installerId" | "teamId">
+): WorkPlanInput | null {
+  const changes: WorkPlanInput = {};
+  if (dates.start !== work.work_start_date || dates.end !== work.work_end_date) {
+    changes.work_start_date = dates.start;
+    changes.work_end_date = dates.end;
+  }
+  if (target.installerId !== work.installer_id || target.teamId !== work.installer_team_id) {
+    changes.installer_id = target.installerId;
+    changes.installer_team_id = target.teamId;
+  }
+  return Object.keys(changes).length > 0 ? changes : null;
 }

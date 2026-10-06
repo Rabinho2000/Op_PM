@@ -38,7 +38,7 @@ from app.schemas.process import (
     ProcessSubtaskRead,
     ProcessSummary,
 )
-from app.security.permissions import AuthContext, PermissionDenied, can_update_process
+from app.security.permissions import AuthContext, PermissionDenied, can_update_process, can_update_process_stage
 from app.services.installers import business_day
 
 
@@ -200,6 +200,7 @@ def build_project_process(db: Session, project: Project, ctx: AuthContext, today
                     planned_start=start,
                     planned_end=end,
                     status=status,
+                    can_update=can_update_process_stage(ctx, project, stage),
                     done_count=done_count,
                     total_count=len(subtasks),
                     contact=contact,
@@ -223,12 +224,13 @@ def build_project_process(db: Session, project: Project, ctx: AuthContext, today
             )
         )
 
+    visible_phases = [p for p in phase_reads if p.stages]
     return ProcessRead(
         project_id=project.id,
         start_date=project.start_date,
         has_catalog=stages_total > 0,
-        can_update=can_update_process(ctx, project),
-        phases=[p for p in phase_reads if p.stages],
+        can_update=any(stage.can_update for phase in visible_phases for stage in phase.stages),
+        phases=visible_phases,
         summary=ProcessSummary(
             done=total_done,
             total=total_all,
@@ -264,11 +266,11 @@ def progress_percent_by_project(db: Session, project_ids: list[uuid.UUID]) -> di
 
 
 def set_subtask_done(db: Session, *, project: Project, subtask_id: uuid.UUID, done: bool, ctx: AuthContext) -> None:
-    if not can_update_process(ctx, project):
-        raise PermissionDenied("workflow.update_progress")
     subtask = db.get(WorkflowSubtask, subtask_id)
     if subtask is None:
         raise ProcessError("Subtarefa não encontrada.")
+    if not can_update_process_stage(ctx, project, subtask.stage):
+        raise PermissionDenied("workflow.update_progress")
     progress = (
         db.query(ProjectSubtaskProgress)
         .filter(ProjectSubtaskProgress.project_id == project.id, ProjectSubtaskProgress.subtask_id == subtask.id)
@@ -298,11 +300,11 @@ def set_subtask_done(db: Session, *, project: Project, subtask_id: uuid.UUID, do
 
 
 def set_contact_done(db: Session, *, project: Project, stage_id: uuid.UUID, done: bool, ctx: AuthContext) -> None:
-    if not can_update_process(ctx, project):
-        raise PermissionDenied("workflow.update_progress")
     stage = db.get(WorkflowStage, stage_id)
     if stage is None:
         raise ProcessError("Etapa não encontrada.")
+    if not can_update_process_stage(ctx, project, stage):
+        raise PermissionDenied("workflow.update_progress")
     if not stage.has_contact_checkpoint:
         raise ProcessError("Esta etapa não tem ponto de contacto.")
     progress = (

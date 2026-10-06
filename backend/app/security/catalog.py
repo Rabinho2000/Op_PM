@@ -11,6 +11,7 @@ ROLE_CHEFE_OPERACOES = "chefe_operacoes"
 ROLE_PM = "project_manager"
 ROLE_COMERCIAL = "comercial"
 ROLE_FINANCEIRO = "financeiro"
+ROLE_SUPORTE_OPERACOES = "suporte_operacoes"
 
 ROLES: dict[str, str] = {
     ROLE_ADMIN: "Administrador",
@@ -18,12 +19,14 @@ ROLES: dict[str, str] = {
     ROLE_PM: "Project Manager",
     ROLE_COMERCIAL: "Comercial",
     ROLE_FINANCEIRO: "Financeiro",
+    ROLE_SUPORTE_OPERACOES: "Suporte de Operações",
 }
 
 # Permissões (código, descrição)
 PERMISSIONS: dict[str, str] = {
     "project.view_all": "Ver todos os projetos",
     "project.view_own": "Ver os projetos próprios (como PM)",
+    "project.view_delegated": "Ver os projetos dos PMs que delegam em mim (Suporte de Operações)",
     "project.edit_all": "Editar identidade/atribuição de qualquer projeto",
     "project.edit_own_progress": "Editar progresso/checklist dos projetos próprios",
     "workflow.update_progress": "Marcar subtarefas e pontos de contacto do processo dos projetos visíveis (todos, ou só os próprios como PM)",
@@ -63,8 +66,10 @@ PERMISSIONS: dict[str, str] = {
     "absence.view_own": "Ver as próprias férias/ausências",
     "absence.manage_all": "Registar/cancelar férias de qualquer pessoa",
     "absence.manage_own": "Registar/cancelar as próprias férias",
+    "absence.approve": "Aprovar ou rejeitar pedidos de férias",
     # --- MVP de Operações (ver docs/PLAN_OPERATIONS_MVP.md) ---
     "inventory.manage_central": "Registar entradas/ajustes no stock físico central (armazém IdealMinde)",
+    "inventory.manage_catalog": "Criar, editar e desativar artigos e localizações de inventário",
     "inventory.allocate_project": "Reservar material do stock central para um projeto",
     "inventory.consume_project": "Consumir material reservado de um projeto",
     "inventory.release_project": "Libertar uma reserva de material de um projeto",
@@ -90,12 +95,15 @@ PERMISSIONS: dict[str, str] = {
     "performance.manage_goals": "Criar/editar metas (GoalPeriod)",
     "import.notes": "Importar notas iniciais (pré-visualizar, resolver conflitos, aplicar)",
     "import.licensing": "Importar o Excel de licenciamento (dry-run/aplicar/reverter)",
+    "client_report.manage": "Configurar, pré-visualizar, enviar e rever relatórios semanais ao cliente no âmbito permitido",
+    "client_report.view": "Ver configurações, pré-visualizações e histórico de relatórios semanais ao cliente",
 }
 
 # Matriz papel -> permissões concedidas por omissão.
 ROLE_PERMISSIONS: dict[str, list[str]] = {
     ROLE_ADMIN: list(PERMISSIONS.keys()),
     ROLE_CHEFE_OPERACOES: [
+        "client_report.manage",
         "supplier.view",
         "workflow.update_progress",
         "project.plan_work",
@@ -122,8 +130,10 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "task.edit_all",
         "absence.view_all",
         "absence.manage_all",
+        "absence.approve",
         # MVP de Operações — Chefe opera qualquer projeto/inventário/mapa.
         "inventory.manage_central",
+        "inventory.manage_catalog",
         "inventory.allocate_project",
         "inventory.consume_project",
         "inventory.release_project",
@@ -149,6 +159,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "import.licensing",
     ],
     ROLE_PM: [
+        "client_report.manage",
         "supplier.view",
         "workflow.update_progress",
         "project.plan_work",
@@ -199,6 +210,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "performance.view_own",
     ],
     ROLE_COMERCIAL: [
+        "client_report.view",
         "project.view_all",
         "cost.view",
         "document.view",
@@ -216,6 +228,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "import.notes",
     ],
     ROLE_FINANCEIRO: [
+        "client_report.view",
         "project.view_all",
         "cost.view",
         "cost.edit_real",
@@ -229,5 +242,21 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "project_issue.view",
         "calendar.view",
         "performance.view_all",
+    ],
+    ROLE_SUPORTE_OPERACOES: [
+        "project.view_delegated",
+        "workflow.update_progress",
+        "task.view_own",
+        "task.edit_own",
+        "document.view",
+        "document.edit",
+        "project.view_installation_data",
+        "project.edit_installation_data",
+        "project.view_licensing_data",
+        "project.edit_licensing_data",
+        "supplier.view",
+        "calendar.view",
+        "absence.view_own",
+        "absence.manage_own",
     ],
 }

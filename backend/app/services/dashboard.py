@@ -17,7 +17,7 @@ import datetime as dt
 
 from sqlalchemy.orm import Session
 
-from app.models.absence import STATUS_APROVADA, Absence
+from app.models.absence import STATUS_APROVADA, STATUS_PENDENTE, Absence
 from app.models.people import Person
 from app.models.project import Project
 from app.models.task import (
@@ -29,7 +29,7 @@ from app.models.task import (
     Task,
 )
 from app.schemas.dashboard import AbsenceMini, BirthdayMini, DashboardSummary, ProjectMini, TaskMini, WeekDaySummary
-from app.security.permissions import AuthContext
+from app.security.permissions import AuthContext, can_approve_absence
 from app.services.absences import visible_absences_query
 from app.services.projects import compute_project_task_summary, visible_projects_query
 from app.services.tasks import visible_tasks_query
@@ -149,6 +149,8 @@ def compute_dashboard_summary(db: Session, ctx: AuthContext) -> DashboardSummary
         scope = "all"
     elif ctx.has_permission("project.view_own"):
         scope = "own"
+    elif ctx.has_permission("project.view_delegated"):
+        scope = "delegated"
     else:
         scope = "none"
 
@@ -193,6 +195,11 @@ def compute_dashboard_summary(db: Session, ctx: AuthContext) -> DashboardSummary
         for a in absences
         if a.start_date > today and a.start_date <= today + dt.timedelta(days=UPCOMING_ABSENCE_WINDOW_DAYS)
     ]
+    pending_absences_count = (
+        visible_absences_query(db, ctx).filter(Absence.status == STATUS_PENDENTE).count()
+        if can_approve_absence(ctx)
+        else None
+    )
 
     # Aviso de fotografias (D-043) agregado no dashboard — mesma regra da
     # lista/detalhe de projetos, nunca uma segunda lógica divergente.
@@ -234,4 +241,5 @@ def compute_dashboard_summary(db: Session, ctx: AuthContext) -> DashboardSummary
         urgent_tasks=[_task_mini(t) for t in urgent_tasks[:MAX_LIST_ITEMS]],
         projects_photos_pending=[_project_mini(p) for p in projects_photos_pending[:MAX_LIST_ITEMS]],
         week_overview=_week_overview(week_start, open_tasks, tasks, absences),
+        pending_absences_count=pending_absences_count,
     )

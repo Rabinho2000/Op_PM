@@ -17,11 +17,15 @@ o movimento já criado, nunca duplica.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import time
 import uuid
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
-from sqlalchemy import case, func
+from sqlalchemy import case, func, select, update
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.models.inventory import (
@@ -35,11 +39,26 @@ from app.models.inventory import (
     MOVEMENT_RESERVA,
     MOVEMENT_SAIDA,
     InventoryItem,
+    InventoryLocation,
     InventoryMovement,
     ProjectMaterialRequirement,
 )
 
 ZERO = Decimal("0")
+QUANTITY_QUANTUM = Decimal("0.001")
+MONEY_QUANTUM = Decimal("0.01")
+
+
+def _canonical_quantity(value: Decimal | None) -> Decimal | None:
+    if value is None:
+        return None
+    return Decimal(value).quantize(QUANTITY_QUANTUM, rounding=ROUND_HALF_UP)
+
+
+def _canonical_money(value: Decimal | None) -> Decimal | None:
+    if value is None:
+        return None
+    return Decimal(value).quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
 
 
 class InventoryError(ValueError):
@@ -54,14 +73,186 @@ class InsufficientReservationError(InventoryError):
     pass
 
 
-def _existing_by_idempotency_key(db: Session, idempotency_key: str | None) -> InventoryMovement | None:
+class InactiveInventoryReferenceError(InventoryError):
+    pass
+
+
+class IdempotencyConflictError(InventoryError):
+    """An idempotency key was reused for a different request."""
+
+
+def _fingerprint_value(value: object) -> object:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return format(value.normalize(), "f")
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    return value
+
+
+def _movement_fingerprint(
+    *,
+    item_id: uuid.UUID,
+    movement_type: str,
+    quantity: Decimal,
+    project_id: uuid.UUID | None,
+    location_id: uuid.UUID | None,
+    destination_location_id: uuid.UUID | None,
+    reference: str,
+    unit_cost: Decimal | None,
+) -> str:
+    # The compatibility token is only valid when the request omitted a
+    # location. Explicit locations remain part of the canonical fingerprint.
+    fingerprint_location_id: object = location_id
+    if location_id is None and movement_type in (MOVEMENT_ENTRADA, MOVEMENT_AJUSTE):
+        fingerprint_location_id = "__central__"
+    payload = {
+        "item_id": _fingerprint_value(item_id),
+        "movement_type": movement_type,
+        "quantity": _fingerprint_value(_canonical_quantity(quantity)),
+        "project_id": _fingerprint_value(project_id),
+        "location_id": _fingerprint_value(fingerprint_location_id),
+        "destination_location_id": _fingerprint_value(destination_location_id),
+        "reference": reference,
+        "unit_cost": _fingerprint_value(_canonical_money(unit_cost)),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _serialize_item(db: Session, item_id: uuid.UUID) -> None:
+    """Acquire the item row before reading any balance.
+
+    PostgreSQL takes a row lock through SELECT FOR UPDATE. SQLite has no row locks;
+    the first write upgrades the transaction to SQLite's RESERVED writer lock,
+    which serializes writers while keeping the same code path portable. The
+    SQLite statement is deliberately a no-op so the model remains append-only.
+    """
+    if db.get_bind().dialect.name == "postgresql":
+        item_row = db.execute(
+            select(InventoryItem.id).where(InventoryItem.id == item_id).with_for_update()
+        ).scalar_one_or_none()
+        if item_row is None:
+            raise InventoryError("O artigo de inventário não existe.")
+        return
+
+    for attempt in range(5):
+        try:
+            result = db.execute(
+                update(InventoryItem)
+                .where(InventoryItem.id == item_id)
+                .values(updated_at=InventoryItem.updated_at)
+                .execution_options(synchronize_session=False)
+            )
+            if result.rowcount != 1:
+                raise InventoryError("O artigo de inventário não existe.")
+            return
+        except OperationalError as exc:
+            if db.get_bind().dialect.name != "sqlite" or "locked" not in str(exc).lower() or attempt == 4:
+                raise
+            # SQLite can detect a reader-to-writer deadlock immediately and
+            # will not wait for the other reader. Roll back this read before
+            # retrying so the other writer can make progress.
+            db.rollback()
+            time.sleep(0.02 * (2**attempt))
+
+
+def _lock_refresh_item(db: Session, item: InventoryItem) -> InventoryItem:
+    """Serialize on the item, then discard the caller's stale ORM state."""
+    _serialize_item(db, item.id)
+    db.refresh(item)
+    return item
+
+
+def _prepare_item_movement(
+    db: Session,
+    *,
+    item: InventoryItem,
+    idempotency_key: str | None,
+    request_fingerprint: str,
+) -> InventoryMovement | None:
+    """Lock/refresh first; replay lookup precedes active validation.
+
+    A retry remains replayable even when the item was deactivated after the
+    original movement. New writes validate the refreshed row.
+    """
+    _lock_refresh_item(db, item)
+    existing = _existing_by_idempotency_key(db, idempotency_key, request_fingerprint)
+    if existing is not None:
+        return existing
+    _require_active_item(item)
+    return None
+
+
+def _existing_movement_fingerprint(db: Session, movement: InventoryMovement) -> str:
+    location_id = movement.location_id
+    if location_id is None and movement.movement_type in (MOVEMENT_ENTRADA, MOVEMENT_AJUSTE):
+        location_id = active_central_location(db).id
+    return _movement_fingerprint(
+        item_id=movement.item_id,
+        movement_type=movement.movement_type,
+        quantity=Decimal(movement.quantity),
+        project_id=movement.project_id,
+        location_id=location_id,
+        destination_location_id=movement.destination_location_id,
+        reference=movement.reference,
+        unit_cost=movement.unit_cost,
+    )
+
+
+def _existing_by_idempotency_key(
+    db: Session, idempotency_key: str | None, request_fingerprint: str | None = None
+) -> InventoryMovement | None:
     if not idempotency_key:
         return None
-    return (
+    existing = (
         db.query(InventoryMovement)
         .filter(InventoryMovement.idempotency_key == idempotency_key)
         .one_or_none()
     )
+    if existing is None or request_fingerprint is None:
+        return existing
+    stored_fingerprint = existing.idempotency_fingerprint or _existing_movement_fingerprint(db, existing)
+    if stored_fingerprint != request_fingerprint:
+        raise IdempotencyConflictError(
+            "A chave de idempotência já foi usada para um pedido diferente."
+        )
+    if existing.idempotency_fingerprint is None:
+        # Only a complete legacy match is backfilled; mismatched reuse never
+        # mutates the historical movement.
+        existing.idempotency_fingerprint = stored_fingerprint
+        db.flush()
+        db.commit()
+        db.refresh(existing)
+    return existing
+
+
+def _require_active_item(item: InventoryItem) -> None:
+    if not item.is_active:
+        raise InactiveInventoryReferenceError("O artigo de inventário está inativo.")
+
+
+def active_central_location(db: Session) -> InventoryLocation:
+    locations = (
+        db.query(InventoryLocation)
+        .filter(
+            InventoryLocation.location_type == "central",
+            InventoryLocation.is_active.is_(True),
+        )
+        .all()
+    )
+    if len(locations) != 1:
+        raise InventoryError("É necessária exatamente uma localização central ativa.")
+    return locations[0]
+
+
+def _require_active_central_location(db: Session, location_id: uuid.UUID) -> InventoryLocation:
+    location = db.get(InventoryLocation, location_id)
+    if location is None or not location.is_active:
+        raise InactiveInventoryReferenceError("A localização de inventário está inativa ou não existe.")
+    if location.location_type != "central":
+        raise InactiveInventoryReferenceError("A entrada de stock só pode ser ligada à localização central.")
+    return location
 
 
 def _movement_sum(
@@ -79,7 +270,7 @@ def _movement_sum(
     if project_filter:
         query = query.filter(InventoryMovement.project_id == project_id)
     result = query.scalar()
-    return Decimal(result) if result is not None else ZERO
+    return (_canonical_quantity(Decimal(result)) or ZERO) if result is not None else ZERO
 
 
 def physical_stock_central(db: Session, item_id: uuid.UUID) -> Decimal:
@@ -157,7 +348,7 @@ def on_site_for_project(db: Session, item_id: uuid.UUID, project_id: uuid.UUID) 
         )
         .scalar()
     )
-    return entregas - recolhas - (Decimal(abatido) if abatido is not None else ZERO)
+    return entregas - recolhas - ((_canonical_quantity(Decimal(abatido)) or ZERO) if abatido is not None else ZERO)
 
 
 def on_site_balances_by_project(
@@ -190,7 +381,9 @@ def on_site_balances_by_project(
         .all()
     )
     for project_id, item_id, on_site in rows:
-        result.setdefault(project_id, {})[item_id] = Decimal(on_site)
+        if project_id is None:
+            continue
+        result.setdefault(project_id, {})[item_id] = _canonical_quantity(Decimal(on_site)) or ZERO
     return result
 
 
@@ -222,8 +415,28 @@ def _create_movement(
     unit_cost: Decimal | None,
     idempotency_key: str | None,
     from_site_quantity: Decimal | None = None,
+    location_id: uuid.UUID | None = None,
+    destination_location_id: uuid.UUID | None = None,
+    fingerprint_location_id: uuid.UUID | None = None,
 ) -> InventoryMovement:
-    existing = _existing_by_idempotency_key(db, idempotency_key)
+    quantity = _canonical_quantity(quantity)  # type: ignore[assignment]
+    from_site_quantity = _canonical_quantity(from_site_quantity)
+    unit_cost = _canonical_money(unit_cost)
+    request_fingerprint = _movement_fingerprint(
+        item_id=item_id,
+        movement_type=movement_type,
+        quantity=quantity,
+        project_id=project_id,
+        location_id=(
+            fingerprint_location_id
+            if movement_type in (MOVEMENT_ENTRADA, MOVEMENT_AJUSTE)
+            else location_id
+        ),
+        destination_location_id=destination_location_id,
+        reference=reference,
+        unit_cost=unit_cost,
+    )
+    existing = _existing_by_idempotency_key(db, idempotency_key, request_fingerprint)
     if existing is not None:
         return existing
 
@@ -233,13 +446,25 @@ def _create_movement(
         movement_type=movement_type,
         quantity=quantity,
         project_id=project_id,
+        location_id=location_id,
+        destination_location_id=destination_location_id,
         reference=reference,
         unit_cost=unit_cost,
         idempotency_key=idempotency_key,
+        idempotency_fingerprint=request_fingerprint if idempotency_key else None,
         created_by_person_id=created_by_person_id,
     )
     db.add(movement)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # A concurrent request may have won the unique idempotency-key race.
+        db.rollback()
+        if idempotency_key:
+            existing = _existing_by_idempotency_key(db, idempotency_key, request_fingerprint)
+            if existing is not None:
+                return existing
+        raise
     db.refresh(movement)
     return movement
 
@@ -253,9 +478,29 @@ def enter_stock(
     reference: str = "",
     unit_cost: Decimal | None = None,
     idempotency_key: str | None = None,
+    location_id: uuid.UUID | None = None,
 ) -> InventoryMovement:
+    quantity = _canonical_quantity(quantity)  # type: ignore[assignment]
     if quantity <= ZERO:
         raise InventoryError("A quantidade de entrada tem de ser positiva.")
+    central = active_central_location(db) if location_id is None else _require_active_central_location(db, location_id)
+    existing = _prepare_item_movement(
+        db,
+        item=item,
+        idempotency_key=idempotency_key,
+        request_fingerprint=_movement_fingerprint(
+            item_id=item.id,
+            movement_type=MOVEMENT_ENTRADA,
+            quantity=quantity,
+            project_id=None,
+            location_id=central.id,
+            destination_location_id=None,
+            reference=reference,
+            unit_cost=unit_cost,
+        ),
+    )
+    if existing is not None:
+        return existing
     return _create_movement(
         db,
         item_id=item.id,
@@ -266,6 +511,8 @@ def enter_stock(
         reference=reference,
         unit_cost=unit_cost,
         idempotency_key=idempotency_key,
+        location_id=central.id,
+        fingerprint_location_id=central.id,
     )
 
 
@@ -277,12 +524,29 @@ def adjust_stock(
     created_by_person_id: uuid.UUID | None,
     reference: str = "",
     idempotency_key: str | None = None,
+    location_id: uuid.UUID | None = None,
 ) -> InventoryMovement:
     """`delta` pode ser positivo (stock encontrado a mais) ou negativo
     (quebra/perda) — nunca deixa o stock físico central ficar negativo."""
+    delta = _canonical_quantity(delta)  # type: ignore[assignment]
     if delta == ZERO:
         raise InventoryError("O ajuste tem de ter um valor diferente de zero.")
-    existing = _existing_by_idempotency_key(db, idempotency_key)
+    central = active_central_location(db) if location_id is None else _require_active_central_location(db, location_id)
+    existing = _prepare_item_movement(
+        db,
+        item=item,
+        idempotency_key=idempotency_key,
+        request_fingerprint=_movement_fingerprint(
+            item_id=item.id,
+            movement_type=MOVEMENT_AJUSTE,
+            quantity=delta,
+            project_id=None,
+            location_id=central.id,
+            destination_location_id=None,
+            reference=reference,
+            unit_cost=None,
+        ),
+    )
     if existing is not None:
         return existing
     current = physical_stock_central(db, item.id)
@@ -300,6 +564,8 @@ def adjust_stock(
         reference=reference,
         unit_cost=None,
         idempotency_key=idempotency_key,
+        location_id=central.id,
+        fingerprint_location_id=central.id,
     )
 
 
@@ -313,9 +579,24 @@ def reserve_for_project(
     reference: str = "",
     idempotency_key: str | None = None,
 ) -> InventoryMovement:
+    quantity = _canonical_quantity(quantity)  # type: ignore[assignment]
     if quantity <= ZERO:
         raise InventoryError("A quantidade a reservar tem de ser positiva.")
-    existing = _existing_by_idempotency_key(db, idempotency_key)
+    existing = _prepare_item_movement(
+        db,
+        item=item,
+        idempotency_key=idempotency_key,
+        request_fingerprint=_movement_fingerprint(
+            item_id=item.id,
+            movement_type=MOVEMENT_RESERVA,
+            quantity=quantity,
+            project_id=project_id,
+            location_id=None,
+            destination_location_id=None,
+            reference=reference,
+            unit_cost=None,
+        ),
+    )
     if existing is not None:
         return existing
     available = available_stock(db, item.id)
@@ -346,9 +627,24 @@ def release_reservation(
     reference: str = "",
     idempotency_key: str | None = None,
 ) -> InventoryMovement:
+    quantity = _canonical_quantity(quantity)  # type: ignore[assignment]
     if quantity <= ZERO:
         raise InventoryError("A quantidade a libertar tem de ser positiva.")
-    existing = _existing_by_idempotency_key(db, idempotency_key)
+    existing = _prepare_item_movement(
+        db,
+        item=item,
+        idempotency_key=idempotency_key,
+        request_fingerprint=_movement_fingerprint(
+            item_id=item.id,
+            movement_type=MOVEMENT_LIBERTA_RESERVA,
+            quantity=quantity,
+            project_id=project_id,
+            location_id=None,
+            destination_location_id=None,
+            reference=reference,
+            unit_cost=None,
+        ),
+    )
     if existing is not None:
         return existing
     reserved = reserved_for_project(db, item.id, project_id)
@@ -382,9 +678,24 @@ def consume_from_project(
     """Exige reserva ativa suficiente no projeto — o pedido original não
     define "consumo sem reserva"; esta é a opção mais segura e auditável
     (ver docs/PLAN_OPERATIONS_MVP.md secção 11)."""
+    quantity = _canonical_quantity(quantity)  # type: ignore[assignment]
     if quantity <= ZERO:
         raise InventoryError("A quantidade a consumir tem de ser positiva.")
-    existing = _existing_by_idempotency_key(db, idempotency_key)
+    existing = _prepare_item_movement(
+        db,
+        item=item,
+        idempotency_key=idempotency_key,
+        request_fingerprint=_movement_fingerprint(
+            item_id=item.id,
+            movement_type=MOVEMENT_CONSUMO,
+            quantity=quantity,
+            project_id=project_id,
+            location_id=None,
+            destination_location_id=None,
+            reference=reference,
+            unit_cost=None,
+        ),
+    )
     if existing is not None:
         return existing
     reserved = reserved_for_project(db, item.id, project_id)
@@ -424,9 +735,24 @@ def return_to_stock(
     """Reverte um consumo anterior: aumenta o stock físico central, nunca
     reabre a reserva do projeto de origem (decisão assumida — ver
     docs/PLAN_OPERATIONS_MVP.md secção 11)."""
+    quantity = _canonical_quantity(quantity)  # type: ignore[assignment]
     if quantity <= ZERO:
         raise InventoryError("A quantidade a devolver tem de ser positiva.")
-    existing = _existing_by_idempotency_key(db, idempotency_key)
+    existing = _prepare_item_movement(
+        db,
+        item=item,
+        idempotency_key=idempotency_key,
+        request_fingerprint=_movement_fingerprint(
+            item_id=item.id,
+            movement_type=MOVEMENT_DEVOLUCAO,
+            quantity=quantity,
+            project_id=project_id,
+            location_id=None,
+            destination_location_id=None,
+            reference=reference,
+            unit_cost=None,
+        ),
+    )
     if existing is not None:
         return existing
     consumed = consumed_for_project(db, item.id, project_id)
@@ -463,8 +789,26 @@ def deliver_to_project(
     Sem limite pela reserva: a obra pode receber mais do que o reservado
     (excedente da transportadora ou reforço propositado, ex. painéis de
     reserva). Não altera o stock físico central nem a reserva (D-064)."""
+    quantity = _canonical_quantity(quantity)  # type: ignore[assignment]
     if quantity <= ZERO:
         raise InventoryError("A quantidade a entregar tem de ser positiva.")
+    existing = _prepare_item_movement(
+        db,
+        item=item,
+        idempotency_key=idempotency_key,
+        request_fingerprint=_movement_fingerprint(
+            item_id=item.id,
+            movement_type=MOVEMENT_ENTREGA,
+            quantity=quantity,
+            project_id=project_id,
+            location_id=None,
+            destination_location_id=None,
+            reference=reference,
+            unit_cost=None,
+        ),
+    )
+    if existing is not None:
+        return existing
     return _create_movement(
         db,
         item_id=item.id,
@@ -494,9 +838,24 @@ def collect_from_project(
     nem altera o stock físico central (D-064) — o excedente que motiva uma
     recolha normalmente nunca foi reservado; libertar reserva é uma operação
     separada e explícita."""
+    quantity = _canonical_quantity(quantity)  # type: ignore[assignment]
     if quantity <= ZERO:
         raise InventoryError("A quantidade a recolher tem de ser positiva.")
-    existing = _existing_by_idempotency_key(db, idempotency_key)
+    existing = _prepare_item_movement(
+        db,
+        item=item,
+        idempotency_key=idempotency_key,
+        request_fingerprint=_movement_fingerprint(
+            item_id=item.id,
+            movement_type=MOVEMENT_RECOLHA,
+            quantity=quantity,
+            project_id=project_id,
+            location_id=None,
+            destination_location_id=None,
+            reference=reference,
+            unit_cost=None,
+        ),
+    )
     if existing is not None:
         return existing
     on_site = on_site_for_project(db, item.id, project_id)
@@ -537,6 +896,7 @@ def create_material_requirement(
     notes: str = "",
     created_by_person_id: uuid.UUID | None,
 ) -> ProjectMaterialRequirement:
+    quantity_required = _canonical_quantity(quantity_required)  # type: ignore[assignment]
     if quantity_required <= ZERO:
         raise InventoryError("A quantidade necessária tem de ser positiva.")
     requirement = ProjectMaterialRequirement(
@@ -561,6 +921,7 @@ def update_material_requirement(
     notes: str | None = None,
 ) -> ProjectMaterialRequirement:
     if quantity_required is not None:
+        quantity_required = _canonical_quantity(quantity_required) or ZERO
         if quantity_required <= ZERO:
             raise InventoryError("A quantidade necessária tem de ser positiva.")
         requirement.quantity_required = quantity_required

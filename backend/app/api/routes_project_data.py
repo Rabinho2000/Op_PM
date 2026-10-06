@@ -32,6 +32,9 @@ from app.security.permissions import (
     can_view_project_licensing_data,
 )
 from app.services.project_data import (
+    ENTITY_TYPE_COMMUNICATION,
+    ENTITY_TYPE_INSTALLATION,
+    ENTITY_TYPE_LICENSING,
     get_communication_data,
     get_installation_data,
     get_licensing_data,
@@ -147,8 +150,26 @@ def get_data_history_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[ProjectDataHistoryRead]:
-    _get_project_or_404(db, project_id, ctx)
-    entries = list_data_history(db, project_id, entity_type=entity_type)
+    project = _get_project_or_404(db, project_id, ctx)
+    permissions_by_type = {
+        ENTITY_TYPE_INSTALLATION: can_view_project_installation_data(ctx, project),
+        ENTITY_TYPE_LICENSING: can_view_project_licensing_data(ctx, project),
+        ENTITY_TYPE_COMMUNICATION: can_view_project_communication_data(ctx, project),
+    }
+    if entity_type is not None:
+        if entity_type not in permissions_by_type:
+            raise HTTPException(status_code=400, detail="Tipo de histórico inválido.")
+        if not permissions_by_type[entity_type]:
+            raise HTTPException(status_code=403, detail="Sem permissão para ver este histórico.")
+        allowed_types = {entity_type}
+    else:
+        allowed_types = {kind for kind, allowed in permissions_by_type.items() if allowed}
+    entries = list_data_history(
+        db,
+        project_id,
+        entity_type=entity_type,
+        allowed_entity_types=allowed_types,
+    )
     result: list[ProjectDataHistoryRead] = []
     for entry in entries:
         data = ProjectDataHistoryRead.model_validate(entry)
