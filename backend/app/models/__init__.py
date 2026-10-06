@@ -55,7 +55,7 @@ from app.models.project_data import (  # noqa: F401
     ProjectInstallationData,
     ProjectLicensingData,
 )
-from app.models.supplier import Supplier, SupplierMaterialType  # noqa: F401
+from app.models.supplier import Supplier, SupplierContact, SupplierMaterialType  # noqa: F401
 from app.models.task import Task, TaskHistory  # noqa: F401
 from app.models.workflow import (  # noqa: F401
     Phase,

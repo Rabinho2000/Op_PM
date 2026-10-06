@@ -8,7 +8,7 @@ import uuid
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.supplier import Supplier, SupplierMaterialType, supplier_material_type_links
+from app.models.supplier import Supplier, SupplierContact, SupplierMaterialType, supplier_material_type_links
 from app.utils.text import clean_display, normalize_key
 
 
@@ -82,6 +82,7 @@ def _search_haystack(supplier: Supplier) -> str:
         supplier.email,
         supplier.website,
         supplier.contact,
+        *(f"{c.name} {c.department or ''} {c.email or ''}" for c in supplier.contacts),
         supplier.materials,
         *(t.name for t in supplier.material_types),
     ]
@@ -101,9 +102,15 @@ def list_material_types_with_counts(db: Session) -> list[tuple[SupplierMaterialT
     return [(t, counts.get(t.id, 0)) for t in types]
 
 
+def _build_contacts(contacts: list[dict]) -> list[SupplierContact]:
+    return [SupplierContact(position=i, **c) for i, c in enumerate(contacts)]
+
+
 def create_supplier(db: Session, data: dict) -> Supplier:
     material_types = data.pop("material_types", [])
+    contacts = data.pop("contacts", [])
     supplier = Supplier(**data)
+    supplier.contacts = _build_contacts(contacts)
     supplier.material_types = get_or_create_material_types(db, material_types)
     db.add(supplier)
     db.commit()
@@ -113,6 +120,10 @@ def create_supplier(db: Session, data: dict) -> Supplier:
 
 def update_supplier(db: Session, supplier: Supplier, changes: dict) -> Supplier:
     material_types = changes.pop("material_types", None)
+    contacts = changes.pop("contacts", None)
+    if contacts is not None:
+        # A lista enviada substitui a anterior (mesma ordem).
+        supplier.contacts = _build_contacts(contacts)
     for field_name, value in changes.items():
         setattr(supplier, field_name, value)
     if material_types is not None:

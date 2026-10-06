@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy import Column, Float, ForeignKey, String, Table, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -40,6 +42,8 @@ class Supplier(UUIDPk, TimestampMixin, Base):
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     website: Mapped[str | None] = mapped_column(String(512), nullable=True)
     address: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Ligação ao mapa (Google Maps ou outro) para a localização exata.
+    maps_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     lat: Mapped[float | None] = mapped_column(Float, nullable=True)
     lon: Mapped[float | None] = mapped_column(Float, nullable=True)
     is_preferred: Mapped[bool] = mapped_column(default=False, nullable=False)
@@ -56,3 +60,23 @@ class Supplier(UUIDPk, TimestampMixin, Base):
         order_by=SupplierMaterialType.name_key,
         lazy="selectin",
     )
+    contacts: Mapped[list[SupplierContact]] = relationship(
+        order_by="SupplierContact.position",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+
+class SupplierContact(UUIDPk, TimestampMixin, Base):
+    """Pessoa ou departamento de contacto de um fornecedor (D-079): um fornecedor
+    tem vários (ex. "Backoffice", "Comercial"). Os dados de pessoas são
+    informação real: nunca vão para o Git."""
+
+    __tablename__ = "supplier_contacts"
+
+    supplier_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("suppliers.id"), nullable=False, index=True)
+    position: Mapped[int] = mapped_column(default=0, nullable=False)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    department: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
