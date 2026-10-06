@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     # "Dados sintéticos") e para o arranque demo (`app.cli.demo`). Nunca
     # aceite em staging/produção — ver _enforce_hardening_in_non_local_envs.
     demo_mode: bool = Field(default=False, alias="DEMO_MODE")
+    # A demo pode ser alimentada com dados reais; a flag só é exposta pela
+    # API quando `demo_mode` está efetivamente ativo (ver /health).
+    demo_real_data: bool = Field(default=False, alias="DEMO_REAL_DATA")
 
     # --- Base de dados ---
     # Produção/staging: PostgreSQL (fonte de verdade operacional única).
@@ -117,7 +120,7 @@ class Settings(BaseSettings):
     graph_enabled: bool = Field(default=False, alias="GRAPH_ENABLED")
     graph_tenant_id: str = Field(default="", alias="GRAPH_TENANT_ID")
     graph_client_id: str = Field(default="", alias="GRAPH_CLIENT_ID")
-    graph_client_secret: str = Field(default="", alias="GRAPH_CLIENT_SECRET")
+    graph_client_secret_file: str = Field(default="", alias="GRAPH_CLIENT_SECRET_FILE")
     # Pasta local onde o adapter de fallback grava rascunhos .eml/.ics
     # enquanto o Graph real não estiver configurado.
     graph_fallback_dir: str = Field(default="./data/outbox", alias="GRAPH_FALLBACK_DIR")

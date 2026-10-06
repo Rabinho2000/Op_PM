@@ -13,7 +13,8 @@ router = APIRouter(tags=["health"])
 @router.get("/health")
 def health(db: Session = Depends(get_db), settings: Settings = Depends(get_settings)) -> dict:
     db.execute(text("SELECT 1"))
-    return {
+    demo_mode = settings.demo_mode and settings.app_env == "local"
+    response = {
         "status": "ok",
         "app_env": settings.app_env,
         "database_dialect": db.bind.dialect.name if db.bind else "unknown",
@@ -21,7 +22,8 @@ def health(db: Session = Depends(get_db), settings: Settings = Depends(get_setti
         # e o login de desenvolvimento só fazem sentido quando o próprio
         # backend os aceita — a barreira real continua em
         # app/config.py e app/security/current_user.py.
-        "demo_mode": settings.demo_mode and settings.app_env == "local",
+        "demo_mode": demo_mode,
+        "demo_real_data": settings.demo_real_data,
         "dev_login_available": settings.app_env in ("local", "test") and not settings.auth_enabled,
         "integrations": {
             "graph_enabled": settings.graph_enabled,
@@ -30,3 +32,4 @@ def health(db: Session = Depends(get_db), settings: Settings = Depends(get_setti
             "claude_enabled": settings.claude_enabled,
         },
     }
+    return response

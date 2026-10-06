@@ -180,6 +180,8 @@ async function requestUpload<T>(path: string, formData: FormData): Promise<T> {
 const apiGet = <T>(path: string) => request<T>(path);
 const apiPatch = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
+const apiPut = <T>(path: string, body: unknown) =>
+  request<T>(path, { method: "PUT", body: JSON.stringify(body) });
 const apiPost = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "POST", body: body !== undefined ? JSON.stringify(body) : undefined });
 const apiUpload = <T>(path: string, formData: FormData) => requestUpload<T>(path, formData);
@@ -194,6 +196,7 @@ export interface HealthResponse {
   database_dialect: string;
   integrations: Record<string, boolean>;
   demo_mode?: boolean;
+  demo_real_data?: boolean;
   dev_login_available?: boolean;
 }
 
@@ -210,12 +213,41 @@ export interface MeResponse {
 export const getHealth = () => apiGet<HealthResponse>("/health");
 export const getMe = () => apiGet<MeResponse>("/me");
 
+export interface MyProcessStage {
+  project_id: string;
+  project_name: string;
+  stage_id: string;
+  stage_code: string;
+  stage_title: string;
+  responsible_rule: string | null;
+  status: string;
+  planned_start: string | null;
+  planned_end: string | null;
+  done_count: number;
+  total_count: number;
+}
+
+export const getMyProcessStages = () => apiGet<MyProcessStage[]>("/api/me/process-stages");
+
+export interface SupportDelegation {
+  pm_person_id: string;
+  pm_display_name: string;
+  support_person_id: string;
+  support_display_name: string;
+}
+
+export const listSupportDelegations = () => apiGet<SupportDelegation[]>("/api/support-delegations");
+export const saveSupportDelegation = (body: { pm_person_id: string; support_person_id: string }) =>
+  request<SupportDelegation>("/api/support-delegations", { method: "PUT", body: JSON.stringify(body) });
+export const deleteSupportDelegation = (pmPersonId: string) =>
+  request<void>(`/api/support-delegations/${pmPersonId}`, { method: "DELETE" });
+
 // --- /api/people ---
 
 export interface Person {
   id: string;
   display_name: string;
-  email: string | null;
+  email?: string | null;
   is_active: boolean;
 }
 
@@ -423,6 +455,7 @@ export interface ProcessStage {
   planned_end: string | null;
   // done | overdue | active | upcoming | no_date
   status: string;
+  can_update?: boolean;
   done_count: number;
   total_count: number;
   contact: ProcessContact | null;
@@ -479,6 +512,8 @@ export interface WorkItem {
   work_dates_estimated: boolean;
   // A mesma equipa tem outra obra sobreposta (só entre preparação e construção).
   conflict: boolean;
+  // O utilizador pode alterar o plano desta obra (arrastar no calendário).
+  can_plan_work?: boolean;
 }
 
 export interface UnscheduledProject {
@@ -777,7 +812,7 @@ export const updateTask = (id: string, payload: TaskUpdatePayload) => apiPatch<T
 // --- /api/absences ---
 
 export type AbsenceType = "ferias" | "baixa_medica" | "outro";
-export type AbsenceStatus = "aprovada" | "cancelada";
+export type AbsenceStatus = "pendente" | "aprovada" | "rejeitada" | "cancelada";
 
 export const ABSENCE_TYPE_LABELS: Record<AbsenceType, string> = {
   ferias: "Férias",
@@ -794,10 +829,39 @@ export interface Absence {
   note: string;
   status: AbsenceStatus;
   created_by_person_id: string | null;
+  decided_by_person_id: string | null;
+  decided_by_display_name: string | null;
+  decided_at: string | null;
+  decision_note: string;
+  cancelled_by_person_id: string | null;
+  cancelled_by_display_name: string | null;
+  cancelled_at: string | null;
   created_at: string;
   updated_at: string;
   person_display_name: string | null;
+  overlapping_absences: AbsenceOverlap[];
+  overlapping_absences_count: number;
+  overlapping_projects: WorkOverlap[];
+  overlapping_projects_count: number;
+  can_approve: boolean;
+  can_reject: boolean;
   can_cancel: boolean;
+}
+
+export interface AbsenceOverlap {
+  id: string;
+  start_date: string;
+  end_date: string;
+  type: AbsenceType;
+  status: AbsenceStatus;
+}
+
+export interface WorkOverlap {
+  id: string;
+  name: string;
+  lifecycle_status: string | null;
+  work_start_date: string;
+  work_end_date: string;
 }
 
 export function listAbsences(filters: { person_id?: string; status?: string } = {}): Promise<Absence[]> {
@@ -817,7 +881,9 @@ export interface AbsenceCreatePayload {
 }
 
 export const createAbsence = (payload: AbsenceCreatePayload) => apiPost<Absence>("/api/absences", payload);
-export const cancelAbsence = (id: string) => apiPatch<Absence>(`/api/absences/${id}`, { status: "cancelada" });
+export const approveAbsence = (id: string) => apiPost<Absence>(`/api/absences/${id}/approve`);
+export const rejectAbsence = (id: string, note: string) => apiPost<Absence>(`/api/absences/${id}/reject`, { note });
+export const cancelAbsence = (id: string) => apiPost<Absence>(`/api/absences/${id}/cancel`);
 
 // --- /api/dashboard ---
 
@@ -865,7 +931,7 @@ export interface WeekDaySummary {
 
 export interface DashboardSummary {
   generated_at: string;
-  scope: "all" | "own" | "none";
+  scope: "all" | "own" | "delegated" | "none";
   week_start: string;
   week_end: string;
   active_projects_count: number;
@@ -882,6 +948,7 @@ export interface DashboardSummary {
   urgent_tasks: TaskMini[];
   projects_photos_pending: ProjectMini[];
   week_overview: WeekDaySummary[];
+  pending_absences_count: number | null;
 }
 
 export const getDashboardSummary = () => apiGet<DashboardSummary>("/api/dashboard/summary");
@@ -893,6 +960,7 @@ export interface InventoryItem {
   sku: string;
   name: string;
   unit: string;
+  category?: string | null;
   min_stock: string;
   preferred_supplier_id: string | null;
   lead_time_days: number | null;
@@ -904,6 +972,94 @@ export interface InventoryItem {
 }
 
 export const listInventoryItems = () => apiGet<InventoryItem[]>("/api/inventory/items");
+
+export interface InventoryLocation {
+  id: string;
+  code: string;
+  name: string;
+  location_type: "central" | "project" | "vehicle" | "supplier" | "office" | string;
+  project_id: string | null;
+  is_active: boolean;
+}
+
+export interface InventoryCatalogHistoryEntry {
+  id: string;
+  entity_type: "item" | "location" | string;
+  entity_id: string;
+  action: "create" | "edit" | "deactivate" | string;
+  changes: Record<string, unknown>;
+  changed_by_person_id: string | null;
+  changed_by_person_name: string | null;
+  changed_at: string;
+}
+
+export const listInventoryLocations = () => apiGet<InventoryLocation[]>("/api/inventory/locations");
+
+export const listInventoryCatalogHistory = (filters: { entity_id?: string; entity_type?: "item" | "location" } = {}) => {
+  const params = new URLSearchParams();
+  if (filters.entity_id) params.set("entity_id", filters.entity_id);
+  if (filters.entity_type) params.set("entity_type", filters.entity_type);
+  const query = params.toString();
+  return apiGet<InventoryCatalogHistoryEntry[]>(`/api/inventory/catalog-history${query ? `?${query}` : ""}`);
+};
+
+export const createInventoryItem = (payload: {
+  sku: string;
+  name: string;
+  unit: string;
+  category?: string | null;
+  min_stock?: string;
+  preferred_supplier_id?: string | null;
+  lead_time_days?: number | null;
+}) => apiPost<InventoryItem>("/api/inventory/items", payload);
+
+export const updateInventoryItem = (
+  id: string,
+  payload: Partial<{
+    sku: string;
+    name: string;
+    unit: string;
+    category: string | null;
+    min_stock: string;
+    preferred_supplier_id: string | null;
+    lead_time_days: number | null;
+    is_active: boolean;
+  }>,
+) => apiPatch<InventoryItem>(`/api/inventory/items/${id}`, payload);
+
+export const reactivateInventoryItem = (id: string) =>
+  apiPatch<InventoryItem>(`/api/inventory/items/${id}`, { is_active: true });
+
+export const deactivateInventoryItem = (id: string) =>
+  apiPost<InventoryItem>(`/api/inventory/items/${id}/deactivate`);
+
+export const createInventoryLocation = (payload: {
+  code: string;
+  name: string;
+  location_type: "central" | "project" | "vehicle" | "supplier" | "office";
+  project_id?: string | null;
+}) => apiPost<InventoryLocation>("/api/inventory/locations", payload);
+
+export const updateInventoryLocation = (
+  id: string,
+  payload: Partial<{
+    code: string;
+    name: string;
+    location_type: "central" | "project" | "vehicle" | "supplier" | "office";
+    project_id: string | null;
+    is_active: boolean;
+  }>,
+) => apiPatch<InventoryLocation>(`/api/inventory/locations/${id}`, payload);
+
+export const deactivateInventoryLocation = (id: string) =>
+  apiPost<InventoryLocation>(`/api/inventory/locations/${id}/deactivate`);
+
+export const createOpeningStock = (payload: {
+  item_id: string;
+  quantity: string;
+  reference: string;
+  idempotency_key: string;
+}) => apiPost<InventoryMovement>("/api/inventory/opening-stock", payload);
 
 // --- Pedidos de material a fornecedores (D-067) ---
 // A máquina de estados vive no servidor: `allowed_actions` diz o que ESTE
@@ -1710,3 +1866,113 @@ export const updateCalendarEvent = (id: string, changes: CalendarEventUpdatePayl
 
 export const cancelCalendarEvent = (id: string) =>
   apiPost<CalendarEvent>(`/api/planning/events/${id}/cancel`, {});
+
+// --- Relatório semanal ao cliente ---
+
+export type ClientReportDeliveryMode = "local" | "graph" | string;
+export type ClientReportSendStatus =
+  | "sent"
+  | "failed"
+  | "skipped"
+  | "pending_review"
+  | "discarded"
+  | "expired"
+  | "pending"
+  | string;
+
+export interface ClientReportConfig {
+  enabled?: boolean;
+  review_before_send?: boolean;
+  weekday?: number;
+  send_time?: string;
+  to_emails?: string[];
+  cc_emails?: string[];
+  weekly_note?: string;
+}
+
+export interface ClientReportSend {
+  id: string;
+  iso_week?: string;
+  status: ClientReportSendStatus;
+  trigger?: string;
+  subject?: string;
+  to_emails?: string[];
+  cc_emails?: string[];
+  sent_at?: string | null;
+  created_at?: string;
+  error?: string | null;
+}
+
+export interface ClientReportResponse extends ClientReportConfig {
+  config?: ClientReportConfig | null;
+  can_manage?: boolean;
+  delivery_mode?: ClientReportDeliveryMode;
+  preview_available?: boolean;
+  next_send_at?: string | null;
+  warnings?: string[];
+  last_sends?: ClientReportSend[];
+}
+
+export interface ClientReportPreview {
+  subject: string;
+  body_html: string;
+  from_email?: string | null;
+  to: string[];
+  cc: string[];
+}
+
+export interface ClientReportUpdate extends ClientReportConfig {
+  enabled: boolean;
+  review_before_send: boolean;
+  weekday: number;
+  send_time: string;
+  to_emails: string[];
+  cc_emails: string[];
+  weekly_note: string;
+}
+
+export interface ClientReportListItem {
+  project_id: string;
+  project_name: string;
+  client_name?: string | null;
+  pm?: string | null;
+  lifecycle_status?: string | null;
+  status_label?: string | null;
+  enabled: boolean;
+  next_send_at?: string | null;
+  last_send?: ClientReportSend | null;
+  pending_review_count?: number;
+  to_emails?: string[];
+  cc_emails?: string[];
+}
+
+export const getClientReport = (projectId: string) =>
+  apiGet<ClientReportResponse>(`/api/projects/${encodeURIComponent(projectId)}/client-report`);
+
+export const updateClientReport = (projectId: string, changes: ClientReportUpdate) =>
+  apiPut<ClientReportResponse>(`/api/projects/${encodeURIComponent(projectId)}/client-report`, changes);
+
+export const previewClientReport = (projectId: string) =>
+  apiGet<ClientReportPreview>(`/api/projects/${encodeURIComponent(projectId)}/client-report/preview`);
+
+export const sendClientReportNow = (projectId: string) =>
+  apiPost<ClientReportSend>(`/api/projects/${encodeURIComponent(projectId)}/client-report/send-now`);
+
+export const approveClientReportSend = (sendId: string) =>
+  apiPost<ClientReportSend>(`/api/client-report-sends/${encodeURIComponent(sendId)}/approve`);
+
+export const discardClientReportSend = (sendId: string) =>
+  apiPost<ClientReportSend>(`/api/client-report-sends/${encodeURIComponent(sendId)}/discard`);
+
+export interface ClientReportListFilters {
+  status?: string;
+  pm_person_id?: string;
+}
+
+export const listClientReports = (filters: ClientReportListFilters = {}) => {
+  const params = new URLSearchParams();
+  if (filters.status) params.set("status", filters.status);
+  if (filters.pm_person_id) params.set("pm_person_id", filters.pm_person_id);
+  const query = params.toString();
+  return apiGet<ClientReportListItem[]>(`/api/client-reports${query ? `?${query}` : ""}`);
+};

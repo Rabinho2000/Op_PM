@@ -38,6 +38,15 @@ def test_health_reports_demo_flags(api_client):
     body = api_client.get("/health").json()
     assert body["demo_mode"] is False  # DEMO_MODE não definido nos testes
     assert body["dev_login_available"] is True  # APP_ENV=test, AUTH_ENABLED=false
+    assert body["demo_real_data"] is False  # a flag é sempre reportada, também fora da demo
+
+
+def test_demo_real_data_defaults_false_and_reads_environment_alias(monkeypatch):
+    monkeypatch.delenv("DEMO_REAL_DATA", raising=False)
+    assert Settings().demo_real_data is False
+
+    monkeypatch.setenv("DEMO_REAL_DATA", "true")
+    assert Settings().demo_real_data is True
 
 
 def test_me_includes_display_name_and_role_labels(api_client):

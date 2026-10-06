@@ -16,11 +16,14 @@ import MapPage from "./pages/Map";
 import Performance from "./pages/Performance";
 import Planning from "./pages/Planning";
 import ProjectDetail from "./pages/ProjectDetail";
+import ClientReports from "./pages/ClientReports";
 import ProjectsList from "./pages/ProjectsList";
 import ReconciliationQueue from "./pages/ReconciliationQueue";
 import SystemStatus from "./pages/SystemStatus";
 import Tasks from "./pages/Tasks";
 import Vacations from "./pages/Vacations";
+import MyProcess from "./pages/MyProcess";
+import SupportOperations from "./pages/SupportOperations";
 import { SessionProvider, useSession } from "./session/SessionContext";
 
 // Fase 1: login (real via Microsoft Entra ID quando configurado, ou o
@@ -112,6 +115,7 @@ export default function App() {
         <Route element={<AuthedShell />}>
           <Route path="/" element={<Home />} />
           <Route path="/projects" element={<ProjectsList />} />
+          <Route path="/client-reports" element={<ClientReports />} />
           <Route path="/projects/import" element={<ImportNotes />} />
           <Route path="/projects/:projectId" element={<ProjectDetail />} />
           <Route path="/tasks" element={<Tasks />} />
@@ -123,6 +127,8 @@ export default function App() {
           <Route path="/performance" element={<Performance />} />
           <Route path="/planning" element={<Planning />} />
           <Route path="/vacations" element={<Vacations />} />
+          <Route path="/my-process" element={<MyProcess />} />
+          <Route path="/support" element={<SupportOperations />} />
           <Route path="/reconciliation" element={<ReconciliationQueue />} />
           <Route path="/status" element={<SystemStatus />} />
         </Route>

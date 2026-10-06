@@ -14,7 +14,7 @@ class MaterialRequestLineCreate(BaseModel):
     # Um item do inventário OU uma descrição livre (ou ambos: a descrição prevalece).
     item_id: uuid.UUID | None = None
     description: str = ""
-    quantity: Decimal
+    quantity: Decimal = Field(max_digits=14, decimal_places=3)
 
 
 class MaterialRequestCreate(BaseModel):
@@ -40,7 +40,7 @@ class QuotePrice(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     line_id: uuid.UUID
-    unit_price: Decimal
+    unit_price: Decimal = Field(max_digits=14, decimal_places=4)
 
 
 class MaterialRequestActionBody(BaseModel):

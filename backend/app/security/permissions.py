@@ -15,6 +15,7 @@ from app.models.absence import Absence
 from app.models.identity import Role, RolePermission, User, UserRole
 from app.models.project import Project
 from app.models.task import Task
+from app.models.workflow import SupportDelegation
 
 
 class PermissionDenied(Exception):
@@ -29,6 +30,7 @@ class AuthContext:
     person_id: UUID
     role_codes: frozenset[str]
     permission_codes: frozenset[str] = field(default_factory=frozenset)
+    delegating_pm_ids: frozenset[UUID] = field(default_factory=frozenset)
 
     def has_permission(self, code: str) -> bool:
         return code in self.permission_codes
@@ -57,8 +59,20 @@ def load_auth_context(db: Session, user: User) -> AuthContext:
         .all()
     )
     permission_codes = frozenset(rp.permission.code for rp in perm_rows)
+    delegating_pm_ids = frozenset()
+    if "project.view_delegated" in permission_codes:
+        delegating_pm_ids = frozenset(
+            pm_person_id
+            for (pm_person_id,) in db.query(SupportDelegation.pm_person_id)
+            .filter(SupportDelegation.support_person_id == user.person_id)
+            .all()
+        )
     return AuthContext(
-        user=user, person_id=user.person_id, role_codes=role_codes, permission_codes=permission_codes
+        user=user,
+        person_id=user.person_id,
+        role_codes=role_codes,
+        permission_codes=permission_codes,
+        delegating_pm_ids=delegating_pm_ids,
     )
 
 
@@ -92,8 +106,48 @@ def can_update_process(ctx: AuthContext, project: Project) -> bool:
     return ctx.has_permission("workflow.update_progress") and can_view_project(ctx, project)
 
 
+def is_delegated_project(ctx: AuthContext, project: Project) -> bool:
+    return (
+        ctx.has_permission("project.view_delegated")
+        and project.pm_person_id is not None
+        and project.pm_person_id in ctx.delegating_pm_ids
+    )
+
+
+def has_only_delegated_project_scope(ctx: AuthContext) -> bool:
+    """Verdadeiro quando a única visibilidade de projetos é por delegação."""
+    return (
+        ctx.has_permission("project.view_delegated")
+        and not ctx.has_permission("project.view_all")
+        and not ctx.has_permission("project.view_own")
+    )
+
+
+def can_update_process_stage(ctx: AuthContext, project: Project, stage) -> bool:
+    """Indica se o utilizador pode marcar uma etapa concreta do processo.
+
+    Os âmbitos são aditivos: um PM com Suporte mantém o âmbito próprio como
+    PM, enquanto num projeto que só alcança pela delegação fica limitado às
+    etapas ``support_delegate``.
+    """
+    if not ctx.has_permission("workflow.update_progress"):
+        return False
+    if can_update_process(ctx, project) and (
+        ctx.has_permission("project.view_all")
+        or can_edit_project(ctx, project)
+        or (ctx.has_permission("project.view_own") and project.pm_person_id == ctx.person_id)
+    ):
+        return True
+    return is_delegated_project(ctx, project) and stage.responsible_rule == "support_delegate"
+
+
+def can_manage_support_delegations(ctx: AuthContext) -> bool:
+    """Só Administrador e Chefe de Operações podem manter delegações."""
+    return bool(ctx.role_codes.intersection({"admin", "administrador", "chefe_operacoes"}))
+
+
 def can_view_installers(ctx: AuthContext) -> bool:
-    """Quem consegue ver projetos vê os instaladores (o nome faz parte da obra)."""
+    """Catálogo global reservado a quem tem âmbito próprio ou global."""
     return ctx.has_permission("project.view_all") or ctx.has_permission("project.view_own")
 
 
@@ -105,49 +159,58 @@ def can_view_project(ctx: AuthContext, project: Project) -> bool:
     if ctx.has_permission("project.view_all"):
         return True
     if ctx.has_permission("project.view_own"):
-        return project.pm_person_id == ctx.person_id
-    return False
+        if project.pm_person_id == ctx.person_id:
+            return True
+    return is_delegated_project(ctx, project)
 
 
 def can_view_task(ctx: AuthContext, task: Task) -> bool:
-    """Uma tarefa é visível a quem tem `task.view_all` (ex. PM — vê tarefas
-    de todos os projetos, não só os seus), a quem consegue ver o projeto a
-    que pertence, ou a quem lhe está atribuída diretamente (mesmo que não
-    seja o PM do projeto — ex. um técnico atribuído pontualmente)."""
+    """Uma tarefa respeita a união dos âmbitos de projeto efetivos.
+
+    O âmbito delegado, quando é o único âmbito de projetos, não pode ser
+    furado por uma atribuição direta fora dos projetos delegados.
+    """
     if ctx.has_permission("task.view_all"):
         return True
+    if has_only_delegated_project_scope(ctx):
+        return can_view_project(ctx, task.project)
     if task.assigned_to_person_id == ctx.person_id:
         return True
     return can_view_project(ctx, task.project)
 
 
 def can_edit_task(ctx: AuthContext, task: Task) -> bool:
-    """`task.edit_all` (Chefe/Administrador) edita qualquer tarefa.
-    `task.edit_own` (PM) só edita tarefas que criou ou que lhe estão
-    atribuídas — nunca por ser o PM do projeto (um PM vê agora todas as
-    tarefas via `task.view_all`, mas isso não lhe dá direito de escrita
-    sobre tarefas de outra pessoa nesse projeto)."""
+    """`task.edit_all` edita qualquer tarefa; `task.edit_own` só permite
+    tarefas criadas ou atribuídas ao próprio utilizador, dentro do âmbito de
+    projeto aplicável quando esse âmbito é exclusivamente delegado."""
     if ctx.has_permission("task.edit_all"):
         return True
-    if ctx.has_permission("task.edit_own"):
-        return task.created_by_person_id == ctx.person_id or task.assigned_to_person_id == ctx.person_id
-    return False
+    if not ctx.has_permission("task.edit_own"):
+        return False
+    if has_only_delegated_project_scope(ctx) and not is_delegated_project(ctx, task.project):
+        return False
+    return task.created_by_person_id == ctx.person_id or task.assigned_to_person_id == ctx.person_id
 
 
 def can_create_task(ctx: AuthContext, project: Project) -> bool:
     if ctx.has_permission("task.edit_all"):
         return True
     if ctx.has_permission("task.edit_own"):
-        return project.pm_person_id == ctx.person_id
+        return project.pm_person_id == ctx.person_id or is_delegated_project(ctx, project)
     return False
 
 
 def can_view_absence(ctx: AuthContext, absence: Absence) -> bool:
-    if ctx.has_permission("absence.view_all"):
+    if ctx.has_permission("absence.view_all") or ctx.has_permission("absence.approve"):
         return True
     if ctx.has_permission("absence.view_own"):
         return absence.person_id == ctx.person_id
     return False
+
+
+def can_approve_absence(ctx: AuthContext) -> bool:
+    """A aprovação é uma capacidade separada de gerir/cancelar ausências."""
+    return ctx.has_permission("absence.approve")
 
 
 def can_manage_absence(ctx: AuthContext, absence: Absence) -> bool:
@@ -179,7 +242,9 @@ def can_view_project_installation_data(ctx: AuthContext, project: Project) -> bo
 
 
 def can_edit_project_installation_data(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("project.edit_installation_data") and can_edit_project(ctx, project)
+    return ctx.has_permission("project.edit_installation_data") and (
+        can_edit_project(ctx, project) or is_delegated_project(ctx, project)
+    )
 
 
 def can_view_project_licensing_data(ctx: AuthContext, project: Project) -> bool:
@@ -187,7 +252,9 @@ def can_view_project_licensing_data(ctx: AuthContext, project: Project) -> bool:
 
 
 def can_edit_project_licensing_data(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("project.edit_licensing_data") and can_edit_project(ctx, project)
+    return ctx.has_permission("project.edit_licensing_data") and (
+        can_edit_project(ctx, project) or is_delegated_project(ctx, project)
+    )
 
 
 def can_view_project_communication_data(ctx: AuthContext, project: Project) -> bool:
@@ -257,12 +324,18 @@ def can_manage_project_issue(ctx: AuthContext, project: Project) -> bool:
     return ctx.has_permission("project_issue.manage") and can_edit_project(ctx, project)
 
 
-def can_view_calendar_event(ctx: AuthContext, project: Project | None) -> bool:
+def can_view_calendar_event(
+    ctx: AuthContext,
+    project: Project | None,
+    *,
+    assigned_to_person_id: UUID | None = None,
+) -> bool:
     if not ctx.has_permission("calendar.view"):
         return False
     if project is None:
-        # Evento sem projeto associado (ex. reunião interna) — visível a
-        # quem tiver a permissão de calendário, sem âmbito de projeto.
+        if has_only_delegated_project_scope(ctx):
+            return assigned_to_person_id == ctx.person_id
+        # Mantém o comportamento dos restantes papéis para eventos internos.
         return True
     return can_view_project(ctx, project)
 

@@ -5,8 +5,9 @@ conflito é por campo, não por projeto inteiro. Ver docs/DATA_IMPORTS.md.
 
 Mesmos princípios de `app/migration/staging.py`: nunca escrever direto em
 `Project`/dados satélite — sempre ingestão → conflitos → confirmação
-explícita → aplicação, com auditoria completa e o payload original
-sempre preservado.
+explícita → aplicação, com auditoria completa. O payload/documento de staging
+é sempre uma cópia textual sanitizada: conteúdo útil preservado, data URLs e
+credenciais omitidos.
 """
 from __future__ import annotations
 
@@ -56,12 +57,11 @@ class FieldImportBatch(UUIDPk, TimestampMixin, Base):
     source_filename: Mapped[str] = mapped_column(String(512), nullable=False)
     source_file_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     form_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    # Payload extraído (o JSON/dados normalizados) — preservado tal como
-    # veio, mesmo que a normalização de campos falhe parcialmente.
+    # Payload extraído (o JSON/dados normalizados) — sanitizado antes de
+    # persistir: valores úteis preservados, data URLs/credenciais omitidos.
     raw_payload_json: Mapped[str] = mapped_column(Text, nullable=False)
-    # O documento original submetido (HTML/JSON), tal como foi carregado —
-    # nunca só o payload já extraído. Texto (não binário): os únicos tipos
-    # aceites (.html/.htm/.json) são sempre texto UTF-8.
+    # Documento submetido em cópia textual sanitizada — preserva a estrutura
+    # útil, mas nunca persiste data URLs ou valores de credenciais.
     raw_document_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     status: Mapped[str] = mapped_column(String(32), default=BATCH_STATUS_PENDING_CONFIRMATION, nullable=False)
     started_by_person_id: Mapped[uuid.UUID | None] = mapped_column(

@@ -24,6 +24,8 @@ class WorkItemRead(BaseModel):
     work_dates_estimated: bool
     # A mesma equipa tem outra obra sobreposta (só entre preparação e construção).
     conflict: bool
+    # O utilizador pode mexer no plano desta obra (arrastar no calendário).
+    can_plan_work: bool = False
 
 
 class UnscheduledProjectRead(BaseModel):

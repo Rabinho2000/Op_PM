@@ -151,3 +151,32 @@ def test_repeating_same_value_does_not_duplicate_history(db_session, api_client)
         .all()
     )
     assert len(history) == 1
+
+
+def test_null_notes_is_stored_as_empty_string_not_500(db_session, api_client):
+    """`notes` é NOT NULL na BD mas o schema de update aceita null: um
+    formulário que envie o campo vazio como null não pode dar 500."""
+    project = _own_project(db_session)
+    headers = _headers("pm.um.sintetico@example.invalid")
+    first = api_client.patch(
+        f"/api/projects/{project.id}/installation-data",
+        json={"client_nif": "123456789", "notes": "algo"},
+        headers=headers,
+    )
+    assert first.status_code == 200
+    resp = api_client.patch(
+        f"/api/projects/{project.id}/installation-data",
+        json={"client_nif": "123456789", "notes": None},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["notes"] == ""
+    # Primeira edição (registo ainda inexistente) com notes=null também.
+    other = _other_project(db_session)
+    resp2 = api_client.patch(
+        f"/api/projects/{other.id}/installation-data",
+        json={"notes": None},
+        headers=_headers("chefe.sintetico@example.invalid"),
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["notes"] == ""

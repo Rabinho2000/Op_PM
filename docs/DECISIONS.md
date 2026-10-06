@@ -2910,6 +2910,8 @@ migração para cima e para baixo. Contra a base local: processo real carregado 
 recarregado sem alterações; num projeto do PM A as etapas de suporte vão para a pessoa de Suporte
 (delegado), num do PM C para o próprio PM C; marcar/desmarcar testado no browser.
 
+**Âmbito do Suporte de Operações:** as permissões compostas são aditivas; o histórico de dados é filtrado por tipo; calendário, pessoas e instaladores respeitam o âmbito delegado. `/api/people` devolve, fora dos perfis globais de gestão, apenas a pessoa própria, PMs e responsáveis de tarefas dos projetos visíveis, sem email; inventário mantém o catálogo global mas filtra movimentos/localizações ao âmbito de projetos visíveis e conserva o stock central sem projeto.
+
 
 ## D-074 — Progresso do legado migrado e progresso vindo do processo (PR 6 do plano)
 
@@ -3021,3 +3023,108 @@ restantes já estavam completos; repetição sem alterações. Um projeto entreg
 **Decisão.** A lista (`GET /api/projects`) ordena por estado (On hold, Preparação, Construção, Construído, Entregue, Certificado, sem estado) e, dentro de cada estado, por ordem cronológica de entrada no programa (mais antigo primeiro), com desempate pela data de ligação (`upac_connection_date_raw`, ISO) e depois pelo nome. Nova coluna `projects.entered_at`: projetos novos ficam com o momento da criação; os do legado com a data de início (a do ClickUp), porque o export não traz outra data de criação. A migração `b4d8f2a6c1e3` preenche os existentes (data de início, ou a criação do registo se faltar).
 
 **Consequências.** `entered_at` não é editável nem exposto na API. Se surgir a data de criação real do ClickUp, basta reescrever esta coluna.
+
+## D-078 — Catálogo de inventário e stock inicial append-only
+
+**Decisão.** O catálogo de artigos e localizações é gerido pela permissão
+`inventory.manage_catalog`, provisionada pela migração `8a1d3f4c6b90`. Existe
+exatamente uma localização central ativa; alterações ao catálogo geram histórico
+de auditoria na mesma transação. O stock inicial é registado como movimento
+append-only e aceita replay idempotente através da chave e do fingerprint
+canónico do pedido.
+
+**Consequências.** A localização central é resolvida no servidor e não pode ser
+duplicada ou removida sem manter o invariante. Replays com a mesma chave e
+pedido divergente devolvem conflito; referências entretanto inativas continuam
+a permitir o replay já existente.
+
+**Verificado.** No snapshot final desta fase: SQLite 738 testes de backend passaram e 2 foram ignorados; PostgreSQL 16 passou 737 e ignorou 3 (2 avisos em ambos). O frontend passou 244 testes Vitest em 27 ficheiros; `tsc` e `vite build` concluíram com sucesso. As migrações passaram `upgrade head` → `downgrade -1` → `upgrade head`; lint e diff-check concluíram com sucesso. A execução PostgreSQL cobriu a suite, mas os três testes de concorrência específicos continuam marcados como incompatíveis com o fixture SQLite e não têm equivalente concorrente PostgreSQL neste snapshot.
+
+## D-079 — Uso no telemóvel: barra inferior, tabelas em cartões, instalável
+
+**Decisão.** Otimização simples, sem reescrever páginas: abaixo de 760 px aparece uma barra inferior (Painel, Projetos, Tarefas, Agenda + "Mais", que abre o menu completo; respeita permissões); todas as `.table` passam a cartões só com CSS (o `Layout` copia o nome da coluna para `data-label` com um `MutationObserver`); botões/inputs com ≥ 44 px e inputs a 16 px (sem zoom no iOS); modais em ecrã inteiro com rodapé fixo; planeamento um dia por linha; listas e badges quebram linha. `manifest.webmanifest` + ícones permitem "Adicionar ao ecrã principal" (sem service worker / offline).
+
+**Consequências.** Só frontend; sem API nem migração. Desktop inalterado.
+
+## D-080 — Férias com aprovação do Chefe de Operações
+
+**Decisão.** Só `ferias` exige aprovação quando o criador não tem `absence.approve`.
+`baixa_medica` e `outro` ficam aprovadas ao criar. O Chefe de Operações e o
+Administrador têm `absence.approve`; férias criadas por esses perfis ficam
+aprovadas de imediato e registam o criador e o momento da decisão.
+
+**Estados e auditoria.** `absences.status` passou a `pendente`, `aprovada`,
+`rejeitada` ou `cancelada`, com `decided_by_person_id`, `decided_at` e
+`decision_note`. Aprovar/rejeitar só parte de `pendente`; rejeitar exige nota;
+rejeitada e cancelada são finais. Cancelar uma pendente ou aprovada é permitido
+ao próprio (com `absence.manage_own`) ou a quem tem `absence.manage_all`, e as
+datas continuam imutáveis — para mudar datas cancela-se e cria-se um pedido novo.
+O cancelamento é auditado separadamente em `cancelled_by_person_id` e
+`cancelled_at`: cancelar uma ausência aprovada nunca substitui quem a aprovou nem
+`decided_at`; a API expõe também `cancelled_by_display_name`.
+O PATCH genérico só aceita `note`; as transições usam endpoints explícitos.
+
+**Avisos e painel.** Quem aprova vê todas as ausências e recebe, sem bloqueio,
+os projetos ativos em Preparação/Construção e as outras ausências pendentes ou
+aprovadas que intersectam a janela. O painel conta pedidos pendentes apenas para
+quem tem `absence.approve`; pendentes nunca contam como pessoas ausentes.
+Não há email nesta fase: a interface mostra contador, filtro "Por aprovar",
+ações de aprovar/rejeitar com nota e estados pendentes/rejeitados no calendário.
+
+**Migração:** `d1a7f3c9e2b4` acrescenta os campos de decisão com `batch_alter_table`.
+Estados antigos válidos são preservados; no downgrade, `pendente` e `rejeitada`
+passam a `cancelada` antes de remover as colunas, porque não existem no esquema
+anterior.
+
+**Verificado:** os testes alvo de backend passaram (36 testes); `tsc` e
+Vitest de `src/pages` passaram (127 testes); migração para cima, para baixo e
+para cima novamente. Testes cobrem as transições por papel, a nota obrigatória,
+o contador do painel, a exclusão de pendentes das ausências atuais, os avisos
+de obras, os botões condicionados por `can_*` e a preservação da auditoria ao
+cancelar uma ausência aprovada ou pendente.
+
+## D-081 — Trocar/atribuir o PM diretamente na lista e no detalhe do projeto
+
+**Decisão.** Novo componente `PmInlineSelect` mostra um dropdown com as
+pessoas disponíveis sempre que o servidor indica, via `project.editable_fields`
+(D-028), que o utilizador pode editar `pm_person_id` — hoje quem tem
+`project.edit_all` (Chefe de Operações, Administrador). Quem não tem essa
+permissão continua a ver só o nome do PM (ou "Sem PM"), sem controlo nenhum —
+a regra de autorização é sempre a mesma de `can_edit_project`, nunca uma
+segunda verificação no cliente. Integrado em `ProjectsList` (coluna PM) e
+`ProjectDetail` (cabeçalho), substituindo o Avatar/Badge estático que lá
+estava quando a edição é permitida.
+
+**Sem migração.** Só frontend (componente novo) + reutilização do
+`PATCH /api/projects/{id}` já existente — `pm_person_id` já fazia parte de
+`ProjectUpdate` e da allowlist administrativa (`ADMIN_ONLY_PROJECT_FIELDS`),
+não foi preciso tocar em permissões, modelo ou rotas.
+
+**Verificado:** 3 testes novos de `PmInlineSelect` (controlo oculto sem
+permissão; grava e atualiza ao escolher; lista as pessoas corretamente);
+suite completa do worktree com pytest (720 passed, 2 skipped), migração
+up/down/up, lint, Vitest (241 passed) e build, todos verdes; `tsc --noEmit`
+e Vitest (277 passed, 31 ficheiros) repetidos no principal depois de aplicar
+o patch, para confirmar que não há conflito com o WIP já presente.
+
+## D-082 — `notes` nulo nos dados satélite já não dá 500
+
+`ProjectInstallationData.notes` (e `ProjectLicensingData.notes`) são NOT NULL, mas os schemas de update aceitam `null` para limpar o campo; o `PATCH /installation-data` com `notes: null` rebentava com `IntegrityError` (500). `_upsert` passa a converter `null` em `""` em qualquer coluna NOT NULL. Fora de âmbito: `database is locked` esporádico em rajadas de gravações no SQLite (deadlock leitura→escrita; WAL não resolve e altera o procedimento de backup) — por tratar à parte.
+
+Verificado: teste de regressão `test_null_notes_is_stored_as_empty_string_not_500` (vermelho antes, verde depois).
+
+## D-083 — Demo explicitamente sinalizada quando contém dados reais
+
+Quando `DEMO_MODE=true`, `DEMO_REAL_DATA` (por omissão `false`) permite declarar que a
+fonte da demonstração contém dados reais. O backend só expõe `demo_real_data` em `/health`
+quando o modo demo está efetivamente ativo; o frontend troca o aviso de dados sintéticos por
+`Ambiente de demonstração — contém dados reais de clientes. Não partilhar fora da equipa.` e
+a página de estado mostra `Ativo (contém dados reais)`. Não se alterou o `docker-compose` nem
+se fez deploy; a proteção depende de configuração explícita e o estado é visível para evitar
+partilha acidental.
+
+## D-084 — Importador de notas: pessoas de contacto mapeadas
+
+O export v11 lista várias "Pessoas de contacto no local"; antes ficavam como campo desconhecido. Passam a ser extraídas (`contactos`): a primeira é o contacto principal do projeto, as restantes vão para as notas. Sem alteração de esquema nem migração.
+
+Verificado: testes `test_v11_multiple_contact_people_*` e `test_contactos_payload_is_validated_as_hostile_input`; export real v11 extraído e validado (contacto principal preenchido, "Pessoas de contacto" já não aparece como campo desconhecido).

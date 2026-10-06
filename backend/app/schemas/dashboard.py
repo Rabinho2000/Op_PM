@@ -53,7 +53,7 @@ class WeekDaySummary(BaseModel):
 
 class DashboardSummary(BaseModel):
     generated_at: dt.datetime
-    scope: str  # all | own | none
+    scope: str  # all | own | delegated | none
     week_start: dt.date
     week_end: dt.date
 
@@ -72,3 +72,4 @@ class DashboardSummary(BaseModel):
     # D-051 — aditivos, com omissão vazia para não partir clientes antigos.
     projects_photos_pending: list[ProjectMini] = []
     week_overview: list[WeekDaySummary] = []
+    pending_absences_count: int | None = None

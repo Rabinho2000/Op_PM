@@ -5,6 +5,7 @@ import {
   AbsenceMini,
   AbsenceType,
   ApiError,
+  approveAbsence,
   BirthdayMini,
   cancelAbsence,
   createAbsence,
@@ -12,6 +13,7 @@ import {
   listAbsences,
   listPeople,
   Person,
+  rejectAbsence,
 } from "../api/client";
 import Icon from "../components/Icon";
 import { useToast } from "../components/Toast";
@@ -44,6 +46,15 @@ function monthGrid(year: number, month: number): string[] {
     d.setUTCDate(start.getUTCDate() + i);
     return d.toISOString().slice(0, 10);
   });
+}
+
+function AbsenceApprovalMeta({ absence }: { absence: Absence }) {
+  if (!absence.decided_by_display_name || !absence.decided_at) return null;
+  return (
+    <div className="small muted" style={{ marginTop: 4 }}>
+      Aprovada por {absence.decided_by_display_name} em {formatDatePt(absence.decided_at.slice(0, 10))}
+    </div>
+  );
 }
 
 function CreateAbsenceModal({
@@ -193,6 +204,73 @@ function CreateAbsenceModal({
   );
 }
 
+function RejectAbsenceModal({
+  absence,
+  onClose,
+  onRejected,
+}: {
+  absence: Absence;
+  onClose: () => void;
+  onRejected: (note: string) => Promise<void>;
+}) {
+  const [note, setNote] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    const clean = note.trim();
+    if (!clean) {
+      setError("Indique o motivo da rejeição.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await onRejected(clean);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : "Não foi possível rejeitar o pedido.");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      title="Rejeitar pedido de férias"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose} disabled={saving}>
+            Cancelar
+          </button>
+          <button type="submit" form="reject-absence-form" className="btn btn--danger" disabled={saving}>
+            {saving ? "A rejeitar…" : "Rejeitar"}
+          </button>
+        </>
+      }
+    >
+      <form id="reject-absence-form" onSubmit={handleSubmit}>
+        {error && <Alert tone="danger">{error}</Alert>}
+        <p>
+          Pedido de <strong>{absence.person_display_name}</strong> entre {formatDatePt(absence.start_date)} e{" "}
+          {formatDatePt(absence.end_date)}.
+        </p>
+        <div className="field">
+          <label htmlFor="rejection-note">Motivo da rejeição *</label>
+          <textarea
+            id="rejection-note"
+            className="textarea"
+            rows={4}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            autoFocus
+          />
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 export default function Vacations() {
   const { me, can } = useSession();
   const { notify } = useToast();
@@ -204,12 +282,18 @@ export default function Vacations() {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState<Absence | null>(null);
+  const [rejecting, setRejecting] = useState<Absence | null>(null);
   const [showCancelled, setShowCancelled] = useState(false);
+  const [view, setView] = useState<"all" | "pending">(() => {
+    if (typeof window === "undefined") return "all";
+    return new URLSearchParams(window.location.search).get("status") === "pendente" ? "pending" : "all";
+  });
   const today = todayIsoLisbon();
   const [cursor, setCursor] = useState(() => ({ year: Number(today.slice(0, 4)), month: Number(today.slice(5, 7)) - 1 }));
 
   const canManageAll = can("absence.manage_all");
   const canManageOwn = can("absence.manage_own");
+  const canApprove = can("absence.approve");
   const seesEveryone = can("absence.view_all");
 
   const load = useCallback(() => {
@@ -238,9 +322,13 @@ export default function Vacations() {
       .catch(() => setPeople([]));
   }, [canManageAll]);
 
-  const approved = useMemo(() => (absences ?? []).filter((a) => a.status === "aprovada"), [absences]);
+  const calendarAbsences = useMemo(
+    () => (absences ?? []).filter((a) => a.status === "aprovada" || a.status === "pendente"),
+    [absences]
+  );
+  const pending = useMemo(() => (absences ?? []).filter((a) => a.status === "pendente"), [absences]);
   const tableRows = (absences ?? [])
-    .filter((a) => showCancelled || a.status === "aprovada")
+    .filter((a) => (canApprove && view === "pending" ? a.status === "pendente" : showCancelled || a.status !== "cancelada"))
     .slice()
     .sort((a, b) => b.start_date.localeCompare(a.start_date));
 
@@ -252,6 +340,24 @@ export default function Vacations() {
       const m = month + delta;
       return { year: year + Math.floor(m / 12), month: ((m % 12) + 12) % 12 };
     });
+  }
+
+  async function handleApprove(absence: Absence) {
+    try {
+      await approveAbsence(absence.id);
+      notify("Pedido de férias aprovado.", "success");
+      load();
+    } catch (e) {
+      notify(e instanceof ApiError ? e.detail : "Não foi possível aprovar o pedido.", "error");
+    }
+  }
+
+  async function handleReject(note: string) {
+    if (!rejecting) return;
+    await rejectAbsence(rejecting.id, note);
+    setRejecting(null);
+    notify("Pedido de férias rejeitado.", "success");
+    load();
   }
 
   async function handleCancel(absence: Absence) {
@@ -283,6 +389,29 @@ export default function Vacations() {
           )
         }
       />
+
+      {canApprove && (
+        <div className="tabs" role="tablist" aria-label="Filtro de ausências">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === "all"}
+            className="tab"
+            onClick={() => setView("all")}
+          >
+            Todas
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === "pending"}
+            className="tab"
+            onClick={() => setView("pending")}
+          >
+            Por aprovar <span className="tab__count">{pending.length}</span>
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="card">
@@ -325,12 +454,15 @@ export default function Vacations() {
                 ))}
                 {days.map((iso, i) => {
                   const inMonth = Number(iso.slice(5, 7)) - 1 === cursor.month;
-                  const events = approved.filter((a) => a.start_date <= iso && iso <= a.end_date);
+                  const events = calendarAbsences.filter((a) => a.start_date <= iso && iso <= a.end_date);
                   const birthday = birthdayByDate.get(iso);
                   const weekend = i % 7 >= 5;
                   const label = [
                     formatDatePt(iso),
-                    ...events.map((a) => `${a.person_display_name}: ${ABSENCE_TYPE_LABELS[a.type]}`),
+                    ...events.map(
+                      (a) =>
+                        `${a.person_display_name}: ${ABSENCE_TYPE_LABELS[a.type]}${a.status === "pendente" ? " (pendente)" : ""}`
+                    ),
                     birthday ? `Aniversário de ${birthday.person_display_name}` : "",
                   ]
                     .filter(Boolean)
@@ -358,10 +490,15 @@ export default function Vacations() {
                       {events.slice(0, 3).map((a) => (
                         <span
                           key={a.id}
-                          className={`calendar__event tone-${ABSENCE_TYPE_TONES[a.type]}`}
+                          className={`calendar__event tone-${ABSENCE_TYPE_TONES[a.type]} ${
+                            a.status === "pendente" ? "calendar__event--pending" : ""
+                          }`}
                           aria-hidden="true"
-                          title={`${a.person_display_name} — ${ABSENCE_TYPE_LABELS[a.type]}`}
+                          title={`${a.person_display_name} — ${ABSENCE_TYPE_LABELS[a.type]}${
+                            a.status === "pendente" ? " (pendente)" : ""
+                          }`}
                         >
+                          {a.status === "pendente" ? "⏳ " : ""}
                           {a.person_display_name}
                         </span>
                       ))}
@@ -382,6 +519,10 @@ export default function Vacations() {
                   {ABSENCE_TYPE_LABELS[t]}
                 </span>
               ))}
+              <span>
+                <span className="legend__swatch calendar__legend-pending" />
+                Pendente (tracejado)
+              </span>
               <span>🎂 Aniversário</span>
             </div>
           </Card>
@@ -503,30 +644,73 @@ export default function Vacations() {
                         <td className="nowrap">
                           {formatDatePt(a.start_date)} – {formatDatePt(a.end_date)}
                         </td>
-                        <td>{a.note || <span className="muted">—</span>}</td>
                         <td>
-                          {a.status === "aprovada" ? (
-                            a.end_date < today ? (
-                              <Badge>Terminada</Badge>
-                            ) : a.start_date <= today ? (
-                              <Badge tone="violet" dot>
-                                Em curso
-                              </Badge>
-                            ) : (
-                              <Badge tone="success" dot>
-                                Aprovada
-                              </Badge>
-                            )
-                          ) : (
-                            <Badge tone="neutral">Cancelada</Badge>
+                          {a.note || <span className="muted">—</span>}
+                          {canApprove && (a.overlapping_projects_count > 0 || a.overlapping_absences_count > 0) && (
+                            <div className="small" style={{ color: "var(--warning)", marginTop: 4 }}>
+                              {a.overlapping_projects_count > 0 && (
+                                <>
+                                  {a.overlapping_projects_count} obra{a.overlapping_projects_count > 1 ? "s" : ""} na janela:{" "}
+                                  {a.overlapping_projects.map((project) => project.name).join(", ")}
+                                </>
+                              )}
+                              {a.overlapping_projects_count > 0 && a.overlapping_absences_count > 0 && " · "}
+                              {a.overlapping_absences_count > 0 && "outra ausência sobreposta"}
+                            </div>
                           )}
                         </td>
                         <td>
-                          {a.can_cancel && a.end_date >= today && (
-                            <button type="button" className="btn btn--sm btn--danger" onClick={() => setConfirmCancel(a)}>
-                              Cancelar
-                            </button>
+                          {a.status === "aprovada" ? (
+                            <>
+                              {a.end_date < today ? (
+                                <Badge>Terminada</Badge>
+                              ) : a.start_date <= today ? (
+                                <Badge tone="violet" dot>
+                                  Em curso
+                                </Badge>
+                              ) : (
+                                <Badge tone="success" dot>
+                                  Aprovada
+                                </Badge>
+                              )}
+                              <AbsenceApprovalMeta absence={a} />
+                            </>
+                          ) : a.status === "pendente" ? (
+                            <Badge tone="warning" dot>
+                              Pendente
+                            </Badge>
+                          ) : a.status === "rejeitada" ? (
+                            <Badge tone="danger">{`Rejeitada${a.decision_note ? ` — ${a.decision_note}` : ""}`}</Badge>
+                          ) : (
+                            <>
+                              <Badge tone="neutral">Cancelada</Badge>
+                              <AbsenceApprovalMeta absence={a} />
+                              {a.cancelled_by_display_name && a.cancelled_at && (
+                                <div className="small muted" style={{ marginTop: 4 }}>
+                                  Cancelada por {a.cancelled_by_display_name} em {formatDatePt(a.cancelled_at.slice(0, 10))}
+                                </div>
+                              )}
+                            </>
                           )}
+                        </td>
+                        <td>
+                          <div className="badges">
+                            {a.can_approve && (
+                              <button type="button" className="btn btn--sm btn--primary" onClick={() => handleApprove(a)}>
+                                Aprovar
+                              </button>
+                            )}
+                            {a.can_reject && (
+                              <button type="button" className="btn btn--sm btn--danger" onClick={() => setRejecting(a)}>
+                                Rejeitar
+                              </button>
+                            )}
+                            {a.can_cancel && (
+                              <button type="button" className="btn btn--sm btn--danger" onClick={() => setConfirmCancel(a)}>
+                                Cancelar
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -551,6 +735,10 @@ export default function Vacations() {
             load();
           }}
         />
+      )}
+
+      {rejecting && (
+        <RejectAbsenceModal absence={rejecting} onClose={() => setRejecting(null)} onRejected={handleReject} />
       )}
 
       {confirmCancel && (

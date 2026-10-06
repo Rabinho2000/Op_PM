@@ -7,6 +7,7 @@ import type { Absence } from "../api/client";
 import { COMERCIAL_ME, makeMe, makeProject, makeSummary, makeTask } from "../test/fixtures";
 import { renderWithProviders } from "../test/render";
 import Login from "./Login";
+import Home from "./Home";
 import ProjectDetail from "./ProjectDetail";
 import Vacations from "./Vacations";
 
@@ -17,9 +18,19 @@ const api = vi.hoisted(() => ({
   listPeople: vi.fn(),
   updateTask: vi.fn(),
   listAbsences: vi.fn(),
+  approveAbsence: vi.fn(),
+  rejectAbsence: vi.fn(),
   getDashboardSummary: vi.fn(),
   getHealth: vi.fn(),
+  hasActiveSession: vi.fn(() => false),
 }));
+
+const routerNavigate = vi.hoisted(() => vi.fn());
+
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
+  return { ...actual, useNavigate: () => routerNavigate };
+});
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
@@ -38,9 +49,22 @@ function absence(overrides: Partial<Absence> = {}): Absence {
     note: "",
     status: "aprovada",
     created_by_person_id: null,
+    decided_by_person_id: null,
+    decided_by_display_name: null,
+    decided_at: null,
+    cancelled_by_person_id: null,
+    cancelled_by_display_name: null,
+    cancelled_at: null,
+    decision_note: "",
     created_at: "2026-09-01T10:00:00Z",
     updated_at: "2026-09-01T10:00:00Z",
     person_display_name: "Comercial Sintético",
+    overlapping_absences: [],
+    overlapping_absences_count: 0,
+    overlapping_projects: [],
+    overlapping_projects_count: 0,
+    can_approve: false,
+    can_reject: false,
     can_cancel: false,
     ...overrides,
   };
@@ -48,6 +72,8 @@ function absence(overrides: Partial<Absence> = {}): Absence {
 
 beforeEach(() => {
   Object.values(api).forEach((fn) => fn.mockReset());
+  routerNavigate.mockReset();
+  api.hasActiveSession.mockReturnValue(false);
   api.getProjectHistory.mockResolvedValue([]);
   api.listPeople.mockResolvedValue([]);
   api.listTasks.mockResolvedValue([makeTask()]);
@@ -131,11 +157,56 @@ describe("Férias — permissões", () => {
     expect(within(deniedRow).queryByRole("button", { name: "Cancelar" })).not.toBeInTheDocument();
   });
 
+  it("mostra o histórico de aprovação e cancelamento", async () => {
+    api.listAbsences.mockResolvedValue([
+      absence({
+        status: "cancelada",
+        decided_by_person_id: "p-chefe",
+        decided_by_display_name: "Chefe Sintético",
+        decided_at: "2026-09-01T10:00:00Z",
+        cancelled_by_person_id: "p-comercial",
+        cancelled_by_display_name: "Comercial Sintético",
+        cancelled_at: "2026-09-02T10:00:00Z",
+      }),
+    ]);
+    renderWithProviders(<Vacations />, { me: makeMe() });
+    fireEvent.click(await screen.findByLabelText("Mostrar canceladas"));
+
+    expect(await screen.findByText("Aprovada por Chefe Sintético em 01/09/2026")).toBeInTheDocument();
+    expect(screen.getByText("Cancelada por Comercial Sintético em 02/09/2026")).toBeInTheDocument();
+  });
+
   it("sem permissão de gestão não oferece registo de ausências", async () => {
     api.listAbsences.mockResolvedValue([]);
     renderWithProviders(<Vacations />, { me: makeMe({ permissions: ["absence.view_own"] }) });
     expect(await screen.findByText("Sem ausências registadas.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Registar ausência/ })).not.toBeInTheDocument();
+  });
+  it("aprovador vê as ações que o servidor autorizou e rejeita com nota", async () => {
+    api.listAbsences.mockResolvedValue([
+      absence({ status: "pendente", can_approve: true, can_reject: true, person_display_name: "PM Sintético Um" }),
+    ]);
+    api.approveAbsence.mockResolvedValue(absence({ status: "aprovada" }));
+    api.rejectAbsence.mockResolvedValue(absence({ status: "rejeitada", decision_note: "Janela incompatível" }));
+    renderWithProviders(<Vacations />, { me: makeMe() });
+
+    const row = (await screen.findByText("PM Sintético Um", { selector: "td span" })).closest("tr")!;
+    expect(within(row).getByRole("button", { name: "Aprovar" })).toBeInTheDocument();
+    fireEvent.click(within(row).getByRole("button", { name: "Rejeitar" }));
+    const dialog = screen.getByRole("dialog", { name: "Rejeitar pedido de férias" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rejeitar" }));
+    expect(await within(dialog).findByText("Indique o motivo da rejeição.")).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Motivo da rejeição *"), { target: { value: "Janela incompatível" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rejeitar" }));
+    await waitFor(() => expect(api.rejectAbsence).toHaveBeenCalledWith("abs-1", "Janela incompatível"));
+  });
+
+  it("o painel mostra férias por aprovar só quando o contador é positivo", async () => {
+    api.getDashboardSummary.mockResolvedValue(makeSummary({ pending_absences_count: 2 }));
+    renderWithProviders(<Home />, { me: makeMe() });
+    const link = await screen.findByRole("link", { name: /Férias por aprovar/ });
+    expect(link).toHaveAttribute("href", "/vacations?status=pendente");
+    expect(screen.getByText("2")).toBeInTheDocument();
   });
 });
 
@@ -166,5 +237,20 @@ describe("Login — separação entre demo e login Microsoft", () => {
     expect(await screen.findByText("Este servidor não aceita o modo demonstração.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Chefe de Operações/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Entrar com Microsoft/ })).toBeInTheDocument();
+  });
+
+  it("com sessão já ativa (regresso do login Microsoft) segue para a aplicação", async () => {
+    api.getHealth.mockResolvedValue({ status: "ok", app_env: "local", database_dialect: "sqlite", integrations: {} });
+    api.hasActiveSession.mockReturnValue(true);
+    renderWithProviders(<Login />);
+    await waitFor(() => expect(routerNavigate).toHaveBeenCalledWith("/", { replace: true }));
+  });
+
+  it("não redireciona quando o servidor recusou a sessão (evita ciclo)", async () => {
+    api.getHealth.mockResolvedValue({ status: "ok", app_env: "local", database_dialect: "sqlite", integrations: {} });
+    api.hasActiveSession.mockReturnValue(true);
+    renderWithProviders(<Login />, { route: "/login?sessionExpired=1" });
+    expect(await screen.findByText("A sua sessão expirou. Inicie sessão novamente.")).toBeInTheDocument();
+    expect(routerNavigate).not.toHaveBeenCalled();
   });
 });

@@ -9,7 +9,7 @@ export function makeMe(overrides: Partial<MeResponse> = {}): MeResponse {
     display_name: "Chefe Sintético",
     roles: ["chefe_operacoes"],
     role_labels: ["Chefe de Operações"],
-    permissions: ["project.view_all", "project.edit_all", "task.view_all", "task.edit_all", "absence.view_all", "absence.manage_all", "migration.view"],
+    permissions: ["project.view_all", "project.edit_all", "task.view_all", "task.edit_all", "absence.view_all", "absence.manage_all", "absence.approve", "migration.view"],
     ...overrides,
   };
 }
@@ -44,6 +44,7 @@ export function makeSummary(overrides: Partial<DashboardSummary> = {}): Dashboar
     urgent_tasks: [],
     projects_photos_pending: [],
     week_overview: [],
+    pending_absences_count: null,
     ...overrides,
   };
 }

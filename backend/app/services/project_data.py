@@ -59,6 +59,7 @@ def _upsert(
     changed_by_person_id: uuid.UUID | None,
     source: str = "ui",
     note: str = "",
+    commit: bool = True,
 ) -> _ModelT:
     entity_type = _ENTITY_TYPE_BY_MODEL[model_cls]
     instance = db.query(model_cls).filter(model_cls.project_id == project_id).one_or_none()
@@ -66,7 +67,13 @@ def _upsert(
         instance = model_cls(project_id=project_id)
         db.add(instance)
 
+    columns = model_cls.__table__.columns
     for field_name, new_value in changes.items():
+        # Colunas NOT NULL (ex. `notes`) não aceitam null: o schema de update
+        # aceita null para "limpar o campo", que aqui significa valor vazio.
+        column = columns.get(field_name)
+        if new_value is None and column is not None and not column.nullable:
+            new_value = ""
         old_value = getattr(instance, field_name, None)
         if old_value == new_value:
             continue
@@ -84,7 +91,10 @@ def _upsert(
         )
         setattr(instance, field_name, new_value)
 
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     db.refresh(instance)
     return instance
 
@@ -97,6 +107,7 @@ def upsert_installation_data(
     changed_by_person_id: uuid.UUID | None,
     source: str = "ui",
     note: str = "",
+    commit: bool = True,
 ) -> ProjectInstallationData:
     return _upsert(
         db,
@@ -106,6 +117,7 @@ def upsert_installation_data(
         changed_by_person_id=changed_by_person_id,
         source=source,
         note=note,
+        commit=commit,
     )
 
 
@@ -117,6 +129,7 @@ def upsert_licensing_data(
     changed_by_person_id: uuid.UUID | None,
     source: str = "ui",
     note: str = "",
+    commit: bool = True,
 ) -> ProjectLicensingData:
     return _upsert(
         db,
@@ -126,6 +139,7 @@ def upsert_licensing_data(
         changed_by_person_id=changed_by_person_id,
         source=source,
         note=note,
+        commit=commit,
     )
 
 
@@ -150,9 +164,15 @@ def upsert_communication_data(
 
 
 def list_data_history(
-    db: Session, project_id: uuid.UUID, *, entity_type: str | None = None
+    db: Session,
+    project_id: uuid.UUID,
+    *,
+    entity_type: str | None = None,
+    allowed_entity_types: set[str] | frozenset[str] | None = None,
 ) -> list[ProjectDataHistory]:
     query = db.query(ProjectDataHistory).filter(ProjectDataHistory.project_id == project_id)
     if entity_type is not None:
         query = query.filter(ProjectDataHistory.entity_type == entity_type)
+    if allowed_entity_types is not None:
+        query = query.filter(ProjectDataHistory.entity_type.in_(allowed_entity_types))
     return query.order_by(ProjectDataHistory.changed_at.desc()).all()

@@ -49,7 +49,13 @@ export default function SystemStatus() {
               <dt>Base de dados</dt>
               <dd>{health.database_dialect}</dd>
               <dt>Modo demonstração</dt>
-              <dd>{health.demo_mode ? "Ativo (dados sintéticos)" : "Inativo"}</dd>
+              <dd>
+                {health.demo_mode
+                  ? health.demo_real_data
+                    ? "Ativo (contém dados reais)"
+                    : "Ativo (dados sintéticos)"
+                  : "Inativo"}
+              </dd>
             </dl>
           )}
         </Card>

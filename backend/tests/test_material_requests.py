@@ -464,7 +464,7 @@ def test_a_price_with_more_than_four_decimals_is_refused_not_rounded(api_client,
     body = _create(api_client, project, supplier=supplier).json()
     _act(api_client, body["id"], "send")
     resp = _act(api_client, body["id"], "record_quote", prices=_prices(body, price, "1"))
-    assert resp.status_code == 400
-    assert "4 casas decimais" in resp.json()["detail"]
+    assert resp.status_code == 422
+    assert "4 decimal places" in resp.json()["detail"][0]["msg"]
     # nada ficou gravado
     assert api_client.get(f"/api/material-requests/{body['id']}", headers=_h(CHEFE)).json()["status"] == "pedido_enviado"

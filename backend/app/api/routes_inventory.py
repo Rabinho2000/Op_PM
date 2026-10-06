@@ -4,20 +4,24 @@ diretamente. Ver docs/INVENTORY_RULES.md para o contrato de negócio.
 """
 from __future__ import annotations
 
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models.inventory import (
     MOVEMENT_AJUSTE,
     MOVEMENT_ENTRADA,
+    InventoryCatalogHistory,
     InventoryItem,
     InventoryLocation,
     InventoryMovement,
     ProjectMaterialRequirement,
 )
+from app.models.people import Person
 from app.models.project import Project
 from app.schemas.inventory import (
     InventoryItemRead,
@@ -27,9 +31,17 @@ from app.schemas.inventory import (
     ProjectInventoryOperationCreate,
     ProjectInventorySummary,
     ProjectMaterialRequirementCreate,
-    ProjectOnSiteRead,
     ProjectMaterialRequirementRead,
     ProjectMaterialRequirementUpdate,
+    ProjectOnSiteRead,
+)
+from app.schemas.inventory_catalog import (
+    InventoryCatalogHistoryRead,
+    InventoryItemCreate,
+    InventoryItemUpdate,
+    InventoryLocationCreate,
+    InventoryLocationUpdate,
+    OpeningStockCreate,
 )
 from app.security.current_user import get_auth_context
 from app.security.permissions import (
@@ -45,6 +57,8 @@ from app.security.permissions import (
     can_view_project,
 )
 from app.services.inventory import (
+    IdempotencyConflictError,
+    InactiveInventoryReferenceError,
     InsufficientReservationError,
     InsufficientStockError,
     InventoryError,
@@ -61,6 +75,19 @@ from app.services.inventory import (
     reserve_for_project,
     return_to_stock,
     update_material_requirement,
+)
+from app.services.projects import visible_projects_query
+from app.services.inventory_catalog import (
+    CatalogError,
+    CentralLocationInvariantError,
+    DuplicateCatalogValueError,
+    InactiveReferenceError,
+    create_inventory_item,
+    create_inventory_location,
+    deactivate_inventory_item,
+    deactivate_inventory_location,
+    update_inventory_item_atomic,
+    update_inventory_location_atomic,
 )
 
 router = APIRouter(prefix="/api/inventory", tags=["inventory"])
@@ -94,6 +121,55 @@ def _require(ctx: AuthContext, permission_code: str) -> None:
         raise HTTPException(status_code=403, detail=f"Sem permissão: {exc}")
 
 
+def _require_catalog(ctx: AuthContext) -> None:
+    _require(ctx, "inventory.manage_catalog")
+
+
+def _visible_project_ids(db: Session, ctx: AuthContext):
+    return visible_projects_query(db, ctx).with_entities(Project.id).subquery()
+
+
+def _filter_project_scope(query, project_column, db: Session, ctx: AuthContext):
+    """Mantém stock sem projeto visível e restringe o restante ao âmbito de
+    projetos efetivo. `inventory.manage_central`/`manage_catalog` não ampliam
+    esta leitura: só `project.view_all` é global."""
+    if ctx.has_permission("project.view_all"):
+        return query
+    project_ids = _visible_project_ids(db, ctx)
+    return query.filter(
+        or_(
+            project_column.is_(None),
+            project_column.in_(select(project_ids.c.id)),
+        )
+    )
+
+
+def _filter_catalog_history_scope(query, db: Session, ctx: AuthContext):
+    """Artigo de catálogo é global; histórico de localização segue o projeto
+    associado à localização, incluindo a localização central sem projeto."""
+    if ctx.has_permission("project.view_all"):
+        return query
+    project_ids = _visible_project_ids(db, ctx)
+    return query.outerjoin(
+        InventoryLocation,
+        and_(
+            InventoryCatalogHistory.entity_type == "location",
+            InventoryCatalogHistory.entity_id == InventoryLocation.id,
+        ),
+    ).filter(
+        or_(
+            InventoryCatalogHistory.entity_type == "item",
+            and_(
+                InventoryCatalogHistory.entity_type == "location",
+                or_(
+                    InventoryLocation.project_id.is_(None),
+                    InventoryLocation.project_id.in_(select(project_ids.c.id)),
+                ),
+            ),
+        )
+    )
+
+
 def _get_project_or_404(db: Session, project_id: uuid.UUID, ctx: AuthContext) -> Project:
     project = db.get(Project, project_id)
     if project is None or not can_view_project(ctx, project):
@@ -124,7 +200,215 @@ def list_locations_endpoint(
     db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
 ) -> list[InventoryLocationRead]:
     _require(ctx, "inventory.view")
-    return db.query(InventoryLocation).order_by(InventoryLocation.name).all()
+    query = _filter_project_scope(db.query(InventoryLocation), InventoryLocation.project_id, db, ctx)
+    return [InventoryLocationRead.model_validate(location) for location in query.order_by(InventoryLocation.name).all()]
+
+
+@router.post("/locations", response_model=InventoryLocationRead, status_code=201)
+def create_location_endpoint(
+    body: InventoryLocationCreate,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> InventoryLocationRead:
+    _require_catalog(ctx)
+    try:
+        location = create_inventory_location(db, data=body.model_dump(), actor_person_id=ctx.person_id)
+    except (DuplicateCatalogValueError, CentralLocationInvariantError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except InactiveReferenceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except CatalogError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return InventoryLocationRead.model_validate(location)
+
+
+@router.patch("/locations/{location_id}", response_model=InventoryLocationRead)
+def update_location_endpoint(
+    location_id: uuid.UUID,
+    body: InventoryLocationUpdate,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> InventoryLocationRead:
+    _require_catalog(ctx)
+    location = db.get(InventoryLocation, location_id)
+    if location is None:
+        raise HTTPException(status_code=404, detail="Localização de inventário não encontrada.")
+    changes = body.model_dump(exclude_unset=True)
+    requested_active = changes.get("is_active")
+    deactivate = requested_active is False
+    if deactivate:
+        changes.pop("is_active")
+    try:
+        location = update_inventory_location_atomic(
+            db,
+            location=location,
+            changes=changes,
+            deactivate=deactivate,
+            actor_person_id=ctx.person_id,
+        )
+    except (DuplicateCatalogValueError, CentralLocationInvariantError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except InactiveReferenceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except CatalogError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return InventoryLocationRead.model_validate(location)
+
+
+@router.post("/locations/{location_id}/deactivate", response_model=InventoryLocationRead)
+def deactivate_location_endpoint(
+    location_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> InventoryLocationRead:
+    _require_catalog(ctx)
+    location = db.get(InventoryLocation, location_id)
+    if location is None:
+        raise HTTPException(status_code=404, detail="Localização de inventário não encontrada.")
+    try:
+        location = deactivate_inventory_location(db, location=location, actor_person_id=ctx.person_id)
+    except CentralLocationInvariantError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except CatalogError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return InventoryLocationRead.model_validate(location)
+
+
+@router.post("/opening-stock", response_model=InventoryMovementRead, status_code=201)
+def opening_stock_endpoint(
+    body: OpeningStockCreate,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> InventoryMovementRead:
+    if not can_manage_central_inventory(ctx):
+        raise HTTPException(status_code=403, detail="Sem permissão para registar stock inicial.")
+    item = db.get(InventoryItem, body.item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Artigo de inventário não encontrado.")
+    try:
+        movement = enter_stock(
+            db,
+            item=item,
+            quantity=body.quantity,
+            created_by_person_id=ctx.person_id,
+            reference=body.reference,
+            idempotency_key=body.idempotency_key,
+        )
+    except InventoryError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return _movement_to_read(db, movement)
+
+
+@router.get("/catalog-history", response_model=list[InventoryCatalogHistoryRead])
+def catalog_history_endpoint(
+    entity_id: uuid.UUID | None = None,
+    entity_type: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> list[InventoryCatalogHistoryRead]:
+    _require(ctx, "inventory.view")
+    query = _filter_catalog_history_scope(db.query(InventoryCatalogHistory), db, ctx)
+    if entity_id is not None:
+        query = query.filter(InventoryCatalogHistory.entity_id == entity_id)
+    if entity_type is not None:
+        if entity_type not in {"item", "location"}:
+            raise HTTPException(status_code=422, detail="Tipo de entidade inválido.")
+        query = query.filter(InventoryCatalogHistory.entity_type == entity_type)
+    entries = query.order_by(InventoryCatalogHistory.changed_at.desc()).all()
+    person_ids = {entry.changed_by_person_id for entry in entries}
+    person_ids.discard(None)
+    people = (
+        {person.id: person.display_name for person in db.query(Person).filter(Person.id.in_(person_ids)).all()}
+        if person_ids
+        else {}
+    )
+    result = []
+    for entry in entries:
+        try:
+            changes = json.loads(entry.changes_json)
+        except json.JSONDecodeError:
+            changes = {}
+        result.append(
+            InventoryCatalogHistoryRead(
+                id=entry.id,
+                entity_type=entry.entity_type,
+                entity_id=entry.entity_id,
+                action=entry.action,
+                changes=changes if isinstance(changes, dict) else {},
+                changed_by_person_id=entry.changed_by_person_id,
+                changed_by_person_name=people.get(entry.changed_by_person_id),
+                changed_at=entry.changed_at,
+            )
+        )
+    return result
+
+
+@router.post("/items", response_model=InventoryItemRead, status_code=201)
+def create_item_endpoint(
+    body: InventoryItemCreate,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> InventoryItemRead:
+    _require_catalog(ctx)
+    try:
+        item = create_inventory_item(db, data=body.model_dump(), actor_person_id=ctx.person_id)
+    except DuplicateCatalogValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except InactiveReferenceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except CatalogError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return _item_to_read(db, item)
+
+
+@router.patch("/items/{item_id}", response_model=InventoryItemRead)
+def update_item_endpoint(
+    item_id: uuid.UUID,
+    body: InventoryItemUpdate,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> InventoryItemRead:
+    _require_catalog(ctx)
+    item = db.get(InventoryItem, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Artigo de inventário não encontrado.")
+    changes = body.model_dump(exclude_unset=True)
+    requested_active = changes.get("is_active")
+    deactivate = requested_active is False
+    if deactivate:
+        changes.pop("is_active")
+    try:
+        item = update_inventory_item_atomic(
+            db,
+            item=item,
+            changes=changes,
+            deactivate=deactivate,
+            actor_person_id=ctx.person_id,
+        )
+    except DuplicateCatalogValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except InactiveReferenceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except CatalogError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return _item_to_read(db, item)
+
+
+@router.post("/items/{item_id}/deactivate", response_model=InventoryItemRead)
+def deactivate_item_endpoint(
+    item_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> InventoryItemRead:
+    _require_catalog(ctx)
+    item = db.get(InventoryItem, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Artigo de inventário não encontrado.")
+    try:
+        item = deactivate_inventory_item(db, item=item, actor_person_id=ctx.person_id)
+    except CatalogError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return _item_to_read(db, item)
 
 
 @router.get("/movements", response_model=list[InventoryMovementRead])
@@ -136,7 +420,7 @@ def list_movements_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[InventoryMovementRead]:
     _require(ctx, "inventory.view")
-    query = db.query(InventoryMovement)
+    query = _filter_project_scope(db.query(InventoryMovement), InventoryMovement.project_id, db, ctx)
     if item_id is not None:
         query = query.filter(InventoryMovement.item_id == item_id)
     if project_id is not None:
@@ -168,6 +452,7 @@ def create_central_movement_endpoint(
                 reference=body.reference,
                 unit_cost=body.unit_cost,
                 idempotency_key=body.idempotency_key,
+                location_id=body.location_id,
             )
         elif body.movement_type == MOVEMENT_AJUSTE:
             movement = adjust_stock(
@@ -177,6 +462,7 @@ def create_central_movement_endpoint(
                 created_by_person_id=ctx.person_id,
                 reference=body.reference,
                 idempotency_key=body.idempotency_key,
+                location_id=body.location_id,
             )
         else:
             raise HTTPException(
@@ -188,6 +474,10 @@ def create_central_movement_endpoint(
             )
     except InsufficientStockError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except InactiveInventoryReferenceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except InventoryError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _movement_to_read(db, movement)
@@ -351,6 +641,8 @@ def _project_operation(
         )
     except (InsufficientStockError, InsufficientReservationError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except InventoryError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _movement_to_read(db, movement)

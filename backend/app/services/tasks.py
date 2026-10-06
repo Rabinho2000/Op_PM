@@ -27,7 +27,14 @@ from app.models.task import (
     Task,
 )
 from app.schemas.tasks import TaskCreate, TaskUpdate
-from app.security.permissions import AuthContext, PermissionDenied, can_create_task, can_edit_task, can_view_task
+from app.security.permissions import (
+    AuthContext,
+    PermissionDenied,
+    can_create_task,
+    can_edit_task,
+    can_view_task,
+    has_only_delegated_project_scope,
+)
 from app.utils.timezones import today_lisbon
 
 # Máquina de estados: de onde -> para onde é permitido ir diretamente.
@@ -79,11 +86,23 @@ def ensure_default_tasks_for_project(db: Session, project: Project) -> list[Task
 def visible_tasks_query(db: Session, ctx: AuthContext) -> Query:
     if ctx.has_permission("task.view_all"):
         return db.query(Task)
-    if ctx.has_permission("task.view_own"):
-        return db.query(Task).join(Project, Task.project_id == Project.id).filter(
-            or_(Project.pm_person_id == ctx.person_id, Task.assigned_to_person_id == ctx.person_id)
-        )
-    return db.query(Task).filter(False)
+    if not ctx.has_permission("task.view_own"):
+        return db.query(Task).filter(False)
+
+    project_conditions = []
+    if ctx.has_permission("project.view_own"):
+        project_conditions.append(Project.pm_person_id == ctx.person_id)
+    if ctx.has_permission("project.view_delegated") and ctx.delegating_pm_ids:
+        project_conditions.append(Project.pm_person_id.in_(ctx.delegating_pm_ids))
+
+    conditions = []
+    if project_conditions:
+        conditions.append(or_(*project_conditions))
+    if not has_only_delegated_project_scope(ctx):
+        conditions.append(Task.assigned_to_person_id == ctx.person_id)
+    if not conditions:
+        return db.query(Task).filter(False)
+    return db.query(Task).join(Project, Task.project_id == Project.id).filter(or_(*conditions))
 
 
 def list_tasks(
