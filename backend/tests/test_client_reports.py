@@ -411,7 +411,7 @@ def test_preview_contains_safe_process_content_and_excludes_internal_data(db_ses
             old_value="Em curso",
             new_value="<alteração> & segura",
             source="ui",
-            changed_at=NOW - dt.timedelta(days=1),
+            changed_at=dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1),
         )
     )
     db_session.add(
@@ -421,7 +421,7 @@ def test_preview_contains_safe_process_content_and_excludes_internal_data(db_ses
             old_value="1000€",
             new_value="2000€",
             source="financial",
-            changed_at=NOW - dt.timedelta(days=1),
+            changed_at=dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1),
         )
     )
     ctx = _pm_context(db_session)

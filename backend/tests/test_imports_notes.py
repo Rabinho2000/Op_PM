@@ -1182,7 +1182,9 @@ def test_apply_resets_stale_conflict_to_current_value_and_aborts(db_session, api
     assert existing.power_kwp == 2.0
     refreshed = api_client.get(f"/api/imports/{batch_id}", headers=headers)
     power_conflict = next(
-        conflict for conflict in refreshed.json()["records"][0]["conflicts"] if conflict["field_name"] == "power_kwp"
+        conflict
+        for conflict in refreshed.json()["records"][0]["conflicts"]
+        if conflict["field_name"] == "power_kwp" and conflict["target_entity"] == "project"
     )
     assert power_conflict["old_value"] == "2.0"
     assert power_conflict["resolution"] == "pending"

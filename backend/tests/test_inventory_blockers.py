@@ -456,7 +456,7 @@ def test_catalog_migration_provisions_existing_roles_and_downgrades_only_owned_r
         )
         assert connection.execute(text("SELECT COUNT(*) FROM sqlite_master WHERE name = 'inventory_catalog_history'")).scalar_one() == 0
 
-    run_alembic("upgrade", "head")
+    run_alembic("upgrade", "f4b9c2d7e1a6")
     with local_engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "f4b9c2d7e1a6"
         assert (
