@@ -22,6 +22,7 @@ import Icon from "../components/Icon";
 import { useToast } from "../components/Toast";
 import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHeader } from "../components/ui";
 import { useSession } from "../session/SessionContext";
+import { formatQuantity } from "../utils/quantities";
 
 const MOVEMENT_TYPE_LABELS: Record<string, string> = {
   entrada: "Entrada",
@@ -525,6 +526,7 @@ export default function Inventory() {
   const canManageCentral = can("inventory.manage_central");
   const canManageCatalog = can("inventory.manage_catalog");
   const activeItems = useMemo(() => (items ?? []).filter((item) => item.is_active), [items]);
+  const itemUnits = useMemo(() => new Map((items ?? []).map((item) => [item.id, item.unit])), [items]);
   const centralLocation = useMemo(
     () => (locations ?? []).find((location) => location.location_type === "central" && location.is_active),
     [locations],
@@ -630,10 +632,10 @@ export default function Inventory() {
                     </td>
                     <td className="nowrap muted">{item.sku}</td>
                     <td className="nowrap muted">{item.category ?? "—"}</td>
-                    <td className="nowrap">{item.physical_stock} {item.unit}</td>
-                    <td className="nowrap">{item.total_reserved} {item.unit}</td>
-                    <td className="nowrap">{item.available_stock} {item.unit}</td>
-                    <td className="nowrap muted">{item.min_stock} {item.unit}</td>
+                    <td className="nowrap">{formatQuantity(item.physical_stock, item.unit)} {item.unit}</td>
+                    <td className="nowrap">{formatQuantity(item.total_reserved, item.unit)} {item.unit}</td>
+                    <td className="nowrap">{formatQuantity(item.available_stock, item.unit)} {item.unit}</td>
+                    <td className="nowrap muted">{formatQuantity(item.min_stock, item.unit)} {item.unit}</td>
                     <td>
                       {!item.is_active ? (
                         <Badge tone="neutral">Inativo</Badge>
@@ -787,7 +789,7 @@ export default function Inventory() {
                       <td className="nowrap muted">{new Date(movement.created_at).toLocaleString("pt-PT")}</td>
                       <td>{movement.item_name ?? "—"}</td>
                       <td><Badge tone="neutral">{MOVEMENT_TYPE_LABELS[movement.movement_type] ?? movement.movement_type}</Badge></td>
-                      <td className="nowrap">{movement.quantity}</td>
+                      <td className="nowrap">{formatQuantity(movement.quantity, itemUnits.get(movement.item_id))} {itemUnits.get(movement.item_id) ?? ""}</td>
                       <td>{movement.project_name ?? <span className="muted">—</span>}</td>
                       <td>{movement.reference || <span className="muted">—</span>}</td>
                     </tr>

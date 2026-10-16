@@ -21,7 +21,8 @@ from app.security.permissions import (
     PermissionDenied,
     can_change_project_status,
     can_edit_project,
-    can_view_project,
+    is_installer_readonly_scope,
+    installer_project_scope_conditions,
 )
 from app.services.project_lifecycle import (
     COMPLETED_LIFECYCLE_STATUSES,
@@ -138,9 +139,10 @@ def visible_projects_query(db: Session, ctx: AuthContext) -> Query:
         conditions.append(Project.pm_person_id == ctx.person_id)
     if ctx.has_permission("project.view_delegated") and ctx.delegating_pm_ids:
         conditions.append(Project.pm_person_id.in_(ctx.delegating_pm_ids))
+    conditions.extend(installer_project_scope_conditions(ctx))
     if conditions:
         return db.query(Project).filter(or_(*conditions))
-    # Sem nenhuma das permissões, ou sem delegações atribuídas: nada visível.
+    # Sem nenhuma das permissões, ou sem delegações/associações atribuídas: nada visível.
     return db.query(Project).filter(False)
 
 
@@ -179,12 +181,8 @@ def list_projects(
 
 
 def get_visible_project(db: Session, ctx: AuthContext, project_id: uuid.UUID) -> Project | None:
-    project = db.get(Project, project_id)
-    if project is None:
-        return None
-    if not can_view_project(ctx, project):
-        return None
-    return project
+    """Read a project through the same SQL scope used by list endpoints."""
+    return visible_projects_query(db, ctx).filter(Project.id == project_id).one_or_none()
 
 
 def update_project(
@@ -207,6 +205,8 @@ def update_project(
     Um pedido com QUALQUER campo fora da allowlist é rejeitado por
     inteiro, antes de qualquer escrita — nunca aplica só os campos
     permitidos e ignora os outros em silêncio."""
+    if is_installer_readonly_scope(ctx):
+        raise PermissionDenied("installer.read_only")
     if not can_edit_project(ctx, project):
         raise PermissionDenied("project.edit_all|project.edit_own_progress")
 

@@ -24,6 +24,17 @@ class WorkItemRead(BaseModel):
     work_dates_estimated: bool
     # A mesma equipa tem outra obra sobreposta (só entre preparação e construção).
     conflict: bool
+    # Identificação da afectação que originou esta linha. Nulo na linha de
+    # compatibilidade de uma obra antiga sem afectações.
+    assignment_id: uuid.UUID | None = None
+    assignment_start_date: dt.date | None = None
+    assignment_end_date: dt.date | None = None
+    # Alias curtos mantidos para clientes que preferem start/end.
+    assignment_start: dt.date | None = None
+    assignment_end: dt.date | None = None
+    team_id: uuid.UUID | None = None
+    team_name: str | None = None
+    team_leader_name: str | None = None
     # O utilizador pode mexer no plano desta obra (arrastar no calendário).
     can_plan_work: bool = False
 

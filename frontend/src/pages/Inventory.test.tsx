@@ -103,6 +103,23 @@ describe("Inventário", () => {
     expect(screen.getByText("80.000 km")).toBeInTheDocument();
   });
 
+  it("remove zeros decimais de artigos contados à unidade sem arredondar frações", async () => {
+    api.listInventoryItems.mockResolvedValue([
+      item({
+        unit: "un",
+        physical_stock: "1.000",
+        available_stock: "1.000",
+        total_reserved: "0.000",
+        min_stock: "0.000",
+      }),
+    ]);
+    api.listInventoryMovements.mockResolvedValue([movement({ quantity: "1.500" })]);
+    renderWithProviders(<Inventory />, { me: makeMe({ permissions: ["inventory.view"] }) });
+    await screen.findAllByText("Cabo solar DC 6mm²");
+    expect(screen.getAllByText("1 un").length).toBeGreaterThan(0);
+    expect(screen.getByText("1.500 un")).toBeInTheDocument();
+  });
+
   it("assinala um item abaixo do stock mínimo", async () => {
     api.listInventoryItems.mockResolvedValue([item({ below_min_stock: true })]);
     renderWithProviders(<Inventory />, { me: makeMe({ permissions: ["inventory.view"] }) });

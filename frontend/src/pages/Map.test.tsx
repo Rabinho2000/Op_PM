@@ -3,10 +3,10 @@
 // mostra também o mapa Leaflet.
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { MapData } from "../api/client";
+import type { MapAttention, MapData } from "../api/client";
 import { makeMe } from "../test/fixtures";
 import { renderWithProviders } from "../test/render";
-import MapPage from "./Map";
+import MapPage, { clusterIcon, makeDivIcon } from "./Map";
 
 const api = vi.hoisted(() => ({
   getMapData: vi.fn(),
@@ -152,6 +152,54 @@ function mapData(overrides: Partial<MapData> = {}): MapData {
 beforeEach(() => {
   Object.values(api).forEach((fn) => fn.mockReset());
   api.getMapData.mockResolvedValue(mapData());
+});
+
+describe("classes CSS dos ícones do mapa", () => {
+  it.each([
+    ["projects", "map-marker--projects"],
+    ["suppliers", "map-marker--suppliers"],
+    ["pickups", "map-marker--pickups"],
+    ["issues", "map-marker--issues"],
+  ] as const)("mantém a categoria %s sem cores inline", (layer, categoryClass) => {
+    const html = String(makeDivIcon(layer).options.html);
+    expect(html).toContain(categoryClass);
+    expect(html).not.toMatch(/\bstyle=/i);
+    expect(html).not.toMatch(/#[\da-f]{3,8}\b/i);
+  });
+
+  it.each([
+    ["green", "map-marker--attention-green"],
+    ["yellow", "map-marker--attention-yellow"],
+    ["red", "map-marker--attention-red"],
+  ] as const)("mantém a atenção %s em classe e responde ao tema via CSS", (attention, attentionClass) => {
+    const previousTheme = document.documentElement.getAttribute("data-theme");
+    const icon = makeDivIcon("projects", attention);
+    document.documentElement.dataset.theme = "dark";
+    const darkMarkup = String(icon.options.html);
+    document.documentElement.dataset.theme = "light";
+    const lightMarkup = String(icon.options.html);
+    if (previousTheme === null) document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", previousTheme);
+
+    expect(darkMarkup).toContain(attentionClass);
+    expect(lightMarkup).toBe(darkMarkup);
+  });
+
+  it.each([
+    { attentions: ["green", "yellow"] as MapAttention[], worst: "yellow", count: 2 },
+    { attentions: ["green", "yellow", "red"] as MapAttention[], worst: "red", count: 3 },
+    { attentions: [] as MapAttention[], worst: "green", count: 0 },
+  ])("preserva a pior atenção e a contagem do cluster", ({ attentions, worst, count }) => {
+    const cluster = {
+      getAllChildMarkers: () => attentions.map((attention) => ({ options: { attention } })),
+      getChildCount: () => count,
+    } as unknown as Parameters<typeof clusterIcon>[0];
+    const html = String(clusterIcon(cluster).options.html);
+
+    expect(html).toContain(`map-cluster--attention-${worst}`);
+    expect(html).toContain(`>${count}</span>`);
+    expect(html).not.toMatch(/\bstyle=/i);
+  });
 });
 
 describe("Mapa operacional", () => {
@@ -479,7 +527,7 @@ describe("Mapa operacional", () => {
       const dialog = within(screen.getByRole("dialog"));
       expect(dialog.getByText(/Medir telhado/)).toBeInTheDocument();
       expect(dialog.getByText(/Acesso bloqueado ao telhado/)).toBeInTheDocument();
-      expect(dialog.getByText(/3.000 un — Painel 450 W/)).toBeInTheDocument();
+      expect(dialog.getByText(/3 un — Painel 450 W/)).toBeInTheDocument();
       expect(dialog.getByText(/Materiais: cabo solar/)).toBeInTheDocument(); // info do ponto de recolha
     });
 

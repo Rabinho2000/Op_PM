@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.audit.log import record_project_change
 from app.models.installer import Installer, InstallerTeam
-from app.models.project import Project
+from app.models.project import Project, ProjectTeamAssignment
 from app.security.permissions import AuthContext, PermissionDenied, can_plan_project_work
 from app.utils.text import clean_display, normalize_key
 
@@ -110,6 +110,8 @@ def update_work_plan(db: Session, *, project: Project, changes: dict, ctx: AuthC
     - permissão `project.plan_work` no âmbito do projeto;
     - a equipa tem de pertencer ao instalador e estar ativa (ao atribuir);
     - mudar de instalador sem indicar equipa limpa a equipa;
+    - com afectações existentes, mudar o instalador ou a equipa principal é
+      recusado para não deixar a fonte de verdade contraditória;
     - sem instalador não há equipa;
     - fim da obra nunca antes do início;
     - alterar as datas confirma-as (`work_dates_estimated` passa a falso).
@@ -121,6 +123,24 @@ def update_work_plan(db: Session, *, project: Project, changes: dict, ctx: AuthC
     new_installer_id = changes.get("installer_id", _UNSET)
     installer_id = project.installer_id if new_installer_id is _UNSET else new_installer_id
     team_id = changes["installer_team_id"] if "installer_team_id" in changes else _UNSET
+
+    # As atribuições guardam o instalador que executa cada janela. Mudar o
+    # instalador da obra por este endpoint deixaria essas linhas órfãs (e a
+    # chave composta inconsistente), por isso a operação é bloqueada enquanto
+    # houver atribuições. A remoção explícita das atribuições fica auditada no
+    # endpoint próprio; depois disso a mudança de instalador é segura.
+    if installer_id != project.installer_id:
+        has_assignments = (
+            db.query(ProjectTeamAssignment.id)
+            .filter(ProjectTeamAssignment.project_id == project.id)
+            .first()
+            is not None
+        )
+        if has_assignments:
+            raise PlanError(
+                "Não é possível mudar o instalador enquanto a obra tiver afectações de equipas; "
+                "remova-as ou altere-as primeiro."
+            )
 
     installer = None
     if installer_id is not None:
@@ -144,6 +164,23 @@ def update_work_plan(db: Session, *, project: Project, changes: dict, ctx: AuthC
             raise PlanError("A equipa não pertence a este instalador.")
         if team_id != project.installer_team_id and not team.is_active:
             raise PlanError("Esta equipa está inativa.")
+
+    # Com afectações, a equipa principal é apenas uma compatibilidade derivada.
+    # Não permitimos que o plano legado a limpe ou troque silenciosamente,
+    # deixando a fonte de verdade contraditória; a alteração faz-se pelo
+    # recurso de afectações, onde fica auditada.
+    if "installer_team_id" in changes and team_id != project.installer_team_id:
+        has_assignments = (
+            db.query(ProjectTeamAssignment.id)
+            .filter(ProjectTeamAssignment.project_id == project.id)
+            .first()
+            is not None
+        )
+        if has_assignments:
+            raise PlanError(
+                "Não é possível alterar a equipa principal enquanto a obra tiver afectações; "
+                "use o recurso de afectações de equipas."
+            )
 
     start = changes["work_start_date"] if "work_start_date" in changes else project.work_start_date
     end = changes["work_end_date"] if "work_end_date" in changes else project.work_end_date

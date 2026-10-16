@@ -182,4 +182,22 @@ describe("Layout (navegação principal)", () => {
     fireEvent.click(toggle);
     expect(screen.getByRole("button", { name: "Fechar menu" })).toHaveAttribute("aria-expanded", "true");
   });
+
+  it("fecha a gaveta móvel com Escape e devolve o foco ao trigger", () => {
+    renderLayout("/tasks");
+    const trigger = screen.getByRole("button", { name: "Abrir menu" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    expect(document.getElementById("menu-principal")).toHaveClass("open");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(document.getElementById("menu-principal")).not.toHaveClass("open");
+    expect(document.querySelector(".backdrop")).not.toHaveClass("open");
+    expect(screen.getByRole("button", { name: "Abrir menu" })).toHaveFocus();
+
+    fireEvent.click(trigger);
+    expect(document.getElementById("menu-principal")).toHaveClass("open");
+    fireEvent.click(document.querySelector(".backdrop") as HTMLElement);
+    expect(document.getElementById("menu-principal")).not.toHaveClass("open");
+  });
 });

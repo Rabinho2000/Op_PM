@@ -28,6 +28,7 @@ from app.schemas.inventory import (
     InventoryLocationRead,
     InventoryMovementCreate,
     InventoryMovementRead,
+    ProjectInventoryMovementReverse,
     ProjectInventoryOperationCreate,
     ProjectInventorySummary,
     ProjectMaterialRequirementCreate,
@@ -54,6 +55,7 @@ from app.security.permissions import (
     can_manage_central_inventory,
     can_manage_material_requirements,
     can_release_inventory_for_project,
+    can_reverse_inventory_movement_for_project,
     can_view_project,
 )
 from app.services.inventory import (
@@ -62,6 +64,7 @@ from app.services.inventory import (
     InsufficientReservationError,
     InsufficientStockError,
     InventoryError,
+    MovementAlreadyReversedError,
     adjust_stock,
     collect_from_project,
     consume_from_project,
@@ -72,6 +75,7 @@ from app.services.inventory import (
     material_requirement_status,
     on_site_balances_by_project,
     release_reservation,
+    reverse_project_movement,
     reserve_for_project,
     return_to_stock,
     update_material_requirement,
@@ -541,6 +545,34 @@ def project_inventory_summary_endpoint(
         reservations=[_movement_to_read(db, m) for m in reservations],
         on_site=on_site,
     )
+
+
+@project_router.post("/movements/{movement_id}/reverse", response_model=InventoryMovementRead, status_code=201)
+def reverse_project_movement_endpoint(
+    project_id: uuid.UUID,
+    movement_id: uuid.UUID,
+    body: ProjectInventoryMovementReverse | None = None,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> InventoryMovementRead:
+    project = _get_project_or_404(db, project_id, ctx)
+    if not can_reverse_inventory_movement_for_project(ctx, project):
+        raise HTTPException(status_code=403, detail="Sem permissão para anular movimentos deste projeto.")
+    movement = db.get(InventoryMovement, movement_id)
+    if movement is None or movement.project_id != project.id:
+        raise HTTPException(status_code=404, detail="Movimento não encontrado neste projeto.")
+    try:
+        reversal = reverse_project_movement(
+            db,
+            movement=movement,
+            created_by_person_id=ctx.person_id,
+            reason=body.reason if body is not None else "Anulação manual",
+        )
+    except MovementAlreadyReversedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except InventoryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _movement_to_read(db, reversal)
 
 
 @project_router.post("/requirements", response_model=ProjectMaterialRequirementRead, status_code=201)

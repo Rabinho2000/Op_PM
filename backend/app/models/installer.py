@@ -46,3 +46,6 @@ class InstallerTeam(UUIDPk, TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     installer: Mapped[Installer] = relationship(back_populates="teams")
+    assignments: Mapped[list["ProjectTeamAssignment"]] = relationship(
+        back_populates="team", viewonly=True
+    )

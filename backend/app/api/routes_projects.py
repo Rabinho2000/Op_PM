@@ -12,8 +12,13 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models.people import Person
-from app.models.project import Project, ProjectHistory
-from app.schemas.installers import WorkPlanUpdate
+from app.models.project import Project, ProjectHistory, ProjectTeamAssignment
+from app.schemas.installers import (
+    TeamAssignmentCreate,
+    TeamAssignmentRead,
+    TeamAssignmentUpdate,
+    WorkPlanUpdate,
+)
 from app.schemas.projects import (
     LifecycleStatusRead,
     ProjectHistoryRead,
@@ -30,6 +35,7 @@ from app.security.permissions import (
     can_create_task,
     can_edit_project,
     can_plan_project_work,
+    is_installer_readonly_scope,
 )
 from app.security.project_fields import PM_EDITABLE_PROJECT_FIELDS
 from app.services.installers import PlanError, update_work_plan
@@ -42,6 +48,13 @@ from app.services.projects import (
     list_projects,
 )
 from app.services.projects import update_project as update_project_service
+from app.services.team_assignments import (
+    AssignmentError,
+    create_project_assignment,
+    delete_project_assignment,
+    list_project_assignments,
+    update_project_assignment,
+)
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -55,6 +68,12 @@ def _editable_fields(ctx: AuthContext, project: Project) -> list[str]:
     if ctx.has_permission("project.edit_all"):
         return sorted(ProjectUpdate.model_fields)
     return sorted(PM_EDITABLE_PROJECT_FIELDS)
+
+
+def _require_installer_mutation_scope(ctx: AuthContext) -> None:
+    """The pure installer channel is read-only before any resource lookup."""
+    if is_installer_readonly_scope(ctx):
+        raise HTTPException(status_code=403, detail="O papel externo tem acesso somente de leitura.")
 
 
 _COMPUTE = object()  # "calcular só para este projeto" (por oposição a `None` = sem catálogo)
@@ -99,6 +118,37 @@ def _to_read(
     data.installer_name = project.installer.name if project.installer else None
     data.installer_team_name = project.installer_team.name if project.installer_team else None
     data.installer_team_leader_name = project.installer_team.leader_name if project.installer_team else None
+    if is_installer_readonly_scope(ctx):
+        # External read model contains business context only; never expose
+        # contact, admin/audit, integration, or foreign-person fields.
+        data.client_contact = None
+        data.client_email = None
+        data.power_raw = None
+        data.pm_person_id = None
+        data.pm_display_name = None
+        data.has_email = False
+        data.has_contact = False
+        data.clickup_status_mirror = None
+        data.role = None
+        data.equipment_notes = None
+        data.injection_notes = None
+        data.om_notes = None
+        data.commercial_assumptions = None
+        data.upac_registration = None
+        data.m2m_card = None
+        data.upac_connection_date_raw = None
+        data.award_year_raw = None
+        data.notes = ""
+        data.editable_fields = []
+        data.can_manage_tasks = False
+        data.can_change_status = False
+        data.can_plan_work = False
+        if project.installer_id not in ctx.active_installer_ids:
+            data.installer_id = None
+            data.installer_team_id = None
+            data.installer_name = None
+            data.installer_team_name = None
+            data.installer_team_leader_name = None
     return data
 
 
@@ -174,6 +224,7 @@ def update_project_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectRead:
+    _require_installer_mutation_scope(ctx)
     project = db.get(Project, project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Projeto não encontrado.")
@@ -194,6 +245,7 @@ def change_project_status_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectStatusChangeResult:
+    _require_installer_mutation_scope(ctx)
     # 404 (não 403) fora do âmbito: nunca revela que o projeto existe.
     project = get_visible_project(db, ctx, project_id)
     if project is None:
@@ -218,6 +270,7 @@ def update_work_plan_endpoint(
 ) -> ProjectRead:
     """Instalador, equipa e datas da obra (D-071). 404 fora do âmbito, 403 sem
     `project.plan_work`, 422 quando uma regra não se cumpre."""
+    _require_installer_mutation_scope(ctx)
     project = get_visible_project(db, ctx, project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
@@ -230,6 +283,129 @@ def update_work_plan_endpoint(
     return _to_read(db, updated, ctx)
 
 
+
+
+def _assignment_read(data, *, scoped: bool = False) -> TeamAssignmentRead:
+    assignment = data.assignment
+    team = assignment.team
+    installer = team.installer if team is not None else None
+    return TeamAssignmentRead(
+        id=assignment.id,
+        project_id=assignment.project_id,
+        installer_id=assignment.installer_id,
+        team_id=assignment.team_id,
+        start_date=assignment.start_date,
+        end_date=assignment.end_date,
+        note="" if scoped else assignment.note,
+        created_by_person_id=None if scoped else assignment.created_by_person_id,
+        team_name=team.name if team else None,
+        installer_name=installer.name if installer else None,
+        team_leader_name=None if scoped else (team.leader_name if team else None),
+        team_leader_phone=None if scoped else (team.leader_phone if team else None),
+        warning=data.warning,
+    )
+
+
+@router.get("/{project_id}/team-assignments", response_model=list[TeamAssignmentRead])
+def list_team_assignments_endpoint(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> list[TeamAssignmentRead]:
+    project = get_visible_project(db, ctx, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
+    try:
+        return [
+            _assignment_read(item, scoped=is_installer_readonly_scope(ctx))
+            for item in list_project_assignments(db, project=project, ctx=ctx)
+        ]
+    except PermissionDenied:
+        raise HTTPException(status_code=403, detail="Sem permissão para planear a obra deste projeto.")
+
+
+@router.post("/{project_id}/team-assignments", response_model=TeamAssignmentRead, status_code=201)
+def create_team_assignment_endpoint(
+    project_id: uuid.UUID,
+    body: TeamAssignmentCreate,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> TeamAssignmentRead:
+    _require_installer_mutation_scope(ctx)
+    project = get_visible_project(db, ctx, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
+    try:
+        result = create_project_assignment(
+            db,
+            project=project,
+            team_id=body.team_id,
+            start_date=body.start_date,
+            end_date=body.end_date,
+            note=body.note,
+            ctx=ctx,
+        )
+    except PermissionDenied:
+        raise HTTPException(status_code=403, detail="Sem permissão para planear a obra deste projeto.")
+    except AssignmentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _assignment_read(result)
+
+
+@router.patch("/{project_id}/team-assignments/{assignment_id}", response_model=TeamAssignmentRead)
+def update_team_assignment_endpoint(
+    project_id: uuid.UUID,
+    assignment_id: uuid.UUID,
+    body: TeamAssignmentUpdate,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> TeamAssignmentRead:
+    _require_installer_mutation_scope(ctx)
+    project = get_visible_project(db, ctx, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
+    assignment = (
+        db.query(ProjectTeamAssignment)
+        .filter(ProjectTeamAssignment.id == assignment_id, ProjectTeamAssignment.project_id == project_id)
+        .one_or_none()
+    )
+    if assignment is None:
+        raise HTTPException(status_code=404, detail="Afectação não encontrada.")
+    try:
+        result = update_project_assignment(
+            db, project=project, assignment=assignment, changes=body.model_dump(exclude_unset=True), ctx=ctx
+        )
+    except PermissionDenied:
+        raise HTTPException(status_code=403, detail="Sem permissão para planear a obra deste projeto.")
+    except AssignmentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _assignment_read(result)
+
+
+@router.delete("/{project_id}/team-assignments/{assignment_id}", status_code=204)
+def delete_team_assignment_endpoint(
+    project_id: uuid.UUID,
+    assignment_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> None:
+    _require_installer_mutation_scope(ctx)
+    project = get_visible_project(db, ctx, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
+    assignment = (
+        db.query(ProjectTeamAssignment)
+        .filter(ProjectTeamAssignment.id == assignment_id, ProjectTeamAssignment.project_id == project_id)
+        .one_or_none()
+    )
+    if assignment is None:
+        raise HTTPException(status_code=404, detail="Afectação não encontrada.")
+    try:
+        delete_project_assignment(db, project=project, assignment=assignment, ctx=ctx)
+    except PermissionDenied:
+        raise HTTPException(status_code=403, detail="Sem permissão para planear a obra deste projeto.")
+
+
 @router.get("/{project_id}/history", response_model=list[ProjectHistoryRead])
 def get_project_history_endpoint(
     project_id: uuid.UUID,
@@ -239,6 +415,9 @@ def get_project_history_endpoint(
     project = get_visible_project(db, ctx, project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
+
+    if is_installer_readonly_scope(ctx):
+        raise HTTPException(status_code=403, detail="O histórico administrativo não está disponível neste canal.")
 
     entries = (
         db.query(ProjectHistory)

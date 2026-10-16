@@ -52,6 +52,7 @@ class InventoryMovementRead(BaseModel):
     unit_cost: Decimal | None
     reference: str
     idempotency_key: str | None
+    reversal_of_movement_id: uuid.UUID | None
     created_by_person_id: uuid.UUID | None
     created_at: dt.datetime
 
@@ -83,6 +84,12 @@ class ProjectInventoryOperationCreate(BaseModel):
     quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=3)
     reference: str = ""
     idempotency_key: str | None = None
+
+
+class ProjectInventoryMovementReverse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(default="Anulação manual", max_length=220)
 
 
 class ProjectMaterialRequirementRead(BaseModel):

@@ -1,13 +1,15 @@
 // Estrutura das páginas autenticadas: sidebar de navegação, cabeçalho com
 // o utilizador atual, banner do modo demonstração e área de conteúdo.
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState, MouseEvent as ReactMouseEvent } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { SolcorLogo } from "./SolcorLogo";
 import { getDevUser, getSessionDisplayName, logoutCurrentSession } from "../api/client";
 import { useSession } from "../session/SessionContext";
+import { isInstallerCollaborator } from "../session/installerAccess";
 import Icon, { IconName } from "./Icon";
 import { Avatar } from "./ui";
 import { observeTableCardLabels } from "./tableCardLabels";
+import ThemeToggle from "./ThemeToggle";
 
 interface NavItem {
   to: string;
@@ -23,13 +25,14 @@ interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   { to: "/", label: "Painel", icon: "dashboard", end: true },
-  { to: "/projects", label: "Projetos", icon: "folder" },
+  { to: "/projects", label: "Projetos", icon: "folder", permission: ["project.view_all", "project.view_own", "project.view_assigned_installer"] },
   { to: "/client-reports", label: "Relatórios a clientes", icon: "mail", permission: ["client_report.view", "client_report.manage"] },
-  { to: "/tasks", label: "Tarefas", icon: "tasks" },
-  { to: "/inventory", label: "Inventário", icon: "database", permission: "inventory.view" },
+  { to: "/tasks", label: "Tarefas", icon: "tasks", permission: ["task.view_all", "task.view_own", "task.view_assigned_installer"] },
+  { to: "/inventory", label: "Inventário", icon: "database", permission: ["inventory.view", "inventory.view_assigned_installer"] },
   { to: "/suppliers", label: "Fornecedores", icon: "truck", permission: ["supplier.view", "map.view"] },
   { to: "/map", label: "Mapa", icon: "mapPin", permission: "map.view" },
-  { to: "/works", label: "Calendário de obras", icon: "columns", permission: ["project.view_all", "project.view_own"] },
+  { to: "/works", label: "Calendário de obras", icon: "columns", permission: ["project.view_all", "project.view_own", "works_calendar.view_assigned_installer"] },
+  { to: "/works/teams", label: "Equipas", icon: "wrench", permission: ["project.view_all", "project.view_own", "installer_team.view_assigned_installer"] },
   { to: "/planning", label: "Planeamento", icon: "calendar", permission: "calendar.view" },
   {
     to: "/performance",
@@ -38,6 +41,7 @@ export const NAV_ITEMS: NavItem[] = [
     permission: ["performance.view_all", "performance.view_own"],
   },
   { to: "/vacations", label: "Férias e aniversários", icon: "calendar" },
+  { to: "/time-bank", label: "Banco de Horas", icon: "clock", permission: ["time_bank.view_own", "time_bank.view_all"] },
   { to: "/my-process", label: "As minhas etapas", icon: "tasks", permission: ["process.view_own", "process.update_own"], roles: ["suporte_operacoes"] },
   // O backend autoriza Administrador e Chefe de Operações por papel, mesmo
   // quando o segundo não tem a permissão administrativa genérica.
@@ -56,6 +60,15 @@ export const MOBILE_TAB_PATHS = ["/", "/projects", "/tasks", "/planning"];
 
 const MOBILE_TAB_LABELS: Record<string, string> = { "/planning": "Agenda" };
 
+const INSTALLER_NAV_PATHS = new Set([
+  "/projects",
+  "/tasks",
+  "/inventory",
+  "/works",
+  "/works/teams",
+  "/time-bank",
+]);
+
 const PAGE_TITLES: [string, string][] = [
   ["/projects/", "Detalhe do projeto"],
   ["/projects", "Projetos"],
@@ -63,12 +76,14 @@ const PAGE_TITLES: [string, string][] = [
   ["/tasks", "Tarefas"],
   ["/inventory", "Inventário"],
   ["/suppliers", "Fornecedores"],
+  ["/works/teams", "Equipas"],
   ["/works", "Calendário de obras"],
   ["/installers", "Instaladores"],
   ["/map", "Mapa"],
   ["/planning", "Planeamento"],
   ["/performance", "Metas e indicadores"],
   ["/vacations", "Férias e aniversários"],
+  ["/time-bank", "Banco de Horas"],
   ["/my-process", "As minhas etapas"],
   ["/support", "Suporte de operações"],
   ["/reconciliation", "Reconciliação de PM"],
@@ -86,10 +101,36 @@ export default function Layout({ children }: { children: ReactNode }) {
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
+
+  const closeMenu = () => {
+    setMenuOpen(false);
+    menuTriggerRef.current?.focus();
+  };
+
+  const toggleMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    menuTriggerRef.current = event.currentTarget;
+    setMenuOpen((current) => !current);
+  };
 
   const mainRef = useRef<HTMLElement>(null);
 
   useEffect(() => setMenuOpen(false), [location.pathname]);
+
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const target = event.target instanceof Element ? event.target : null;
+      const activeElement = document.activeElement instanceof Element ? document.activeElement : null;
+      const dialogOpen = document.querySelector('[role="dialog"], [aria-modal="true"], .multiselect[open]');
+      if (dialogOpen || target?.closest('select, .multiselect') || activeElement?.closest('select, .multiselect')) return;
+      event.preventDefault();
+      closeMenu();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [menuOpen]);
 
   useEffect(() => {
     if (!mainRef.current) return undefined;
@@ -125,14 +166,16 @@ export default function Layout({ children }: { children: ReactNode }) {
   );
 
   const hasNavPermission = (item: NavItem) => {
+    if (isInstallerCollaborator(me) && !INSTALLER_NAV_PATHS.has(item.to)) return false;
     if (item.roles?.some((role) => me?.roles.includes(role))) return true;
     if (!item.permission) return true;
     const codes = Array.isArray(item.permission) ? item.permission : [item.permission];
     return codes.some(can);
   };
-  const mainItems = NAV_ITEMS.filter(hasNavPermission);
+  const mainItems = NAV_ITEMS.filter((item) => !(isInstallerCollaborator(me) && item.to === "/")).filter(hasNavPermission);
   const adminItems = ADMIN_NAV_ITEMS.filter(hasNavPermission);
-  const mobileTabs = MOBILE_TAB_PATHS.map((path) => mainItems.find((item) => item.to === path)).filter(
+  const mobilePaths = isInstallerCollaborator(me) ? ["/", "/projects", "/tasks", "/works"] : MOBILE_TAB_PATHS;
+  const mobileTabs = mobilePaths.map((path) => mainItems.find((item) => item.to === path)).filter(
     (item): item is NavItem => Boolean(item),
   );
 
@@ -158,9 +201,10 @@ export default function Layout({ children }: { children: ReactNode }) {
         <div className="sidebar__footer">
           {health ? `Ambiente: ${health.app_env}` : "Op_PM"}
           {usesRealOperationalData ? " · dados reais" : health?.demo_mode && " · demonstração"}
+          <ThemeToggle accessibleName="Aparência no menu" className="theme-toggle--menu" />
         </div>
       </aside>
-      <div className={`backdrop ${menuOpen ? "open" : ""}`} onClick={() => setMenuOpen(false)} aria-hidden="true" />
+      <div className={`backdrop ${menuOpen ? "open" : ""}`} onClick={closeMenu} aria-hidden="true" />
 
       <div className="main-area">
         {showDemoBanner && (
@@ -178,12 +222,13 @@ export default function Layout({ children }: { children: ReactNode }) {
             aria-label={menuOpen ? "Fechar menu" : "Abrir menu"}
             aria-expanded={menuOpen}
             aria-controls="menu-principal"
-            onClick={() => setMenuOpen((v) => !v)}
+            onClick={toggleMenu}
           >
             <Icon name={menuOpen ? "x" : "menu"} />
           </button>
           <span className="topbar__title">{pageTitle(location.pathname)}</span>
           <span className="topbar__spacer" />
+          <ThemeToggle accessibleName="Aparência no cabeçalho" className="theme-toggle--header" />
           <div className="user-chip">
             <span className="user-chip__text">
               <span className="user-chip__name">{displayName}</span>
@@ -219,7 +264,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           className={`bottom-nav__link ${menuOpen ? "active" : ""}`}
           aria-expanded={menuOpen}
           aria-controls="menu-principal"
-          onClick={() => setMenuOpen((v) => !v)}
+          onClick={toggleMenu}
         >
           <Icon name="menu" size={22} />
           <span>Mais</span>

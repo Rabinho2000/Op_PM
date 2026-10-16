@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import type { CSSProperties } from "react";
 import {
   ApiError,
   getProjectProcess,
@@ -32,6 +33,12 @@ const STATUS_TONES: Record<string, Tone> = {
 };
 
 const CONTACT_LABELS: Record<string, string> = { contacto: "Contacto", update: "Update" };
+
+function phaseSwatchStyle(color: string | null | undefined): CSSProperties | undefined {
+  const safeColor = color?.trim();
+  if (!safeColor || !/^#(?:[\da-f]{3,4}|[\da-f]{6}|[\da-f]{8})$/i.test(safeColor)) return undefined;
+  return { "--phase-color": safeColor } as CSSProperties;
+}
 
 export function responsibleText(r: ProcessResponsible): string {
   if (r.names.length > 0) return `${r.label}: ${r.names.join(", ")}`;
@@ -126,7 +133,7 @@ export default function ProjectProcess({ projectId }: { projectId: string }) {
       {process.phases.map((phase) => (
         <section key={phase.id} className="process__phase" aria-label={phase.name}>
           <h3 className="process__phase-title">
-            <span className="process__dot" style={{ background: phase.color }} aria-hidden="true" />
+            <span className="process__phase-swatch" style={phaseSwatchStyle(phase.color)} aria-hidden="true" />
             {phase.name}
             <span className="muted small"> · {phase.done_count}/{phase.total_count}</span>
           </h3>

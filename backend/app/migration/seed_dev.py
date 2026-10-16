@@ -49,7 +49,7 @@ from app.models.inventory import (
 from app.models.map_ops import PickupPoint, ProjectIssue
 from app.models.people import Person
 from app.models.performance import GoalPeriod
-from app.models.project import Project
+from app.models.project import Project, ProjectTeamAssignment
 from app.models.project_data import ProjectCommunicationData, ProjectInstallationData, ProjectLicensingData
 from app.models.supplier import Supplier
 from app.models.task import (
@@ -899,6 +899,19 @@ def seed_installers_and_work_plan(db: Session) -> None:
         project.work_start_date = today + dt.timedelta(days=start_offset)
         project.work_end_date = today + dt.timedelta(days=start_offset + days)
         project.work_dates_estimated = False
+        if team is not None and db.query(ProjectTeamAssignment.id).filter(
+            ProjectTeamAssignment.project_id == project.id
+        ).first() is None:
+            db.add(
+                ProjectTeamAssignment(
+                    project_id=project.id,
+                    installer_id=installer.id,
+                    team_id=team.id,
+                    start_date=project.work_start_date,
+                    end_date=project.work_end_date,
+                    note="",
+                )
+            )
 
     plan("%de Demonstração", alfa, equipa1, -3, 9)
     plan("%Início Próximo%", alfa, equipa2, 5, 8)

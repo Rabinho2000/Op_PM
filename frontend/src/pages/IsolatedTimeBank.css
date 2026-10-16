@@ -1,0 +1,353 @@
+.time-bank-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin: 12px 0 24px;
+}
+
+.time-bank-summary-card .card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.time-bank-balance-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.time-bank-balance-main strong {
+  color: var(--brand-strong);
+  font-family: var(--font-display);
+  font-size: 1.65rem;
+  letter-spacing: -0.02em;
+}
+
+.time-bank-summary-values,
+.time-bank-provenance {
+  margin: 0;
+}
+
+.time-bank-summary-values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
+}
+
+.time-bank-summary-values div,
+.time-bank-provenance div {
+  min-width: 0;
+}
+
+.time-bank-summary-values dt,
+.time-bank-provenance dt {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.time-bank-summary-values dd,
+.time-bank-provenance dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.time-bank-summary-values dd {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.time-bank-warning-list {
+  display: grid;
+  gap: 8px;
+}
+
+.time-bank-warning-list .alert {
+  margin: 0;
+  padding: 9px 10px;
+}
+
+.time-bank-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 22px 0 4px;
+}
+
+.time-bank-section-heading h2 {
+  font-size: 1.15rem;
+}
+
+.time-bank-filters {
+  margin-bottom: 18px;
+}
+
+.time-bank-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(140px, 220px) minmax(220px, 1fr);
+  align-items: end;
+  gap: 14px;
+}
+
+.time-bank-filter-person {
+  min-width: 0;
+}
+
+.time-bank-filter-caption {
+  display: block;
+  margin-top: 12px;
+}
+
+.time-bank-own-scope {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding-bottom: 7px;
+}
+
+.time-bank-refresh {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 8px 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.time-bank-ledger-card {
+  margin: 18px 0;
+}
+
+.table-wrap.time-bank-table-wrap {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.time-bank-table {
+  min-width: 920px;
+}
+
+.time-bank-table td,
+.time-bank-table th {
+  vertical-align: top;
+}
+
+.time-bank-table td {
+  font-variant-numeric: tabular-nums;
+}
+
+.time-bank-table td:nth-child(5),
+.time-bank-table td:nth-child(6) {
+  white-space: nowrap;
+}
+
+.time-bank-row--review {
+  background: var(--warning-soft);
+}
+
+.time-bank-table .badge {
+  margin: 0 4px 4px 0;
+}
+
+.time-bank-actions-cell {
+  min-width: 170px;
+}
+
+.time-bank-actions-cell .btn {
+  margin: 0 4px 4px 0;
+}
+
+.time-bank-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.time-bank-pagination__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.time-bank-diff {
+  color: var(--warning);
+  font-weight: 700;
+}
+
+.time-bank-import {
+  margin-top: 22px;
+}
+
+.time-bank-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.time-bank-import__body {
+  display: grid;
+  gap: 22px;
+}
+
+.time-bank-import__body h3 {
+  margin: 0 0 6px;
+  font-size: 0.98rem;
+}
+
+.time-bank-import__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.time-bank-import__meta code {
+  color: var(--text);
+}
+
+.time-bank-mapping-list {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.time-bank-mapping-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(220px, 1.5fr);
+  align-items: center;
+  gap: 8px 14px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.time-bank-mapping-row > label {
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.time-bank-mapping-row > .small {
+  grid-column: 2;
+}
+
+.time-bank-issues {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.time-bank-issues li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.time-bank-import__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.time-bank-provenance {
+  display: grid;
+  gap: 10px;
+}
+
+.btn--danger {
+  background: var(--danger);
+  color: var(--on-brand);
+  border-color: var(--danger);
+}
+
+.btn--danger:hover {
+  background: var(--danger-text);
+  color: var(--surface);
+}
+
+.btn--danger-ghost {
+  color: var(--danger);
+  border-color: var(--danger-border);
+}
+
+.btn--danger-ghost:hover {
+  background: var(--danger-soft);
+  color: var(--danger-text);
+}
+
+@media (max-width: 760px) {
+  .time-bank-filter-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .time-bank-filter-person {
+    grid-column: 1 / -1;
+  }
+
+  .time-bank-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .time-bank-summary-values {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .time-bank-mapping-row {
+    grid-template-columns: 1fr;
+  }
+
+  .time-bank-mapping-row > .small {
+    grid-column: auto;
+  }
+
+  .time-bank-import__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .time-bank-import__actions .btn {
+    width: 100%;
+  }
+
+  .time-bank-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .time-bank-pagination__actions {
+    justify-content: space-between;
+  }
+}
+
+@media (max-width: 480px) {
+  .time-bank-filter-grid,
+  .time-bank-summary-values {
+    grid-template-columns: 1fr;
+  }
+}

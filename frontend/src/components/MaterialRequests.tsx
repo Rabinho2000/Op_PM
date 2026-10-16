@@ -20,6 +20,7 @@ import {
   MaterialRequestStatus,
 } from "../api/client";
 import { formatDateTimePt } from "../utils/dates";
+import { formatQuantity } from "../utils/quantities";
 import { Alert, Badge, EmptyState, LoadingState, Modal, Tone } from "./ui";
 
 const STATUS_TONES: Record<MaterialRequestStatus, Tone> = {
@@ -347,9 +348,7 @@ export function MaterialRequestDetailModal({
               {request.lines.map((l) => (
                 <tr key={l.id}>
                   <td>{l.description}</td>
-                  <td>
-                    {l.quantity} {l.unit ?? ""}
-                  </td>
+                  <td>{formatQuantity(l.quantity, l.unit)} {l.unit ?? ""}</td>
                   <td>{formatUnitPrice(l.unit_price)}</td>
                   <td>{euros(l.line_total)}</td>
                 </tr>

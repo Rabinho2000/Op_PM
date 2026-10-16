@@ -34,6 +34,8 @@ from app.security.permissions import (
     can_edit_task,
     can_view_task,
     has_only_delegated_project_scope,
+    is_installer_readonly_scope,
+    installer_project_scope_conditions,
 )
 from app.utils.timezones import today_lisbon
 
@@ -86,19 +88,19 @@ def ensure_default_tasks_for_project(db: Session, project: Project) -> list[Task
 def visible_tasks_query(db: Session, ctx: AuthContext) -> Query:
     if ctx.has_permission("task.view_all"):
         return db.query(Task)
-    if not ctx.has_permission("task.view_own"):
-        return db.query(Task).filter(False)
 
     project_conditions = []
     if ctx.has_permission("project.view_own"):
         project_conditions.append(Project.pm_person_id == ctx.person_id)
     if ctx.has_permission("project.view_delegated") and ctx.delegating_pm_ids:
         project_conditions.append(Project.pm_person_id.in_(ctx.delegating_pm_ids))
+    if ctx.has_permission("task.view_assigned_installer"):
+        project_conditions.extend(installer_project_scope_conditions(ctx))
 
     conditions = []
     if project_conditions:
         conditions.append(or_(*project_conditions))
-    if not has_only_delegated_project_scope(ctx):
+    if ctx.has_permission("task.view_own") and not has_only_delegated_project_scope(ctx) and not is_installer_readonly_scope(ctx):
         conditions.append(Task.assigned_to_person_id == ctx.person_id)
     if not conditions:
         return db.query(Task).filter(False)
@@ -138,15 +140,13 @@ def list_tasks(
 
 
 def get_visible_task(db: Session, ctx: AuthContext, task_id: uuid.UUID) -> Task | None:
-    task = db.get(Task, task_id)
-    if task is None:
-        return None
-    if not can_view_task(ctx, task):
-        return None
-    return task
+    """Use the list query as the detail scope to keep 404 uniform."""
+    return visible_tasks_query(db, ctx).filter(Task.id == task_id).one_or_none()
 
 
 def create_task(db: Session, *, changes: TaskCreate, ctx: AuthContext) -> Task:
+    if is_installer_readonly_scope(ctx):
+        raise PermissionDenied("installer.read_only")
     project = db.get(Project, changes.project_id)
     if project is None:
         raise ValueError("Projeto não encontrado.")
@@ -188,6 +188,8 @@ def create_task(db: Session, *, changes: TaskCreate, ctx: AuthContext) -> Task:
 
 
 def update_task(db: Session, *, task: Task, changes: TaskUpdate, ctx: AuthContext) -> Task:
+    if is_installer_readonly_scope(ctx):
+        raise PermissionDenied("installer.read_only")
     if not can_edit_task(ctx, task):
         raise PermissionDenied("task.edit_all|task.edit_own")
 

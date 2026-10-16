@@ -202,12 +202,12 @@ export default function ImportNotes() {
             role="button"
             tabIndex={0}
             style={{
-              border: `2px dashed ${dragging ? "var(--color-brand, #2f7d4f)" : "var(--color-border, #ccc)"}`,
+              border: `2px dashed ${dragging ? "var(--brand)" : "var(--border)"}`,
               borderRadius: 12,
               padding: "48px 24px",
               textAlign: "center",
               cursor: "pointer",
-              background: dragging ? "rgba(47,125,79,0.06)" : "transparent",
+              background: dragging ? "var(--brand-soft)" : "transparent",
             }}
           >
             <Icon name="database" size={32} />

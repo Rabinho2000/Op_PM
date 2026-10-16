@@ -59,21 +59,20 @@ type SelectedItem =
   | { kind: "pickup"; item: MapPickupPoint }
   | { kind: "issue"; item: ProjectIssue };
 
-const MARKER_COLORS: Record<LayerKey, string> = {
-  projects: "#2f7d4f",
-  suppliers: "#2563eb",
-  pickups: "#d97706",
-  issues: "#dc2626",
-};
-
 // `attention` (green|yellow|red) vem sempre calculado do servidor — o
 // frontend só apresenta, nunca recalcula a regra (ver docs/DECISIONS.md
-// D-058). Cores/tons/labels alinhados com o resto da app (var(--success)/
-// var(--warning)/var(--danger), ver src/styles/app.css).
-const ATTENTION_COLORS: Record<MapAttention, string> = {
-  green: "var(--success)",
-  yellow: "var(--warning)",
-  red: "var(--danger)",
+// D-058). A classe deixa a cor a cargo dos tokens CSS para reagir ao tema
+// sem recriar os ícones nem a instância Leaflet.
+const ATTENTION_MARKER_CLASSES: Record<MapAttention, string> = {
+  green: "map-marker--attention-green",
+  yellow: "map-marker--attention-yellow",
+  red: "map-marker--attention-red",
+};
+
+const ATTENTION_CLUSTER_CLASSES: Record<MapAttention, string> = {
+  green: "map-cluster--attention-green",
+  yellow: "map-cluster--attention-yellow",
+  red: "map-cluster--attention-red",
 };
 
 const ATTENTION_TONES: Record<MapAttention, Tone> = {
@@ -93,22 +92,16 @@ function AttentionDot({ attention }: { attention: MapAttention }) {
     <span
       aria-hidden="true"
       title={ATTENTION_LABELS[attention]}
-      style={{
-        display: "inline-block",
-        width: 10,
-        height: 10,
-        borderRadius: "50%",
-        background: ATTENTION_COLORS[attention],
-        flexShrink: 0,
-      }}
+      className={`map-attention-dot ${ATTENTION_MARKER_CLASSES[attention]}`}
     />
   );
 }
 
-function makeDivIcon(color: string): L.DivIcon {
+export function makeDivIcon(layer: LayerKey, attention?: MapAttention): L.DivIcon {
+  const attentionClass = layer === "projects" && attention ? ` ${ATTENTION_MARKER_CLASSES[attention]}` : "";
   return L.divIcon({
-    className: "",
-    html: `<span style="display:block;width:16px;height:16px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 0 2px rgba(0,0,0,0.5);"></span>`,
+    className: "map-marker-host",
+    html: `<span class="map-marker map-marker--${layer}${attentionClass}" aria-hidden="true"></span>`,
     iconSize: [16, 16],
     iconAnchor: [8, 8],
   });
@@ -539,11 +532,7 @@ type MapItem = {
   lon: number;
   title: string;
   onClick: () => void;
-  // Só definido para projetos — sobrepõe a cor por omissão da camada com
-  // a cor do `attention` (ver ATTENTION_COLORS acima).
-  color?: string;
-  // Só definido para projetos — usado para colorir os clusters pela pior
-  // attention dos pins agrupados (ver clusterIcon).
+  // Só definido para projetos — mantém a cor semântica fornecida pelo servidor.
   attention?: MapAttention;
 };
 
@@ -551,15 +540,15 @@ const ATTENTION_RANK: Record<MapAttention, number> = { green: 0, yellow: 1, red:
 
 // Ícone do cluster de instalações: cor pela PIOR attention dos filhos (nunca
 // pelas cores por omissão do plugin, que se confundiriam com o semáforo).
-function clusterIcon(cluster: L.MarkerCluster): L.DivIcon {
+export function clusterIcon(cluster: L.MarkerCluster): L.DivIcon {
   let worst: MapAttention = "green";
   for (const marker of cluster.getAllChildMarkers()) {
-    const a = (marker.options as { attention?: MapAttention }).attention ?? "green";
-    if (ATTENTION_RANK[a] > ATTENTION_RANK[worst]) worst = a;
+    const attention = (marker.options as { attention?: MapAttention }).attention ?? "green";
+    if (ATTENTION_RANK[attention] > ATTENTION_RANK[worst]) worst = attention;
   }
   return L.divIcon({
-    className: "",
-    html: `<span style="display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;background:${ATTENTION_COLORS[worst]};color:#fff;font-weight:700;border:3px solid white;box-shadow:0 0 3px rgba(0,0,0,0.5);">${cluster.getChildCount()}</span>`,
+    className: "map-cluster-host",
+    html: `<span class="map-cluster ${ATTENTION_CLUSTER_CLASSES[worst]}"><span class="map-cluster__count">${cluster.getChildCount()}</span></span>`,
     iconSize: [34, 34],
   });
 }
@@ -593,7 +582,7 @@ function LeafletMap({ items }: { items: MapItem[] }) {
     const bounds: L.LatLngExpression[] = [];
     for (const item of items) {
       const marker = L.marker([item.lat, item.lon], {
-        icon: makeDivIcon(item.color ?? MARKER_COLORS[item.layer]),
+        icon: makeDivIcon(item.layer, item.attention),
         attention: item.attention,
       } as L.MarkerOptions)
         .bindTooltip(item.title)
@@ -749,7 +738,6 @@ export default function MapPage() {
             lon: p.lon,
             title: `${p.name} — ${ATTENTION_LABELS[p.attention]}`,
             onClick: () => setSelected({ kind: "project", item: p }),
-            color: ATTENTION_COLORS[p.attention],
             attention: p.attention,
           });
         }

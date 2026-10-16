@@ -3185,5 +3185,332 @@ quando existir uma fonte de verdade para a respetiva data de entrega ou
 certificação. Datas de importação, `updated_at`, `entered_at` ou histórico de
 migração não são substitutos válidos.
 
-Esta decisão supersede a tentativa D-087 de incluir todos os estados finais sem
+Esta decisão supersedes a tentativa D-087 de incluir todos os estados finais sem
 filtro temporal, que foi revertida por sobrecontar instalações fora do ano.
+
+## D-089 — Modo escuro: tokens, preferência local e seletor (PR1)
+
+Contexto: foi aprovado o plano de modo escuro em quatro PRs. O PR1 estabelece
+tokens, preferência local, bootstrap anterior ao React e seletores acessíveis,
+sem declarar a cobertura visual completa da aplicação.
+
+Decisão:
+- D-X1: `system` é a preferência por omissão; `light` e `dark` são escolhas explícitas.
+- D-X2: guardar apenas a preferência em `localStorage`, sob `op_pm_theme_v1`, por navegador/dispositivo, sem sincronização por conta.
+- D-X3: manter os tiles e a configuração atual do mapa inalterados; qualquer tema dos tiles exige proposta posterior.
+- D-X4: manter relatório/preview destinados ao cliente e impressão claros; configuração e histórico podem acompanhar o tema da plataforma.
+
+Consequências:
+- PR2 (superfícies e cores hardcoded), PR3 (relatórios, impressão e PWA) e PR4 (mapa e visualizações operacionais) continuam pendentes.
+- O par claro `--violet`/`--violet-soft` mede 4.4819:1. Os tokens claros não são alterados no PR1; a allowlist de teste tem piso de 4.4:1 e o ajuste fica pendente do PR2.
+- A política CSP efetiva não foi verificada. O bootstrap inline não relaxa a CSP; a compatibilidade no ambiente publicado continua UNKNOWN.
+
+Verificado:
+- Vitest: 37 ficheiros aprovados; 316 testes aprovados, 0 falhados.
+- `npx tsc --noEmit -p .`: exit 0.
+- `npm run lint`: exit 0.
+- `npm run build`: exit 0; Vite transformou 253 módulos.
+
+PR2 — superfícies e cores fixas:
+- `--violet` claro passou de `#7c58b8` para `#7b57b7`: o par `violet`/`violet-soft` sobe de 4.48:1 para 4.55:1; a exceção do teste de contraste foi removida.
+- Cores literais em `app.css` fora dos blocos de tokens: 70 → 0 cromáticas; restam 15 ocorrências de `transparent`/`currentColor`, permitidas explicitamente em `appCssColorInventory.test.ts`, que falha perante qualquer literal novo.
+- `ImportNotes.tsx` usa `--brand`, `--border` e `--brand-soft` em vez de fallbacks inexistentes.
+- Leaflet em tema escuro: popups, controlos de zoom/camadas e atribuição seguem os tokens. Tiles e marcadores inalterados (marcadores no PR4).
+
+Verificado (PR1+PR2, Hermes, 2026-10-07):
+- Vitest: 38 ficheiros; 317 testes aprovados, 0 falhados.
+- `npx tsc --noEmit -p .`, `npm run lint`, `npm run build`, `git diff --check`: exit 0.
+
+PR3 — relatórios e impressão:
+- A pré-visualização do relatório é analisada como documento HTML e recebe o estilo claro através de nós DOM; o HTML da resposta não é interpolado num bloco de estilo nem alterado para envio. O iframe continua com `sandbox=""`, sem permissões adicionais; o teste confirma conteúdo sintético, `color-scheme: light` e ausência de atualização/envio.
+- Em impressão, `:root[data-theme="dark"]` redefine os tokens de superfície, texto, bordas, marca e estados semânticos para a paleta clara; `--bg` resolve para a superfície branca. O teste compara os valores efetivos com os tokens claros e verifica a regra dentro de `@media print`.
+- Sidebar, topbar, navegação, seletor, backdrop e skip-link são ocultados; altura/overflow e paginação de tabelas, cartões e preview deixam de ter cortes artificiais.
+- O teste existente de `applyTheme("dark")` confirma a atualização da meta `theme-color`; `theme.ts`, `index.html` e o manifest estático não precisaram de alteração. Ícones/splash permanecem estáticos de marca.
+- Não foi feita validação visual de browser nem paginação real; fica para a validação browser do Hermes. Alterações de cor feitas por clientes de email externos permanecem fora de controlo.
+
+Verificado (PR3, execução local, 2026-10-07):
+- Vitest local (`./node_modules/.bin/vitest run`): 39 ficheiros; 319 testes aprovados, 0 falhados. `npm exec -- vitest run` foi bloqueado pelo scanner de segurança por consulta de threat intelligence incompleta; não foi contornada aprovação.
+- `npm run lint`: exit 0 (`tsc --noEmit`).
+- `npm run build`: exit 0; Vite transformou 253 módulos.
+- `git diff --check`: exit 0 após a atualização desta entrada.
+
+PR4 — mapa e cores de fase:
+- Marcadores/clusters usam classes e tokens, preservando categorias, contagem e pior atenção; tema não recria a instância Leaflet, nem altera tiles/provider.
+- Cores de fase validadas como hex são usadas apenas num swatch secundário, com texto em tokens legíveis e fallback seguro.
+- Inventário global TSX de produção: 3 linhas com hex/rgb, todas no documento de preview intencionalmente claro (ClientReport.tsx). Nenhuma cor fixa restante no mapa.
+- Timeline, planeamento e metas já usam tokens nas superfícies/tons relevantes; não se alteraram drag/resize ou cálculos.
+- Verificação independente: Vitest 39 ficheiros, 330/330 testes; tipos, lint, build e diff-check exit 0. Clusters sintéticos renderizados em browser nos dois temas; páginas autenticadas e interações completas NÃO verificadas visualmente.
+
+## D-090 — Fornecedores: contactos múltiplos e ligação ao mapa
+
+Contexto: um fornecedor pode ter contactos de pessoas/departamentos distintos, cada um com telefone/email, e uma ligação própria para a localização no mapa. Os campos gerais de contacto existentes mantêm-se para compatibilidade; a migração espelha os valores legados na lista nova sem os apagar.
+
+Decisão: acrescentar `supplier_contacts` (nome, departamento opcional, telefone, email e ordem) e `suppliers.maps_url`. A API aceita a lista `contacts`; lista omitida num PATCH não altera contactos, lista enviada substitui a anterior, lista vazia limpa e `null` é rejeitado para não ser confundido com omissão. A pesquisa inclui nome, departamento e email dos contactos. O formulário permite editar/remover contactos e a página apresenta telefone/email clicáveis e a ligação ao mapa. O carregador JSON valida e cria contactos novos, acrescenta contactos ausentes sem sobrescrever os existentes e preenche `maps_url` vazio.
+
+Dados de teste são sintéticos (`example.invalid` e placeholders telefónicos); dados reais de fornecedores/contactos ficam fora do Git. A migração `d7a2c5e9b3f1` sucede `a7c1e5d9f3b2`, cria uma linha `Geral` quando só existem telefone/email legados e o downgrade remove apenas a tabela e coluna criadas nesta revisão.
+
+Verificado no snapshot local reconciliado (não publicado):
+- Migração SQLite e PostgreSQL: `upgrade head` → `downgrade -1` → `upgrade head`, exits 0; Alembic tem um único head `d7a2c5e9b3f1`.
+- SQLite completo: 928 testes aprovados, 2 skipped, 2 warnings; PostgreSQL focado em fornecedores/migração: 43 aprovados, 1 warning.
+- PostgreSQL completo: 926 aprovados, 3 skipped, 1 falha preexistente fora de fornecedores em `test_ingest_staging_cli.py::test_dry_run_combines_with_only_ids_for_a_pilot_preview`; não é declarado gate verde.
+- Vitest: 39 ficheiros, 332 testes aprovados; `npm run lint` (TypeScript), build e `git diff --check`: exit 0.
+- A validação inclui o WIP preexistente do principal, incluindo D-089/modo escuro; isso não significa aprovação nem publicação desse WIP. Produção permanece inalterada.
+
+## D-091 — Afectações de equipas: conflitos apenas no âmbito visível e lock canónico da obra
+
+As afectações de equipas continuam ligadas à obra, instalador e equipa, com datas e
+histórico append-only. A vista de equipas não pode revelar a existência de uma obra
+fora do âmbito do utilizador através de `conflict`, nomes ou identidades: primeiro
+filtra as afectações visíveis e só depois calcula conflitos entre essas linhas. Uma
+obra oculta pode manter a equipa como `ocupada_noutra_obra`, sem expor a sua
+identidade nem transformar a linha visível em conflito.
+
+A criação e alteração de uma afectação adquirem o lock da linha canónica de
+`Project` (`FOR UPDATE`) e refrescam o objecto ORM antes de validar a sobreposição.
+Assim, concorrentes usam a mesma ordem de lock e só uma grava a janela sobreposta;
+a outra recebe erro de domínio. A relação usa a cascata da BD sem autoflush
+intermédio ao remover uma obra. A migração `e8b2c4d6f0a1` sucede
+`d7a2c5e9b3f1`; não há nomes reais nos dados de teste.
+
+**Verificado no snapshot integrado (não publicado):**
+- Correções TEAM-001/CONCURRENCY-001 propagadas por preimagem exacta: conflito
+  visível apenas entre afectações visíveis; `Project FOR UPDATE` + refresh e
+  correcção ORM de `passive_deletes` cobertos por regressões.
+- SQLite e PostgreSQL frescos: `upgrade head` → `downgrade -1` → `upgrade head`,
+  exits 0; um único head `d4e6f8a1b2c3` no pacote integrado.
+- Backend completo: SQLite 953 passed, 3 skipped, 2 warnings; PostgreSQL
+  953 passed, 3 skipped, 2 warnings.
+- Frontend completo: 42 ficheiros, 348 testes; TypeScript/lint, build e
+  `git diff --check`, exit 0.
+- Sem deploy, restart, commit, push, merge ou alteração da produção.
+
+## D-092 — Anulação auditável de movimentos e quantidades com precisão por unidade
+
+Uma anulação de inventário é um movimento compensatório append-only ligado ao
+movimento original; o original permanece imutável, cada movimento só pode ser
+anulado uma vez e a linha compensatória conserva actor, data, motivo/referência e
+ligação ao original. O servidor valida âmbito e capability, bloqueia saldos
+reservados/consumidos/físicos/no local negativos, serializa a verificação (lock
+`FOR UPDATE` em PostgreSQL e lock de escrita + refresh em SQLite) e rejeita
+quantidades com mais precisão do que `Numeric(14,3)`. A migração
+`d4e6f8a1b2c3` sucede `e8b2c4d6f0a1` e provisiona apenas as permissões de
+anulação que criou.
+
+Na UI, o helper de quantidades é unit-aware: unidades contadas mostram inteiros
+sem zeros decimais, enquanto unidades fraccionárias preservam a precisão recebida.
+O mesmo helper é usado no stock central, necessidades, movimentos, pedidos e
+planos de deslocação; não arredonda silenciosamente dados fraccionários inválidos.
+
+**Verificado no snapshot integrado (não publicado):**
+- Backend de anulação: regressões de imutabilidade, auditoria, permissões,
+  precisão, saldos e corrida SQLite; migrações SQLite/PostgreSQL up/down/up,
+  exits 0.
+- Backend completo: SQLite 953 passed, 3 skipped, 2 warnings; PostgreSQL
+  953 passed, 3 skipped, 2 warnings.
+- Frontend completo: 42 ficheiros, 348 testes; TypeScript/lint, build e
+  `git diff --check`, exit 0.
+- A documentação D-090/D-091/D-092 conserva o WIP D-089 actual do principal;
+  o snapshot é integrado local e não publicado.
+
+## D-093 — Projetos agrupados por estado de ciclo de vida
+
+**Proveniência e requisito.** Decisão tomada a partir das imagens fornecidas pelo
+utilizador em 15-10-2026. As imagens orientam a apresentação da lista por estado
+de ciclo de vida; não se copiam nomes, identificadores ou qualquer outro dado
+privado para documentação, fixtures ou exemplos.
+
+**Decisão.** A lista de projetos apresenta o resultado já filtrado pelo servidor
+em grupos de estado. A ordem e os rótulos dos grupos vêm do catálogo de estados;
+a ordem dos projetos dentro de cada grupo é a ordem cronológica/API já recebida,
+sem uma ordenação frontend concorrente. Um estado `null`, ausente ou desconhecido
+fica visível num grupo único e explícito **Sem estado**, em vez de desaparecer ou
+ser convertido num estado inventado. Os grupos podem ser recolhidos/expandidos
+individualmente e em conjunto, com `aria-expanded` e contagem acessível.
+
+**Âmbito e consequências.** Esta decisão é frontend/read-only: agrupar não altera
+projetos, estados, permissões, filtros, métricas nem o contrato de escrita. O
+servidor continua a ser a fonte de verdade para visibilidade, catálogo e estado;
+o cliente só compõe a apresentação e mantém os filtros existentes.
+
+## D-094 — Planeamento: preferências, participantes e ligação ao Processo
+
+**Proveniência e requisito.** Decisão tomada a partir das imagens fornecidas pelo
+utilizador em 15-10-2026, sem nomes privados. O Planeamento deve guardar a vista
+por utilizador, mostrar categorias e todos os participantes, e ligar eventos ao
+Processo sem duplicar tarefas nem permitir edição acidental do Processo.
+
+**Decisão de contrato.**
+- As preferências são por `User`, nunca globais nem partilhadas pelo browser:
+  `view` é `month|week|list` e `hide_weekends` é booleano. O catálogo de
+  categorias vem do servidor; não há tabela local concorrente de labels/cores.
+- Participantes são uma relação N:N (`assigned_to_person_ids` e os nomes seguros
+  devolvidos pelo servidor). O `assigned_to_person_id` legado mantém-se para
+  compatibilidade e representa o primeiro participante quando aplicável; a UI
+  não inventa emails, fotografias ou pessoas fora do âmbito.
+- Eventos manuais podem referenciar `process_stage_id` e/ou
+  `process_subtask_id`, mantendo a escolha de tarefas normais separada. As
+  projeções têm `source=process`, `source_id` determinístico e
+  `can_manage=false`: são **read-only**, mostram origem, categoria,
+  responsáveis e deep-link para o Processo, sem criar/editar Tasks, datas ou
+  progresso do Processo. Eventos manuais têm `source=manual`; o merge deduplica
+  apenas a chave exata do contrato e preserva ocorrências com datas diferentes.
+- A convenção explícita de instantes é UTC. Valores com offset são normalizados
+  para UTC; datetimes sem offset continuam aceites apenas por compatibilidade
+  histórica e são interpretados segundo a convenção UTC, nunca como hora local
+  do browser ou Europe/Lisbon. As respostas devolvem offset conhecido. No
+  SQLite, onde `DateTime(timezone=True)` perde o `tzinfo` no carregamento, o
+  serializer re-hidrata os valores persistidos em UTC como UTC antes do
+  readback.
+
+**Esquema e falhas.** A migração `f5a7c9d1e3b2` sucede `d4e6f8a1b2c3` e cria
+`planning_preferences`, `calendar_event_assignees` e os campos de categoria/
+Processo em `calendar_events`; o downgrade regressa a `d4e6f8a1b2c3` e o
+upgrade seguinte reaplica o backfill sem duplicar participantes. Falhas de
+esquema/BD no backend devolvem `503` sanitizado, não são tratadas como ausência
+de dados. O frontend pode manter a vista mensal por omissão quando a leitura da
+preferência falha, mas mostra erro e retry; se o `PATCH` falhar, mantém o
+calendário utilizável e mostra retry. Fallback e retry são visíveis: não há
+rollback silencioso nem falsa confirmação de que a preferência foi guardada.
+
+**Evidência backend prévia do snapshot (não repetida neste marco frontend).**
+Os logs reais registam o foco de planeamento/API com 11 testes aprovados, a suite
+SQLite com 984 aprovados e 6 ignorados, e PostgreSQL com 987 aprovados e 3
+ignorados, além do round-trip Alembic `upgrade head → downgrade
+d4e6f8a1b2c3 → upgrade head` com head final `f5a7c9d1e3b2`. Estes números não
+representam uma nova execução desta pequena correção de markup; produção não foi
+alterada.
+
+**Evidência frontend deste marco.** A regressão da vista de lista exige uma só
+ação interativa por evento, confirma que o DOM não contém botão aninhado e
+verifica abertura do detalhe por clique e por Enter; os 14 testes de
+`Planning.test.tsx`, incluindo edição/reagendamento, permanecem no contrato.
+- Focado: 1 ficheiro, 14 testes aprovados, exit 0 (`ui-markup-focused.log`).
+- Vitest frontend completo: 43 ficheiros, 363 testes aprovados, exit 0
+  (`ui-markup-full-vitest.log`).
+- `npm run lint`/TypeScript e `git diff --check`: exit 0
+  (`ui-markup-lint.log`; diff-check executado no snapshot final).
+- `npm run build`: exit 0, 259 módulos transformados; mantém apenas o aviso
+  advisory existente de chunk Vite acima de 500 kB (`ui-markup-build.log`).
+
+## D-095 — Calendário de obras: vista guardada, grelha diária e detalhe sobreposto
+
+**Origem e âmbito.** Continuação autorizada do feedback do calendário de obras. Esta fase permite guardar a vista e os filtros por utilizador, ler os dias do mês com precisão, fechar seletores com clique exterior/Escape e editar um projeto sem perder o calendário. Sugestões adicionais de flexibilidade ficam para aprovação de uma fase seguinte.
+
+**Decisões.**
+- A nova escala `month_days` representa o mês real, incluindo anos bissextos, e mantém as escalas anteriores. As datas da obra continuam date-only; arrastar/redimensionar não pode alterar o dia por efeito do fuso horário. Afetações mantêm as restrições de edição existentes.
+- `GET/PATCH /api/me/works-preferences` guarda preferências do utilizador autenticado em `works_calendar_preferences`, separadas das preferências do Planeamento. O URL explícito continua prioritário e partilhável; o período absoluto não é guardado como preferência para não reabrir meses antigos inadvertidamente.
+- Preferências são validadas atomicamente, sem alargar permissões de projetos, pessoas, instaladores ou equipas. Falhas de leitura/escrita são apresentadas com erro/retry, nunca como falsa confirmação de gravação.
+- O detalhe sobreposto reutiliza o detalhe existente do projeto e as respetivas permissões. Fechar o overlay restaura a localização e a vista do calendário; cliques modificados e supressão de clique após arrasto mantêm a semântica normal dos links.
+- A migração `a9d4f6c2e8b1` sucede `f5a7c9d1e3b2`; o downgrade remove apenas a tabela de preferências desta fase.
+
+**Verificação.** A aceitação exige testes de preferências e isolamento por conta, migração SQLite/PostgreSQL, regressões de datas/arrasto, seletores/overlay e suites integradas. O relatório final do snapshot e o readback de publicação são produzidos separadamente; esta decisão, por si só, não declara publicação nem autoriza a fase seguinte.
+
+## D-096 — Banco de Horas: ledger inteiro, cálculo Excel e importação XLSX controlada
+
+**Âmbito.** Backend local do Banco de Horas aprovado em 15/10/2026. O domínio
+reutiliza `Person`, mantém o histórico append-only e separa a implantação do
+código da importação/publicação de dados reais.
+
+**Decisões.**
+- Os lançamentos persistem segundos inteiros, com horários locais como minutos
+  desde a meia-noite. Segunda–quinta usa referência 09:00–18:30, sexta
+  09:00–14:00 e a ramificação de almoço aprovada; sábado calcula o tempo
+  líquido ×1,5; domingo exige modo manual com motivo. Valores negativos são
+  válidos e nunca há dedução automática por ausências.
+- Uma correção/anulação é sempre uma linha compensatória ligada por
+  `reversal_of_id`; o original não é editado/apagado. Pessoa canónica, alvo,
+  auditoria e alteração são tratados na mesma transação.
+- `administrador`/`chefe_operacoes` recebem `view_all/manage_all`; outras roles
+  existentes recebem `view_own`. A migração provisiona capabilities com tabela
+  de tracking, não toca `user_roles` e o downgrade remove só grants próprios.
+- O contrato HTTP é `/api/time-bank` e usa DTOs estritos: inteiros de
+  `*_seconds`/`*_minute`, booleanos reais, extras proibidos, paginação bounded,
+  escopo por `ctx.user.person_id` e erros sanitizados.
+- O importador aceita XLSX até 5 MiB, limita o ZIP/XML, recusa relações
+  externas, não avalia fórmulas e guarda apenas staging JSON sanitizado. O
+  fluxo é preview → resolução humana explícita de cada `source_label` → apply.
+  Idempotência usa `sha256 + parser_version` e `source_key`; lotes aplicados
+  são imutáveis.
+
+**Verificado neste snapshot.** Testes focados de cálculo: 7 aprovados. API
+ledger/permissões/reversão: 5 aprovados. Parser sintético: 2 aprovados. Fluxo
+preview/resolução/apply/replay sintético: 1 aprovado. O parser foi exercitado
+localmente contra a cópia privada autorizada do XLSX e observou 194 lançamentos
+diários, 2 saldos transitados referenciados, 15 linhas com horários em falta e
+1 weekday divergente; nenhum dado do workbook foi escrito no Git. Suite
+integrada completa e PostgreSQL permanecem gates separados; não houve
+publicação, restart, commit, push ou alteração da produção.
+
+## D-097 — Colaborador de instalador: consulta delimitada por associação ativa
+
+**Âmbito.** Acesso de consulta aos projetos alocados ao instalador, respetivas obras/equipas e inventário por projeto, além do Banco de Horas próprio. Não concede acesso global, custos, stock central, diretórios de pessoas nem mutações operacionais.
+
+**Decisões.**
+- A associação ativa `Person → Installer`, mantida em dados e auditada, delimita a query canónica: instalador legado do projeto ou afetação de equipa do mesmo instalador. Filtros e UUIDs enviados pelo cliente apenas restringem esse conjunto. Papéis preexistentes continuam aditivos; a provisão da conta restrita recusa papéis amplos inesperados em vez de os remover em silêncio.
+- O papel `instalador_colaborador` usa capabilities específicas e `time_bank.view_own`, não reutiliza permissões globais para tornar a interface funcional. A migração `d9e1f3a5b7c2` sucede `c8f0a2b4d6e1` e não cria utilizadores reais.
+- Um projeto conjunto não autoriza divulgar equipas estrangeiras, contactos de líderes, notas privadas, autores ou referências de filtros de outros instaladores. A redacção atua sobre DTOs/copias e nunca altera o ORM ou os dados persistidos.
+- Planeamento genérico e dashboard de staff ficam fora deste canal. O catálogo de pessoas é próprio; calendário de obras, equipas e inventário usam leituras scoped. Todas as mutações operacionais do canal restrito são recusadas antes de lookup, sem distinguir recursos estrangeiros existentes de UUIDs desconhecidos. Os contratos dos papéis de staff permanecem intactos.
+- Revogar uma associação ao instalador retira acesso aos dados dessa empresa, mas não remove a capability independente de uma conta ativa consultar o próprio Banco de Horas. Desativar o utilizador impede a autenticação. Dados de Banco de Horas de terceiros e mutações continuam proibidos sem capability explícita.
+- Criar o utilizador na aplicação não cria uma conta, mailbox ou convite Microsoft. O login real depende do fluxo Entra existente e exige verificação própria; nenhuma password, OID ou identidade externa é inventada.
+
+**Verificação.** A aceitação exige matriz A/B com projeto conjunto, leituras e UUIDs fora do âmbito, igualdade de recusas de escrita, revogação, redacção sem efeitos persistidos e controlo dos papéis antigos. Exige também migração com preservação do Banco de Horas, suites SQLite/PostgreSQL, browser dos cinco módulos e validação mobile. Relatórios, hashes e readback da publicação/provisão são artefactos separados: esta decisão não declara conta criada, revisão aprovada ou publicação concluída.
+
+## D-098 — Lista de Projetos: configuração pessoal completa e vistas com ownership por conta
+
+A lista de Projetos passa a guardar a apresentação por `User`, separada das
+preferências e vistas do Calendário de obras. `project_list_preferences` tem uma
+linha por conta e guarda uma configuração JSON completa; `project_list_views`
+guarda configurações nomeadas, com `is_active` para remoção lógica. A migração
+`e2f4a6c8b0d1` sucede `d9e1f3a5b7c2` e o downgrade remove apenas estas estruturas.
+
+A configuração valida no servidor as colunas permitidas (com `project` sempre
+primeira), ordenação, filtros, datas, limites e tipos estritos. O serviço
+canónico reutiliza `visible_projects_query`: um PM só pode persistir um filtro
+que alcance dentro do seu âmbito. Se esse PM deixar de ser visível, a resposta
+redige `filters.pm` numa cópia, sem mutar o JSON ORM. Os endpoints recusam o
+canal externo readonly puro; papéis combinados continuam aditivos.
+
+Os quatro contratos são `GET/PUT /api/me/project-list-preferences` e
+`GET/POST/PATCH/DELETE /api/me/project-list-views[/{id}]`. Ownership é aplicado
+na query `(user_id, id)`, pelo que UUID inexistente e alheio devolvem o mesmo
+`404`; nomes ativos duplicados devolvem `409`, payloads inválidos `422` e
+falhas de base de dados são sanitizadas como `503`. A unicidade ativa é também
+uma barreira no índice parcial da base de dados.
+
+A implementação desta decisão foi executada com testes focados e round-trip de
+migração SQLite. A execução PostgreSQL isolada e a revisão integrada permanecem
+gates separados deste marco; não houve publicação, restart, commit, push,
+deploy ou alteração de dados reais.
+
+## D-099 — Lista de Tarefas: configuração pessoal e vistas com âmbito de Tarefas
+
+A lista de Tarefas guarda `task_list_preferences` por `User` e vistas nomeadas
+em `task_list_views`, com remoção lógica (`is_active`). A configuração integral
+usa as seis colunas base (`task`, `project`, `assignee`, `priority`, `due_date`,
+`status`), permite `category`/`created_at`, ordenação e os modos `lista`/`kanban`.
+O servidor rejeita tipos, `null`, colunas repetidas/desconhecidas, referências
+UUID inválidas, estados/prioridades fora do catálogo e filtros estrangeiros.
+
+A API pessoal é `GET/PUT /api/me/task-list-preferences` e
+`GET/POST/PATCH/DELETE /api/me/task-list-views[/{id}]`. Ownership é aplicado
+na query `(user_id, id)`, pelo que uma vista inexistente, removida ou de outra
+conta devolve `404` uniforme. Nomes activos duplicados devolvem `409`, payloads
+inválidos `422` e falhas de base de dados `503` sanitizado. A unicidade activa
+é também protegida por um índice parcial.
+
+As referências de `project_id` e `assigned_to_person_id` são verificadas
+através da consulta autorizada de Tarefas, nunca por um catálogo global. GET
+redige referências que deixaram de estar no âmbito numa cópia, sem mutar o JSON
+persistido. O canal externo readonly puro é recusado; papéis combinados mantêm
+as capacidades aditivas. A criação inicial da preferência bloqueia o `User` e
+relê a preferência para que duas sessões PostgreSQL obtenham `200, 200` e uma
+só linha; a corrida de nomes obtém `201, 409`.
+
+A migração `f3b5d7e9a1c2` sucede `e2f4a6c8b0d1`; o downgrade remove apenas estas
+estruturas. A implementação backend foi mantida separada do frontend e não
+altera tarefas, histórico, permissões/grants ou dados existentes.
+
+A aceitação deste marco exige os testes focados SQLite/PostgreSQL, round-trip
+Alembic up/down/up nos dois motores, ownership/validação/redacção/soft-delete
+e as corridas PostgreSQL. Não houve publicação, restart, commit, push, deploy
+ou alteração da produção.
