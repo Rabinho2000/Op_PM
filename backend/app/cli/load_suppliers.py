@@ -30,13 +30,20 @@ from sqlalchemy.orm import Session
 
 from app.cli.ingest_staging import IngestionError, assert_file_is_not_trackable_by_git
 from app.db import SessionLocal
-from app.models.supplier import Supplier
+from app.models.supplier import Supplier, SupplierContact
 from app.schemas.suppliers import SupplierCreate
 from app.services import suppliers as service
 
-_ALLOWED_KEYS = set(SupplierCreate.model_fields)
 # Campos de texto/opcionais que se preenchem num fornecedor existente se estiverem vazios.
-_FILLABLE = ("contact", "phone", "email", "website", "address", "category", "notes", "materials")
+_FILLABLE = ("contact", "phone", "email", "website", "address", "maps_url", "category", "notes", "materials")
+
+
+def _build_contacts(values: list[dict]) -> list[SupplierContact]:
+    return [SupplierContact(position=index, **value) for index, value in enumerate(values)]
+
+
+def _contact_key(contact: SupplierContact) -> tuple[str, str | None, str | None, str | None]:
+    return (contact.name, contact.department, contact.phone, contact.email)
 
 
 def load_suppliers(db: Session, entries: list[dict]) -> dict:
@@ -49,17 +56,19 @@ def load_suppliers(db: Session, entries: list[dict]) -> dict:
             summary["invalid"].append(f"{label}: não é um objeto")
             continue
         try:
-            data = SupplierCreate.model_validate({k: v for k, v in raw.items() if k in _ALLOWED_KEYS})
+            data = SupplierCreate.model_validate(raw)
         except ValidationError as exc:
             reasons = "; ".join(e["msg"].removeprefix("Value error, ") for e in exc.errors())
             summary["invalid"].append(f"{label}: {reasons}")
             continue
 
         payload = data.model_dump()
+        contacts_payload = payload.pop("contacts", [])
         existing = service.find_supplier_by_name(db, data.name)
         if existing is None:
             types = payload.pop("material_types")
             supplier = Supplier(**payload)
+            supplier.contacts = _build_contacts(contacts_payload)
             supplier.material_types = service.get_or_create_material_types(db, types)
             db.add(supplier)
             db.flush()
@@ -77,6 +86,16 @@ def load_suppliers(db: Session, entries: list[dict]) -> dict:
         if missing:
             existing.material_types = [*existing.material_types, *missing]
             changed = True
+        if contacts_payload:
+            incoming = _build_contacts(contacts_payload)
+            known_contacts = {_contact_key(contact) for contact in existing.contacts}
+            new_contacts = [contact for contact in incoming if _contact_key(contact) not in known_contacts]
+            if new_contacts:
+                start_position = len(existing.contacts)
+                for position, contact in enumerate(new_contacts, start=start_position):
+                    contact.position = position
+                existing.contacts.extend(new_contacts)
+                changed = True
         if changed:
             db.flush()
             summary["updated"] += 1

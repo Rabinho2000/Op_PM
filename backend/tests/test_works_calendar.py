@@ -8,7 +8,7 @@ import datetime as dt
 from app.models.identity import User
 from app.models.installer import Installer, InstallerTeam
 from app.models.people import Person
-from app.models.project import Project
+from app.models.project import Project, ProjectTeamAssignment
 
 CHEFE = "chefe.sintetico@example.invalid"
 PM_UM = "pm.um.sintetico@example.invalid"
@@ -53,6 +53,17 @@ def _new(db, name, *, start, end, team=None, installer=None, state="construcao",
     )
     db.add(project)
     db.flush()
+    if team is not None:
+        db.add(
+            ProjectTeamAssignment(
+                project_id=project.id,
+                installer_id=team.installer_id,
+                team_id=team.id,
+                start_date=start,
+                end_date=end,
+            )
+        )
+        db.flush()
     return project
 
 

@@ -13,6 +13,7 @@ import {
   getProjectInventory,
   getProjectLicensingData,
   InventoryItem,
+  InventoryMovement,
   listInventoryItems,
   listPeople,
   listTasks,
@@ -26,6 +27,7 @@ import {
   ProjectLicensingData,
   releaseProjectMaterial,
   reserveProjectMaterial,
+  reverseProjectMovement,
   returnProjectMaterial,
   Task,
   TASK_ALLOWED_NEXT_STATUSES,
@@ -49,6 +51,7 @@ import { useToast } from "../components/Toast";
 import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, ProgressBar } from "../components/ui";
 import { useSession } from "../session/SessionContext";
 import { formatDatePt, formatDateTimePt, relativeDayLabel, todayIsoLisbon } from "../utils/dates";
+import { formatQuantity } from "../utils/quantities";
 import {
   PROJECT_FIELD_LABELS,
   PROJECT_STATUS_TONES,
@@ -66,6 +69,13 @@ type TabKey =
   | "historico"
   | "cliente"
   | "relatorio";
+
+type InventoryRefreshStatus = "loading" | "ready" | "error";
+
+type InventoryRefreshState = {
+  status: InventoryRefreshStatus;
+  error: string | null;
+};
 
 // Campos de texto oferecidos no formulário de edição, por ordem. Só são
 // mostrados os que o servidor indica em `project.editable_fields` (D-028).
@@ -540,6 +550,79 @@ function ProjectInventoryOperationModal({
   );
 }
 
+function ReverseMovementModal({
+  movement,
+  onClose,
+  onDone,
+}: {
+  movement: InventoryMovement;
+  onClose: () => void;
+  onDone: (reason: string) => Promise<void>;
+}) {
+  const [reason, setReason] = useState("Anulação manual");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    const normalizedReason = reason.trim();
+    if (!normalizedReason) {
+      setError("Indique o motivo da anulação.");
+      return;
+    }
+    if (normalizedReason.length > 220) {
+      setError("O motivo não pode exceder 220 caracteres.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await onDone(normalizedReason);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : "Não foi possível anular o movimento.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      title="Anular movimento"
+      onClose={saving ? () => undefined : onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose} disabled={saving}>
+            Cancelar
+          </button>
+          <button type="submit" form="reverse-movement-form" className="btn btn--primary" disabled={saving}>
+            {saving ? "A anular…" : "Confirmar anulação"}
+          </button>
+        </>
+      }
+    >
+      <p>
+        O movimento de <strong>{movement.item_name ?? "material"}</strong> será mantido no histórico e será criada uma linha
+        compensatória. Esta operação não pode ser desfeita automaticamente.
+      </p>
+      {error && <Alert tone="danger">{error}</Alert>}
+      <form id="reverse-movement-form" className="form-grid" onSubmit={handleSubmit}>
+        <div className="field span-2">
+          <label htmlFor="reverse-movement-reason">Motivo</label>
+          <input
+            id="reverse-movement-reason"
+            className="input"
+            value={reason}
+            maxLength={220}
+            onChange={(e) => setReason(e.target.value)}
+            disabled={saving}
+          />
+          <span className="small muted">Fica registado no histórico (máximo 220 caracteres).</span>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 function isProjectTab(value: string | null): value is TabKey {
   return ["resumo", "processo", "instalacao", "licenciamento", "tarefas", "inventario", "historico", "cliente", "relatorio"].includes(value ?? "");
 }
@@ -558,13 +641,18 @@ export default function ProjectDetail() {
   const [licensingData, setLicensingData] = useState<ProjectLicensingData | null>(null);
   const [communicationData, setCommunicationData] = useState<ProjectCommunicationData | null>(null);
   const [inventory, setInventory] = useState<ProjectInventorySummary | null>(null);
+  const [inventoryCatalog, setInventoryCatalog] = useState<InventoryItem[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [inventoryRefresh, setInventoryRefresh] = useState<InventoryRefreshState>({ status: "loading", error: null });
+  const [inventoryCatalogRefresh, setInventoryCatalogRefresh] = useState<InventoryRefreshState>({ status: "loading", error: null });
+  const [reversedMovementIds, setReversedMovementIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("resumo");
   const [editing, setEditing] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
   const [justDone, setJustDone] = useState<string | null>(null);
   const [operatingInventory, setOperatingInventory] = useState(false);
+  const [reversingMovement, setReversingMovement] = useState<InventoryMovement | null>(null);
 
   useEffect(() => {
     const requestedTab = searchParams.get("tab");
@@ -584,9 +672,44 @@ export default function ProjectDetail() {
     can("inventory.release_project") ||
     can("inventory.deliver_project") ||
     can("inventory.collect_project");
+  const canReverseInventory = can("inventory.reverse_project");
 
-  const load = useCallback(() => {
-    if (!projectId) return;
+  const refreshInventoryItems = useCallback(async (): Promise<boolean> => {
+    if (!canViewInventory) return true;
+    setInventoryCatalogRefresh({ status: "loading", error: null });
+    try {
+      const items = await listInventoryItems();
+      setInventoryCatalog(items);
+      setInventoryItems(items.filter((item) => item.is_active));
+      setInventoryCatalogRefresh({ status: "ready", error: null });
+      return true;
+    } catch (err) {
+      setInventoryCatalogRefresh({
+        status: "error",
+        error: err instanceof ApiError ? err.detail : "Não foi possível atualizar o catálogo de inventário.",
+      });
+      return false;
+    }
+  }, [canViewInventory]);
+
+  const refreshProjectInventory = useCallback(async (): Promise<boolean> => {
+    if (!projectId || !canViewInventory) return true;
+    setInventoryRefresh({ status: "loading", error: null });
+    try {
+      setInventory(await getProjectInventory(projectId));
+      setInventoryRefresh({ status: "ready", error: null });
+      return true;
+    } catch (err) {
+      setInventoryRefresh({
+        status: "error",
+        error: err instanceof ApiError ? err.detail : "Não foi possível atualizar o inventário.",
+      });
+      return false;
+    }
+  }, [projectId, canViewInventory]);
+
+  const load = useCallback(async (): Promise<boolean> => {
+    if (!projectId) return true;
     setError(null);
     getProject(projectId)
       .then(setProject)
@@ -612,24 +735,31 @@ export default function ProjectDetail() {
         .then(setCommunicationData)
         .catch(() => setCommunicationData(null));
     }
-    if (canViewInventory) {
-      getProjectInventory(projectId)
-        .then(setInventory)
-        .catch(() => setInventory(null));
-    }
-  }, [projectId, canViewInstallation, canViewLicensing, canViewCommunication, canViewInventory]);
+    const refreshResults = canViewInventory
+      ? await Promise.all([refreshProjectInventory(), refreshInventoryItems()])
+      : [true, true];
+    return refreshResults.every(Boolean);
+  }, [
+    projectId,
+    canViewInstallation,
+    canViewLicensing,
+    canViewCommunication,
+    canViewInventory,
+    refreshProjectInventory,
+    refreshInventoryItems,
+  ]);
 
-  useEffect(load, [load]);
+  useEffect(() => {
+    setReversedMovementIds(new Set());
+  }, [projectId]);
+  useEffect(() => {
+    void load();
+  }, [load]);
   useEffect(() => {
     listPeople()
       .then(setPeople)
       .catch(() => setPeople([]));
-    if (canViewInventory) {
-      listInventoryItems()
-        .then((items) => setInventoryItems(items.filter((item) => item.is_active)))
-        .catch(() => setInventoryItems([]));
-    }
-  }, [canViewInventory]);
+  }, []);
 
   const { change: changeStatus, busyId } = useTaskStatusChange(
     useCallback(
@@ -651,6 +781,19 @@ export default function ProjectDetail() {
       load();
     } catch (e) {
       notify(e instanceof ApiError ? e.detail : "Não foi possível atualizar o responsável.", "error");
+    }
+  }
+
+  async function handleReverseMovement(movementId: string, reason: string) {
+    if (!projectId) return;
+    await reverseProjectMovement(projectId, movementId, reason);
+    setReversedMovementIds((current) => new Set(current).add(movementId));
+    setReversingMovement(null);
+    const refreshed = await load();
+    if (refreshed) {
+      notify("Movimento anulado. O registo original foi mantido.", "success");
+    } else {
+      notify("Movimento anulado, mas não foi possível atualizar os dados. Tente novamente.", "error");
     }
   }
 
@@ -685,6 +828,8 @@ export default function ProjectDetail() {
   const photosTask = byType.get("fotos_drive");
   const canEdit = project.editable_fields.length > 0;
   const openTasks = (tasks ?? []).filter((t) => t.status !== "done" && t.status !== "cancelled");
+  const inventoryRefreshFailed = inventoryRefresh.status === "error" || inventoryCatalogRefresh.status === "error";
+  const inventoryRefreshBusy = inventoryRefresh.status === "loading" || inventoryCatalogRefresh.status === "loading";
 
   const tabs: { key: TabKey; label: string; count?: number }[] = [
     { key: "resumo", label: "Resumo" },
@@ -1015,20 +1160,54 @@ export default function ProjectDetail() {
         )}
 
         {tab === "inventario" && (
-          <div className="grid grid--main-side">
+          <>
+            {inventoryRefreshFailed && (
+              <Alert
+                tone="danger"
+                title="Inventário desatualizado"
+                action={
+                  <button type="button" className="btn btn--sm" onClick={() => void load()} disabled={inventoryRefreshBusy}>
+                    {inventoryRefreshBusy ? "A atualizar…" : "Tentar novamente"}
+                  </button>
+                }
+              >
+                {inventoryRefresh.status === "error" && (
+                  <div>
+                    <strong>Não foi possível atualizar o inventário.</strong> {inventoryRefresh.error}
+                  </div>
+                )}
+                {inventoryCatalogRefresh.status === "error" && (
+                  <div>
+                    <strong>Não foi possível atualizar o catálogo.</strong> {inventoryCatalogRefresh.error}
+                  </div>
+                )}
+                {inventory !== null && <div>Os dados apresentados são os últimos conhecidos até o refresh terminar.</div>}
+              </Alert>
+            )}
+            <div className="grid grid--main-side">
             <Card
               title="Necessidades de material"
               icon="database"
               actions={
                 canOperateInventory && (
-                  <button type="button" className="btn btn--sm" onClick={() => setOperatingInventory(true)}>
+                  <button
+                    type="button"
+                    className="btn btn--sm"
+                    onClick={() => setOperatingInventory(true)}
+                    disabled={inventoryCatalogRefresh.status !== "ready"}
+                    title={inventoryCatalogRefresh.status === "ready" ? undefined : "Aguarde a atualização do catálogo."}
+                  >
                     <Icon name="plus" size={14} /> Movimento
                   </button>
                 )
               }
             >
               {inventory === null ? (
-                <LoadingState rows={3} />
+                inventoryRefresh.status === "loading" ? (
+                  <LoadingState rows={3} />
+                ) : (
+                  <EmptyState compact icon="database" title="Dados de inventário indisponíveis." />
+                )
               ) : inventory.requirements.length === 0 ? (
                 <EmptyState compact icon="database" title="Sem necessidades de material registadas." />
               ) : (
@@ -1047,18 +1226,10 @@ export default function ProjectDetail() {
                     {inventory.requirements.map((r) => (
                       <tr key={r.id}>
                         <td>{r.item_name ?? "—"}</td>
-                        <td>
-                          {r.quantity_required} {r.item_unit}
-                        </td>
-                        <td>
-                          {r.reserved} {r.item_unit}
-                        </td>
-                        <td>
-                          {r.consumed} {r.item_unit}
-                        </td>
-                        <td>
-                          {r.missing} {r.item_unit}
-                        </td>
+                        <td>{formatQuantity(r.quantity_required, r.item_unit)} {r.item_unit}</td>
+                        <td>{formatQuantity(r.reserved, r.item_unit)} {r.item_unit}</td>
+                        <td>{formatQuantity(r.consumed, r.item_unit)} {r.item_unit}</td>
+                        <td>{formatQuantity(r.missing, r.item_unit)} {r.item_unit}</td>
                         <td>
                           <Badge tone={r.available_stock_sufficient ? "success" : "danger"}>
                             {r.available_stock_sufficient ? "suficiente" : "insuficiente"}
@@ -1073,7 +1244,11 @@ export default function ProjectDetail() {
 
             <Card title="Material no local" icon="mapPin">
               {inventory === null ? (
-                <LoadingState rows={2} />
+                inventoryRefresh.status === "loading" ? (
+                  <LoadingState rows={2} />
+                ) : (
+                  <EmptyState compact icon="mapPin" title="Dados de inventário indisponíveis." />
+                )
               ) : inventory.on_site.length === 0 ? (
                 <EmptyState compact icon="mapPin" title="Nenhum material entregue e ainda no local." />
               ) : (
@@ -1084,9 +1259,7 @@ export default function ProjectDetail() {
                         <span className="list__title">{o.item_name ?? "—"}</span>
                         <div className="list__meta">Por recolher ou consumir — independente da reserva.</div>
                       </div>
-                      <Badge tone="warning">
-                        {o.quantity} {o.item_unit}
-                      </Badge>
+                      <Badge tone="warning">{formatQuantity(o.quantity, o.item_unit)} {o.item_unit}</Badge>
                     </li>
                   ))}
                 </ul>
@@ -1095,28 +1268,49 @@ export default function ProjectDetail() {
 
             <Card title="Movimentos deste projeto" icon="history">
               {inventory === null ? (
-                <LoadingState rows={3} />
+                inventoryRefresh.status === "loading" ? (
+                  <LoadingState rows={3} />
+                ) : (
+                  <EmptyState compact icon="history" title="Dados de inventário indisponíveis." />
+                )
               ) : inventory.reservations.length === 0 ? (
                 <EmptyState compact icon="history" title="Sem movimentos de inventário neste projeto." />
               ) : (
                 <ul className="list">
-                  {inventory.reservations.map((m) => (
-                    <li key={m.id} className="list__item">
-                      <div className="list__main">
-                        <span className="list__title">
-                          {m.item_name ?? "—"} · {m.quantity}
-                        </span>
-                        <div className="list__meta">
-                          {m.movement_type} · {formatDateTimePt(m.created_at)}
-                          {m.reference ? ` · ${m.reference}` : ""}
+                  {inventory.reservations.map((m) => {
+                    const itemUnit = inventoryCatalog.find((item) => item.id === m.item_id)?.unit;
+                    const hasReversal = inventory.reservations.some((candidate) => candidate.reversal_of_movement_id === m.id);
+                    const canReverse =
+                      canReverseInventory && !reversedMovementIds.has(m.id) && !m.reversal_of_movement_id && !hasReversal;
+                    return (
+                      <li key={m.id} className="list__item">
+                        <div className="list__main">
+                          <span className="list__title">
+                            {m.item_name ?? "—"} · {formatQuantity(m.quantity, itemUnit)} {itemUnit ?? ""}
+                          </span>
+                          <div className="list__meta">
+                            {m.reversal_of_movement_id ? "Anulação" : m.movement_type} · {formatDateTimePt(m.created_at)}
+                            {m.reference ? ` · ${m.reference}` : ""}
+                          </div>
                         </div>
-                      </div>
-                    </li>
-                  ))}
+                        {canReverse && (
+                          <button
+                            type="button"
+                            className="btn btn--sm"
+                            onClick={() => setReversingMovement(m)}
+                            aria-label={`Anular movimento de ${m.item_name ?? "material"}`}
+                          >
+                            Anular
+                          </button>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </Card>
           </div>
+          </>
         )}
 
         {tab === "historico" && (
@@ -1210,6 +1404,13 @@ export default function ProjectDetail() {
             notify("Movimento de inventário registado.", "success");
             load();
           }}
+        />
+      )}
+      {reversingMovement && (
+        <ReverseMovementModal
+          movement={reversingMovement}
+          onClose={() => setReversingMovement(null)}
+          onDone={(reason) => handleReverseMovement(reversingMovement.id, reason)}
         />
       )}
     </>

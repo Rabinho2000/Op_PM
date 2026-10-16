@@ -81,6 +81,22 @@ class IdempotencyConflictError(InventoryError):
     """An idempotency key was reused for a different request."""
 
 
+class MovementAlreadyReversedError(InventoryError):
+    """A movement already has its single compensating movement."""
+
+
+REVERSIBLE_PROJECT_MOVEMENT_TYPES: frozenset[str] = frozenset(
+    {
+        MOVEMENT_RESERVA,
+        MOVEMENT_LIBERTA_RESERVA,
+        MOVEMENT_CONSUMO,
+        MOVEMENT_DEVOLUCAO,
+        MOVEMENT_ENTREGA,
+        MOVEMENT_RECOLHA,
+    }
+)
+
+
 def _fingerprint_value(value: object) -> object:
     if value is None:
         return None
@@ -162,6 +178,49 @@ def _lock_refresh_item(db: Session, item: InventoryItem) -> InventoryItem:
     _serialize_item(db, item.id)
     db.refresh(item)
     return item
+
+
+def _lock_refresh_movement(db: Session, movement: InventoryMovement) -> tuple[InventoryMovement, InventoryItem]:
+    """Lock and refresh the original before checking balances or reversals.
+
+    PostgreSQL uses ``FOR UPDATE``. SQLite has no row-level locks, so the
+    no-op update takes the writer lock; the explicit refresh then observes a
+    compensating row committed by a competing request before we decide.
+    """
+    if db.get_bind().dialect.name == "postgresql":
+        row_id = db.execute(
+            select(InventoryMovement.id)
+            .where(InventoryMovement.id == movement.id)
+            .with_for_update()
+        ).scalar_one_or_none()
+        if row_id is None:
+            raise InventoryError("Movimento de projeto não encontrado.")
+    else:
+        for attempt in range(5):
+            try:
+                result = db.execute(
+                    update(InventoryMovement)
+                    .where(InventoryMovement.id == movement.id)
+                    .values(updated_at=InventoryMovement.updated_at)
+                    .execution_options(synchronize_session=False)
+                )
+                if result.rowcount != 1:
+                    raise InventoryError("Movimento de projeto não encontrado.")
+                break
+            except OperationalError as exc:
+                if db.get_bind().dialect.name != "sqlite" or "locked" not in str(exc).lower() or attempt == 4:
+                    raise
+                db.rollback()
+                time.sleep(0.02 * (2**attempt))
+    db.refresh(movement)
+    if movement.project_id is None:
+        raise InventoryError("Movimento de projeto não encontrado.")
+    item = db.get(InventoryItem, movement.item_id)
+    if item is None:
+        raise InventoryError("O artigo de inventário não existe.")
+    _lock_refresh_item(db, item)
+    db.refresh(movement)
+    return movement, item
 
 
 def _prepare_item_movement(
@@ -874,6 +933,121 @@ def collect_from_project(
         unit_cost=None,
         idempotency_key=idempotency_key,
     )
+
+
+def reverse_project_movement(
+    db: Session,
+    *,
+    movement: InventoryMovement,
+    created_by_person_id: uuid.UUID | None,
+    reason: str = "Anulação manual",
+) -> InventoryMovement:
+    """Append one compensating row without mutating the original movement.
+
+    The movement and its item are locked and refreshed before dependent
+    balances are checked. The unique link on ``reversal_of_movement_id`` is
+    the database-level guard for the one-reversal rule.
+    """
+    movement, item = _lock_refresh_movement(db, movement)
+    if movement.project_id is None:
+        raise InventoryError("Movimento de projeto não encontrado.")
+    if movement.movement_type not in REVERSIBLE_PROJECT_MOVEMENT_TYPES:
+        raise InventoryError("Este tipo de movimento não pode ser anulado nesta página.")
+    if movement.reversal_of_movement_id is not None:
+        raise MovementAlreadyReversedError("Este movimento já foi anulado.")
+    existing = (
+        db.query(InventoryMovement)
+        .filter(InventoryMovement.reversal_of_movement_id == movement.id)
+        .one_or_none()
+    )
+    if existing is not None:
+        raise MovementAlreadyReversedError("Este movimento já foi anulado.")
+
+    quantity = _canonical_quantity(Decimal(movement.quantity)) or ZERO
+    reverse_quantity = -quantity
+    if reverse_quantity == ZERO:
+        raise InventoryError("Não é possível anular um movimento sem quantidade.")
+
+    project_id = movement.project_id
+    item_id = item.id
+    reserved = reserved_for_project(db, item_id, project_id)
+    consumed = consumed_for_project(db, item_id, project_id)
+    physical = physical_stock_central(db, item_id)
+    on_site = on_site_for_project(db, item_id, project_id)
+    available = available_stock(db, item_id)
+    reserved_delta = ZERO
+    consumed_delta = ZERO
+    physical_delta = ZERO
+    on_site_delta = ZERO
+
+    if movement.movement_type == MOVEMENT_RESERVA:
+        reserved_delta = reverse_quantity
+    elif movement.movement_type == MOVEMENT_LIBERTA_RESERVA:
+        reserved_delta = -reverse_quantity
+    elif movement.movement_type == MOVEMENT_CONSUMO:
+        reserved_delta = -reverse_quantity
+        consumed_delta = reverse_quantity
+        physical_delta = -reverse_quantity
+        on_site_delta = (
+            _canonical_quantity(Decimal(movement.from_site_quantity)) or ZERO
+            if movement.from_site_quantity is not None
+            else ZERO
+        )
+    elif movement.movement_type == MOVEMENT_DEVOLUCAO:
+        consumed_delta = -reverse_quantity
+        physical_delta = reverse_quantity
+    elif movement.movement_type == MOVEMENT_ENTREGA:
+        on_site_delta = reverse_quantity
+    elif movement.movement_type == MOVEMENT_RECOLHA:
+        on_site_delta = -reverse_quantity
+
+    if reserved + reserved_delta < ZERO:
+        raise InventoryError("A anulação deixaria o saldo reservado negativo.")
+    if consumed + consumed_delta < ZERO:
+        raise InventoryError("A anulação deixaria o saldo consumido negativo.")
+    if physical + physical_delta < ZERO:
+        raise InventoryError("A anulação deixaria o stock físico negativo.")
+    if on_site + on_site_delta < ZERO:
+        raise InventoryError("A anulação deixaria o saldo no local negativo.")
+    # Disponível = físico central - reservado total.  A compensação pode
+    # alterar os dois termos (consumo: +físico e +reservado), portanto a
+    # precondição tem de aplicar ambos os deltas ao saldo observado.
+    if available + physical_delta - reserved_delta < ZERO:
+        raise InventoryError("A anulação deixaria o stock disponível negativo.")
+
+    clean_reason = (reason or "Anulação manual").strip()[:220] or "Anulação manual"
+    reversal = InventoryMovement(
+        item_id=item_id,
+        movement_type=movement.movement_type,
+        quantity=reverse_quantity,
+        project_id=project_id,
+        location_id=movement.location_id,
+        destination_location_id=movement.destination_location_id,
+        unit_cost=movement.unit_cost,
+        from_site_quantity=(
+            -(_canonical_quantity(Decimal(movement.from_site_quantity)) or ZERO)
+            if movement.from_site_quantity is not None
+            else None
+        ),
+        reference=f"Anulação: {clean_reason}",
+        reversal_of_movement_id=movement.id,
+        created_by_person_id=created_by_person_id,
+    )
+    db.add(reversal)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = (
+            db.query(InventoryMovement)
+            .filter(InventoryMovement.reversal_of_movement_id == movement.id)
+            .one_or_none()
+        )
+        if existing is not None:
+            raise MovementAlreadyReversedError("Este movimento já foi anulado.") from None
+        raise
+    db.refresh(reversal)
+    return reversal
 
 
 @dataclass(frozen=True)

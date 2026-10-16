@@ -257,6 +257,102 @@ def test_loader_creates_validates_and_is_idempotent(db_session):
     assert db_session.query(Supplier).filter(Supplier.name.like("Loja %")).count() == 3
 
 
+def test_loader_creates_contacts_from_a_valid_entry(db_session):
+    summary = load_suppliers(
+        db_session,
+        [
+            {
+                "name": "Loja Com Contactos",
+                "maps_url": "https://maps.example.invalid/loja",
+                "contacts": [{"name": "Contacto de Carga", "phone": "000 000 001"}],
+            }
+        ],
+    )
+    assert summary["created"] == 1 and summary["invalid"] == []
+    supplier = db_session.query(Supplier).filter(Supplier.name == "Loja Com Contactos").one()
+    assert supplier.maps_url == "https://maps.example.invalid/loja"
+    assert [(contact.name, contact.phone) for contact in supplier.contacts] == [("Contacto de Carga", "000 000 001")]
+
+
+def test_loader_fills_map_and_adds_contacts_idempotently(db_session):
+    load_suppliers(db_session, [{"name": "Loja Existente"}])
+    entry = {
+        "name": "Loja Existente",
+        "maps_url": "https://maps.example.invalid/existente",
+        "contacts": [{"name": "Contacto Novo", "email": "novo@example.invalid"}],
+    }
+    changed = load_suppliers(db_session, [entry])
+    assert changed["updated"] == 1
+    supplier = db_session.query(Supplier).filter(Supplier.name == "Loja Existente").one()
+    assert supplier.maps_url == "https://maps.example.invalid/existente"
+    assert [(contact.name, contact.email) for contact in supplier.contacts] == [("Contacto Novo", "novo@example.invalid")]
+
+    again = load_suppliers(db_session, [entry])
+    assert again["unchanged"] == 1
+    assert db_session.query(Supplier).filter(Supplier.name == "Loja Existente").one().contacts == supplier.contacts
+
+
+def test_loader_rejects_unknown_fields_without_creating_or_updating(db_session):
+    baseline = load_suppliers(
+        db_session,
+        [
+            {
+                "name": "Fornecedor Legado Sintético",
+                "phone": "210000000",
+                "email": "legado@example.invalid",
+                "maps_url": "https://maps.example.invalid/base",
+                "contacts": [{"name": "Contacto Legado", "phone": "210000001"}],
+                "material_types": ["Inversores"],
+            }
+        ],
+    )
+    assert baseline["created"] == 1 and baseline["invalid"] == []
+    supplier = db_session.query(Supplier).filter(Supplier.name == "Fornecedor Legado Sintético").one()
+    before = {
+        "phone": supplier.phone,
+        "email": supplier.email,
+        "maps_url": supplier.maps_url,
+        "contacts": [(contact.name, contact.phone) for contact in supplier.contacts],
+        "material_types": [item.name for item in supplier.material_types],
+    }
+
+    summary = load_suppliers(
+        db_session,
+        [
+            {
+                "name": "Fornecedor Novo Sintético",
+                "phon": "210000002",
+                "phone": "210000003",
+                "maps_url": "https://maps.example.invalid/novo",
+                "contacts": [{"name": "Contacto Novo"}],
+            },
+            {
+                "name": "Fornecedor Legado Sintético",
+                "phon": "210000004",
+                "email": "novo@example.invalid",
+                "maps_url": "https://maps.example.invalid/alterado",
+                "contacts": [{"name": "Contacto Que Não Deve Entrar"}],
+            },
+        ],
+    )
+
+    assert summary["created"] == 0
+    assert summary["updated"] == 0
+    assert summary["unchanged"] == 0
+    assert len(summary["invalid"]) == 2
+    assert all("Extra inputs are not permitted" in problem for problem in summary["invalid"])
+    assert db_session.query(Supplier).filter(Supplier.name == "Fornecedor Novo Sintético").one_or_none() is None
+
+    db_session.refresh(supplier)
+    assert {
+        "phone": supplier.phone,
+        "email": supplier.email,
+        "maps_url": supplier.maps_url,
+        "contacts": [(contact.name, contact.phone) for contact in supplier.contacts],
+        "material_types": [item.name for item in supplier.material_types],
+    } == before
+
+
 def test_loader_never_overwrites_manual_edits_or_reactivates(db_session):
     load_suppliers(db_session, ENTRIES)
     um = db_session.query(Supplier).filter(Supplier.name == "Loja Um").one()

@@ -97,6 +97,41 @@ function apiErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function clientReportPreviewDocument(bodyHtml: string): string {
+  const previewDocument = new DOMParser().parseFromString(bodyHtml, "text/html");
+  previewDocument.documentElement.dataset.theme = "light";
+
+  let colorScheme = previewDocument.head.querySelector<HTMLMetaElement>('meta[name="color-scheme"]');
+  if (!colorScheme) {
+    colorScheme = previewDocument.createElement("meta");
+    colorScheme.name = "color-scheme";
+    previewDocument.head.append(colorScheme);
+  }
+  colorScheme.content = "light";
+
+  const lightThemeStyle = previewDocument.createElement("style");
+  lightThemeStyle.dataset.clientReportTheme = "light";
+  lightThemeStyle.textContent = `
+    :root, html, body {
+      color-scheme: light !important;
+      background: #ffffff !important;
+      color: #0e1d26 !important;
+    }
+    body, body * {
+      color: #0e1d26 !important;
+    }
+    @media print {
+      html, body {
+        height: auto !important;
+        overflow: visible !important;
+      }
+    }
+  `;
+  previewDocument.head.append(lightThemeStyle);
+
+  return `<!doctype html>\n${previewDocument.documentElement.outerHTML}`;
+}
+
 function validateEmailList(values: string[], label: string, required: boolean): string[] {
   const errors: string[] = [];
   const nonEmpty = values.map((email) => email.trim()).filter(Boolean);
@@ -398,7 +433,7 @@ export default function ClientReport({ projectId }: ClientReportProps) {
           <iframe
             title="Conteúdo do email"
             sandbox=""
-            srcDoc={preview.body_html}
+            srcDoc={clientReportPreviewDocument(preview.body_html)}
             className="client-report__preview"
           />
         </Card>

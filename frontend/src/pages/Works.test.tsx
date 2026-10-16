@@ -1,23 +1,60 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type Installer, type WorkItem, type WorksCalendar } from "../api/client";
+import { ToastProvider } from "../components/Toast";
+import { StaticSessionProvider } from "../session/SessionContext";
 import { makeMe } from "../test/fixtures";
 import { renderWithProviders } from "../test/render";
 import { todayIsoLisbon } from "../utils/dates";
 import { addDays, defaultWindow, shiftWindow, totalDays, windowFrom } from "../utils/worksTimeline";
 import Works from "./Works";
 
-const { getWorksCalendar, listInstallers, listPeople, getLifecycleStatuses, updateProjectWorkPlan } = vi.hoisted(() => ({
+const {
+  getWorksCalendar,
+  listInstallers,
+  listPeople,
+  getLifecycleStatuses,
+  updateProjectWorkPlan,
+  getWorksPreferences,
+  updateWorksPreferences,
+  listSavedWorksViews,
+  createSavedWorksView,
+  applySavedWorksView,
+  updateSavedWorksView,
+  deleteSavedWorksView,
+} = vi.hoisted(() => ({
   updateProjectWorkPlan: vi.fn(),
   getWorksCalendar: vi.fn(),
   listInstallers: vi.fn(),
   listPeople: vi.fn(),
   getLifecycleStatuses: vi.fn(),
+  getWorksPreferences: vi.fn(),
+  updateWorksPreferences: vi.fn(),
+  listSavedWorksViews: vi.fn(),
+  createSavedWorksView: vi.fn(),
+  applySavedWorksView: vi.fn(),
+  updateSavedWorksView: vi.fn(),
+  deleteSavedWorksView: vi.fn(),
 }));
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
-  return { ...actual, getWorksCalendar, listInstallers, listPeople, getLifecycleStatuses, updateProjectWorkPlan };
+  return {
+    ...actual,
+    getWorksCalendar,
+    listInstallers,
+    listPeople,
+    getLifecycleStatuses,
+    updateProjectWorkPlan,
+    getWorksPreferences,
+    updateWorksPreferences,
+    listSavedWorksViews,
+    createSavedWorksView,
+    applySavedWorksView,
+    updateSavedWorksView,
+    deleteSavedWorksView,
+  };
 });
 
 // O jsdom não implementa PointerEvent: sem isto o clientX/clientY dos eventos perdia-se.
@@ -93,12 +130,254 @@ function calendar(works: WorkItem[], extra: Partial<WorksCalendar> = {}): WorksC
 const manager = () => makeMe({ permissions: ["project.view_all"] });
 const lastParams = () => getWorksCalendar.mock.calls[getWorksCalendar.mock.calls.length - 1][0];
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function renderWorksForAccount(me: ReturnType<typeof makeMe>) {
+  return render(
+    <MemoryRouter initialEntries={["/works"]}>
+      <StaticSessionProvider me={me}>
+        <ToastProvider>
+          <Routes>
+            <Route path="/works" element={<Works />} />
+          </Routes>
+        </ToastProvider>
+      </StaticSessionProvider>
+    </MemoryRouter>
+  );
+}
+
 describe("Works (calendário de obras)", () => {
+  it("aplica uma vista nomeada, atualiza filtros e recarrega sem perder a data escolhida", async () => {
+    listSavedWorksViews.mockResolvedValue([
+      {
+        id: "view-team",
+        name: "A minha equipa",
+        zoom: "quarters",
+        lifecycle_status: ["construcao"],
+        pm_person_id: "p-pm",
+        installer_id: "i-vm",
+        team_id: "t-1",
+        show_idle: true,
+        created_at: "2026-10-15T09:00:00Z",
+        updated_at: "2026-10-15T09:00:00Z",
+      },
+    ]);
+    applySavedWorksView.mockResolvedValue({
+      zoom: "quarters",
+      lifecycle_status: ["construcao"],
+      pm_person_id: "p-pm",
+      installer_id: "i-vm",
+      team_id: "t-1",
+      show_idle: true,
+    });
+
+    renderWithProviders(<Works />, { me: manager(), route: "/works?zoom=weeks&from=2026-10-05", path: "/works" });
+    await screen.findByRole("option", { name: "A minha equipa" });
+    const callsBeforeApply = getWorksCalendar.mock.calls.length;
+    fireEvent.change(screen.getByLabelText("Vistas guardadas"), { target: { value: "view-team" } });
+    fireEvent.click(screen.getByRole("button", { name: "Aplicar vista" }));
+
+    await waitFor(() => expect(applySavedWorksView).toHaveBeenCalledWith("view-team"));
+    expect(await screen.findByRole("button", { name: "Trimestres" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("PM")).toHaveValue("p-pm");
+    expect(screen.getByLabelText("Mostrar equipas sem obras")).toBeChecked();
+    await waitFor(() => expect(getWorksCalendar.mock.calls.length).toBeGreaterThan(callsBeforeApply));
+    expect(lastParams()).toMatchObject({
+      from: windowFrom("quarters", "2026-10-05").from,
+      pm_person_id: "p-pm",
+      lifecycle_status: ["construcao"],
+      installer_id: "i-vm",
+      team_id: "t-1",
+    });
+  });
+
+  it("carrega e mostra as vistas pessoais nomeadas", async () => {
+    listSavedWorksViews.mockResolvedValue([
+      {
+        id: "view-team",
+        name: "A minha equipa",
+        zoom: "months",
+        lifecycle_status: ["construcao"],
+        pm_person_id: null,
+        installer_id: "i-vm",
+        team_id: "t-1",
+        show_idle: false,
+        created_at: "2026-10-15T09:00:00Z",
+        updated_at: "2026-10-15T09:00:00Z",
+      },
+      {
+        id: "view-month",
+        name: "Obras deste mês",
+        zoom: "month_days",
+        lifecycle_status: [],
+        pm_person_id: null,
+        installer_id: null,
+        team_id: null,
+        show_idle: true,
+        created_at: "2026-10-14T09:00:00Z",
+        updated_at: "2026-10-14T09:00:00Z",
+      },
+    ]);
+
+    renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+
+    expect(await screen.findByRole("option", { name: "A minha equipa" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Obras deste mês" })).toBeInTheDocument();
+    expect(listSavedWorksViews).toHaveBeenCalledTimes(1);
+  });
+
+  it("guarda a vista atual como nomeada sem alterar a preferência ativa", async () => {
+    getWorksPreferences.mockResolvedValue({
+      zoom: "month_days",
+      lifecycle_status: ["construcao"],
+      pm_person_id: "p-pm",
+      installer_id: "i-vm",
+      team_id: "t-1",
+      show_idle: true,
+    });
+    createSavedWorksView.mockResolvedValue({
+      id: "view-new",
+      name: "A minha equipa",
+      zoom: "month_days",
+      lifecycle_status: ["construcao"],
+      pm_person_id: "p-pm",
+      installer_id: "i-vm",
+      team_id: "t-1",
+      show_idle: true,
+      created_at: "2026-10-15T09:00:00Z",
+      updated_at: "2026-10-15T09:00:00Z",
+    });
+    const prompt = vi.spyOn(window, "prompt").mockReturnValue("A minha equipa");
+
+    renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+    await screen.findByText("Obra Alfa");
+    fireEvent.click(screen.getByRole("button", { name: /Guardar vista atual como/ }));
+
+    await waitFor(() =>
+      expect(createSavedWorksView).toHaveBeenCalledWith({
+        name: "A minha equipa",
+        zoom: "month_days",
+        lifecycle_status: ["construcao"],
+        pm_person_id: "p-pm",
+        installer_id: "i-vm",
+        team_id: "t-1",
+        show_idle: true,
+      })
+    );
+    expect(updateWorksPreferences).not.toHaveBeenCalled();
+    expect(await screen.findByRole("option", { name: "A minha equipa" })).toBeInTheDocument();
+    expect(prompt).toHaveBeenCalledWith("Nome da vista:");
+    prompt.mockRestore();
+  });
+
+  it("renomeia uma vista nomeada apenas depois da confirmação do PATCH", async () => {
+    const existing = {
+      id: "view-team",
+      name: "A minha equipa",
+      zoom: "months" as const,
+      lifecycle_status: ["construcao"],
+      pm_person_id: null,
+      installer_id: "i-vm",
+      team_id: "t-1",
+      show_idle: false,
+      created_at: "2026-10-15T09:00:00Z",
+      updated_at: "2026-10-15T09:00:00Z",
+    };
+    listSavedWorksViews.mockResolvedValue([existing]);
+    updateSavedWorksView.mockResolvedValue({ ...existing, name: "Equipa de campo" });
+    const prompt = vi.spyOn(window, "prompt").mockReturnValue("Equipa de campo");
+
+    renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+    await screen.findByRole("option", { name: "A minha equipa" });
+    fireEvent.change(screen.getByLabelText("Vistas guardadas"), { target: { value: "view-team" } });
+    fireEvent.click(screen.getByRole("button", { name: "Renomear vista" }));
+
+    await waitFor(() => expect(updateSavedWorksView).toHaveBeenCalledWith("view-team", { name: "Equipa de campo" }));
+    expect(await screen.findByRole("option", { name: "Equipa de campo" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "A minha equipa" })).not.toBeInTheDocument();
+    expect(prompt).toHaveBeenCalledWith("Novo nome da vista:", "A minha equipa");
+    prompt.mockRestore();
+  });
+
+  it("elimina uma vista nomeada apenas depois do DELETE confirmado", async () => {
+    const existing = {
+      id: "view-team",
+      name: "A minha equipa",
+      zoom: "months" as const,
+      lifecycle_status: ["construcao"],
+      pm_person_id: null,
+      installer_id: "i-vm",
+      team_id: "t-1",
+      show_idle: false,
+      created_at: "2026-10-15T09:00:00Z",
+      updated_at: "2026-10-15T09:00:00Z",
+    };
+    listSavedWorksViews.mockResolvedValue([existing]);
+    deleteSavedWorksView.mockResolvedValue(undefined);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+    await screen.findByRole("option", { name: "A minha equipa" });
+    fireEvent.change(screen.getByLabelText("Vistas guardadas"), { target: { value: "view-team" } });
+    fireEvent.click(screen.getByRole("button", { name: "Eliminar vista" }));
+
+    await waitFor(() => expect(deleteSavedWorksView).toHaveBeenCalledWith("view-team"));
+    expect(screen.queryByRole("option", { name: "A minha equipa" })).not.toBeInTheDocument();
+    expect(confirm).toHaveBeenCalledWith("Eliminar a vista «A minha equipa»?");
+    confirm.mockRestore();
+  });
+
+  it("mostra erro ao guardar uma vista nomeada e não altera a lista sem resposta confirmada", async () => {
+    createSavedWorksView.mockRejectedValue(new ApiError(503, "Vistas nomeadas indisponíveis."));
+    const prompt = vi.spyOn(window, "prompt").mockReturnValue("Obras deste mês");
+
+    renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+    await screen.findByText("Obra Alfa");
+    fireEvent.click(screen.getByRole("button", { name: /Guardar vista atual como/ }));
+
+    expect(await screen.findByText("Vistas nomeadas indisponíveis.")).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Obras deste mês" })).not.toBeInTheDocument();
+    prompt.mockRestore();
+  });
+
   beforeEach(() => {
-    [getWorksCalendar, listInstallers, listPeople, getLifecycleStatuses, updateProjectWorkPlan].forEach((m) => m.mockReset());
+    [
+      getWorksCalendar,
+      listInstallers,
+      listPeople,
+      getLifecycleStatuses,
+      updateProjectWorkPlan,
+      getWorksPreferences,
+      updateWorksPreferences,
+      listSavedWorksViews,
+      createSavedWorksView,
+      applySavedWorksView,
+      updateSavedWorksView,
+      deleteSavedWorksView,
+    ].forEach((m) => m.mockReset());
+    listSavedWorksViews.mockResolvedValue([]);
     listInstallers.mockResolvedValue(INSTALLERS);
     listPeople.mockResolvedValue([{ id: "p-pm", display_name: "PM Um", email: null, is_active: true }]);
     getLifecycleStatuses.mockResolvedValue(STATUSES);
+    // O fixture legado não tem o endpoint de preferências; a falha explícita
+    // exercita o fallback local sem iniciar um fetch real nos testes antigos.
+    getWorksPreferences.mockRejectedValue(new ApiError(404, "Preferências indisponíveis"));
+    updateWorksPreferences.mockResolvedValue({
+      zoom: "months",
+      lifecycle_status: [],
+      pm_person_id: null,
+      installer_id: null,
+      team_id: null,
+      show_idle: false,
+    });
     const today = todayIsoLisbon();
     getWorksCalendar.mockResolvedValue(
       calendar([
@@ -169,6 +448,7 @@ describe("Works (calendário de obras)", () => {
     fireEvent.change(screen.getByLabelText("PM"), { target: { value: "p-pm" } });
     await waitFor(() => expect(lastParams().pm_person_id).toBe("p-pm"));
 
+    fireEvent.click(screen.getByText("Todos", { selector: "summary" }));
     fireEvent.click(await screen.findByLabelText("Construção"));
     fireEvent.click(screen.getByLabelText("On hold pelo cliente"));
     await waitFor(() => expect(lastParams().lifecycle_status).toEqual(["construcao", "on_hold_cliente"]));
@@ -213,7 +493,92 @@ describe("Works (calendário de obras)", () => {
     expect(totalDays(w)).toBe(70);
     expect(screen.getByRole("button", { name: "Semanas" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByLabelText("PM")).toHaveValue("p-pm");
+    fireEvent.click(await screen.findByText("2 estados", { selector: "summary" }));
     expect(screen.getByLabelText("Construção")).toBeChecked();
+  });
+
+  it("aplica a vista guardada quando não há parâmetros e mantém a data no mês atual", async () => {
+    getWorksPreferences.mockResolvedValue({
+      zoom: "month_days",
+      lifecycle_status: ["construcao"],
+      pm_person_id: "p-pm",
+      installer_id: "i-vm",
+      team_id: "t-1",
+      show_idle: true,
+    });
+    renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+    await screen.findByText("Obra Alfa");
+    fireEvent.click(await screen.findByText("Construção", { selector: "summary" }));
+    expect(screen.getByRole("button", { name: "Mês — dias" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("PM")).toHaveValue("p-pm");
+    expect(screen.getByLabelText("Construção")).toBeChecked();
+    expect(screen.getByLabelText("Mostrar equipas sem obras")).toBeChecked();
+    expect(lastParams().lifecycle_status).toEqual(["construcao"]);
+    expect(lastParams().from).toBe(defaultWindow("month_days", todayIsoLisbon()).from);
+    expect(lastParams().to).toBe(defaultWindow("month_days", todayIsoLisbon()).to);
+  });
+
+  it("dá precedência aos parâmetros partilhados sobre a vista guardada", async () => {
+    getWorksPreferences.mockResolvedValue({
+      zoom: "month_days",
+      lifecycle_status: ["construcao"],
+      pm_person_id: "p-pm",
+      installer_id: "i-vm",
+      team_id: "t-1",
+      show_idle: true,
+    });
+    renderWithProviders(<Works />, {
+      me: manager(),
+      route: "/works?zoom=weeks&from=2026-09-09&pm=&estado=preparacao&idle=0",
+      path: "/works",
+    });
+    await screen.findByText("Obra Alfa");
+    fireEvent.click(await screen.findByText("Preparação", { selector: "summary" }));
+    expect(screen.getByRole("button", { name: "Semanas" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Construção")).not.toBeChecked();
+    expect(screen.getByLabelText("Preparação")).toBeChecked();
+    expect(screen.getByLabelText("Mostrar equipas sem obras")).not.toBeChecked();
+  });
+
+  it("só mostra sucesso ao fixar depois do PATCH confirmado e envia o DTO completo", async () => {
+    getWorksPreferences.mockResolvedValue({
+      zoom: "month_days",
+      lifecycle_status: [],
+      pm_person_id: null,
+      installer_id: null,
+      team_id: null,
+      show_idle: false,
+    });
+    let resolveSave: ((value: unknown) => void) | undefined;
+    updateWorksPreferences.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        })
+    );
+    renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+    await screen.findByText("Obra Alfa");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Mês — dias" })).toHaveAttribute("aria-pressed", "true"));
+    fireEvent.change(screen.getByLabelText("PM"), { target: { value: "p-pm" } });
+    fireEvent.click(screen.getByRole("button", { name: "Fixar vista" }));
+    expect(updateWorksPreferences).toHaveBeenCalledWith({
+      zoom: "month_days",
+      lifecycle_status: [],
+      pm_person_id: "p-pm",
+      installer_id: null,
+      team_id: null,
+      show_idle: false,
+    });
+    expect(screen.queryByText("Vista guardada.")).not.toBeInTheDocument();
+    resolveSave?.({
+      zoom: "month_days",
+      lifecycle_status: [],
+      pm_person_id: "p-pm",
+      installer_id: null,
+      team_id: null,
+      show_idle: false,
+    });
+    expect(await screen.findByText("Vista guardada.")).toBeInTheDocument();
   });
 
   it("ignora valores inválidos no URL", async () => {
@@ -285,6 +650,278 @@ describe("Works (calendário de obras)", () => {
     expect(await screen.findByText("Sem permissão para ver o calendário de obras.")).toBeInTheDocument();
   });
 
+  it.each([401, 503])("mostra o detalhe real e permite retry num GET %s do calendário", async (status) => {
+    getWorksPreferences.mockResolvedValue({
+      zoom: "months",
+      lifecycle_status: [],
+      pm_person_id: null,
+      installer_id: null,
+      team_id: null,
+      show_idle: false,
+    });
+    getWorksCalendar.mockReset();
+    getWorksCalendar.mockRejectedValueOnce(new ApiError(status, `GET ${status} — indisponível`)).mockResolvedValueOnce(calendar([work("retry", todayIsoLisbon(), todayIsoLisbon())]));
+    renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+
+    expect(await screen.findByText(`GET ${status} — indisponível`)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
+    expect(await screen.findByText("Obra retry")).toBeInTheDocument();
+    expect(getWorksCalendar).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([401, 503])("mostra o detalhe real e só confirma um PATCH %s depois do retry", async (status) => {
+    getWorksPreferences.mockResolvedValue({
+      zoom: "months",
+      lifecycle_status: [],
+      pm_person_id: null,
+      installer_id: null,
+      team_id: null,
+      show_idle: false,
+    });
+    updateWorksPreferences.mockRejectedValueOnce(new ApiError(status, `PATCH ${status} — vista recusada`)).mockResolvedValueOnce({
+      zoom: "months",
+      lifecycle_status: [],
+      pm_person_id: null,
+      installer_id: null,
+      team_id: null,
+      show_idle: false,
+    });
+    renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+    await screen.findByText("Obra Alfa");
+
+    fireEvent.click(screen.getByRole("button", { name: "Fixar vista" }));
+    expect(await screen.findByText(`PATCH ${status} — vista recusada`)).toBeInTheDocument();
+    expect(screen.queryByText("Vista guardada.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Tentar guardar" }));
+    await waitFor(() => expect(screen.getByText("Vista guardada.")).toBeInTheDocument());
+    expect(updateWorksPreferences).toHaveBeenCalledTimes(2);
+  });
+
+  it("não deixa a preferência atrasada substituir uma interação feita antes do GET terminar", async () => {
+    const preference = deferred<Parameters<typeof getWorksPreferences.mockResolvedValue>[0]>();
+    getWorksPreferences.mockReturnValue(preference.promise);
+    renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+
+    await screen.findByRole("option", { name: "PM Um" });
+    fireEvent.change(screen.getByLabelText("PM"), { target: { value: "p-pm" } });
+    await waitFor(() => expect(lastParams().pm_person_id).toBe("p-pm"));
+    preference.resolve({
+      zoom: "weeks",
+      lifecycle_status: ["preparacao"],
+      pm_person_id: null,
+      installer_id: null,
+      team_id: null,
+      show_idle: false,
+    });
+
+    await waitFor(() => expect(screen.getByLabelText("PM")).toHaveValue("p-pm"));
+    expect(screen.getByRole("button", { name: "Meses" })).toHaveAttribute("aria-pressed", "true");
+    expect(lastParams().pm_person_id).toBe("p-pm");
+  });
+
+  it("isola a conta nova e ignora uma resposta em voo da conta anterior", async () => {
+    const userA = makeMe({ user_id: "u-a", email: "a@example.invalid", person_id: "p-a" });
+    const userB = makeMe({ user_id: "u-b", email: "b@example.invalid", person_id: "p-b" });
+    const preferenceA = deferred<Awaited<ReturnType<typeof getWorksPreferences>>>();
+    const preferenceB = deferred<Awaited<ReturnType<typeof getWorksPreferences>>>();
+    getWorksPreferences.mockReset();
+    getWorksPreferences.mockReturnValueOnce(preferenceA.promise).mockReturnValueOnce(preferenceB.promise);
+
+    const view = renderWorksForAccount(userA);
+    view.rerender(
+      <MemoryRouter initialEntries={["/works"]}>
+        <StaticSessionProvider me={userB}>
+          <ToastProvider>
+            <Routes>
+              <Route path="/works" element={<Works />} />
+            </Routes>
+          </ToastProvider>
+        </StaticSessionProvider>
+      </MemoryRouter>
+    );
+
+    preferenceA.resolve({
+      zoom: "weeks",
+      lifecycle_status: ["construcao"],
+      pm_person_id: "p-pm",
+      installer_id: "i-vm",
+      team_id: "t-1",
+      show_idle: true,
+    });
+    await Promise.resolve();
+    expect(getWorksCalendar).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Meses" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("PM")).toHaveValue("");
+
+    preferenceB.resolve({
+      zoom: "quarters",
+      lifecycle_status: [],
+      pm_person_id: null,
+      installer_id: null,
+      team_id: null,
+      show_idle: false,
+    });
+    expect(await screen.findByText("Obra Alfa")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Trimestres" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("PM")).toHaveValue("");
+  });
+
+  it("mantém uma referência guardada inativa limpável e com reset explícito", async () => {
+    getWorksPreferences.mockResolvedValue({
+      zoom: "month_days",
+      lifecycle_status: [],
+      pm_person_id: "inactive-uuid",
+      installer_id: null,
+      team_id: null,
+      show_idle: false,
+    });
+    renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+    await screen.findByText("Obra Alfa");
+
+    expect(screen.getByRole("button", { name: "Limpar filtros" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Repor vista" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Limpar filtros" }));
+    await waitFor(() => expect(lastParams().pm_person_id).toBeUndefined());
+    fireEvent.click(screen.getByRole("button", { name: "Repor vista" }));
+    await waitFor(() => expect(updateWorksPreferences).toHaveBeenCalledWith({
+      zoom: "month_days",
+      lifecycle_status: [],
+      pm_person_id: null,
+      installer_id: null,
+      team_id: null,
+      show_idle: false,
+    }));
+  });
+
+  it("mantém o calendário visível quando guardar uma referência inativa dá 422", async () => {
+    updateWorksPreferences.mockRejectedValueOnce(new ApiError(422, "A referência guardada deixou de estar ativa."));
+    renderWithProviders(<Works />, { me: manager(), route: "/works?pm=inactive-uuid", path: "/works" });
+    expect(await screen.findByText("Obra Alfa")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Fixar vista" }));
+    expect(await screen.findByText("A referência guardada deixou de estar ativa.")).toBeInTheDocument();
+    expect(screen.getByText("Obra Alfa")).toBeInTheDocument();
+  });
+
+  it("trata qualquer chave de vista explícita no URL como vista completa, com defaults documentados", async () => {
+    getWorksPreferences.mockResolvedValue({
+      zoom: "month_days",
+      lifecycle_status: ["construcao"],
+      pm_person_id: "p-pm",
+      installer_id: "i-vm",
+      team_id: "t-1",
+      show_idle: true,
+    });
+    renderWithProviders(<Works />, { me: manager(), route: "/works?pm=p-pm", path: "/works" });
+    await screen.findByText("Obra Alfa");
+
+    // A URL parcial é autoritativa: as chaves ausentes usam os defaults de
+    // viewFromParams (meses, sem filtros), não a preferência guardada.
+    expect(screen.getByRole("button", { name: "Meses" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("PM")).toHaveValue("p-pm");
+    expect(lastParams().lifecycle_status).toBeUndefined();
+    expect(lastParams().from).toBe(defaultWindow("months", todayIsoLisbon()).from);
+  });
+
+  it("só limpa a vista guardada localmente depois do PATCH de reset ser confirmado", async () => {
+    getWorksPreferences.mockResolvedValue({
+      zoom: "weeks",
+      lifecycle_status: ["construcao"],
+      pm_person_id: "p-pm",
+      installer_id: null,
+      team_id: null,
+      show_idle: true,
+    });
+    const reset = deferred<Awaited<ReturnType<typeof updateWorksPreferences>>>();
+    updateWorksPreferences.mockReturnValue(reset.promise);
+    renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+    await screen.findByText("Obra Alfa");
+    fireEvent.click(screen.getByRole("button", { name: "Repor vista" }));
+    expect(screen.getByRole("button", { name: "Semanas" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("Vista reposta.")).not.toBeInTheDocument();
+
+    reset.resolve({
+      zoom: "month_days",
+      lifecycle_status: [],
+      pm_person_id: null,
+      installer_id: null,
+      team_id: null,
+      show_idle: false,
+    });
+    await waitFor(() => expect(screen.getByText("Vista reposta.")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Mês — dias" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("mantém linhas antigas, indicador de refresh e fallback stale durante refresh tardio", async () => {
+    const refresh = deferred<WorksCalendar>();
+    getWorksPreferences.mockResolvedValue({
+      zoom: "months",
+      lifecycle_status: [],
+      pm_person_id: null,
+      installer_id: null,
+      team_id: null,
+      show_idle: false,
+    });
+    getWorksCalendar.mockReset();
+    getWorksCalendar.mockResolvedValueOnce(calendar([work("old", todayIsoLisbon(), todayIsoLisbon(), { name: "Obra antiga" })]));
+    getWorksCalendar.mockReturnValueOnce(refresh.promise);
+    renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+    expect(await screen.findByText("Obra antiga")).toBeInTheDocument();
+
+    window.dispatchEvent(new CustomEvent("op:works-project-refresh"));
+    expect(await screen.findByRole("status", { name: "A atualizar obras…" })).toBeInTheDocument();
+    expect(screen.getByText("Obra antiga")).toBeInTheDocument();
+    refresh.reject(new ApiError(503, "Refresh indisponível"));
+    expect(await screen.findByText("Refresh indisponível")).toBeInTheDocument();
+    expect(screen.getByText("Obra antiga")).toBeInTheDocument();
+    expect(screen.getByText(/versão confirmada/i)).toBeInTheDocument();
+  });
+
+  it("restaura scroll vertical e horizontal capturados só se o utilizador não os mudou", async () => {
+    const refresh = deferred<WorksCalendar>();
+    getWorksPreferences.mockResolvedValue({
+      zoom: "months",
+      lifecycle_status: [],
+      pm_person_id: null,
+      installer_id: null,
+      team_id: null,
+      show_idle: false,
+    });
+    getWorksCalendar.mockReset();
+    getWorksCalendar.mockResolvedValueOnce(calendar([work("old", todayIsoLisbon(), todayIsoLisbon(), { name: "Obra antiga" })]));
+    getWorksCalendar.mockReturnValueOnce(refresh.promise);
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
+    let currentY = 240;
+    Object.defineProperty(window, "scrollY", { configurable: true, get: () => currentY });
+    renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+    await screen.findByText("Obra antiga");
+    const scroller = document.querySelector<HTMLElement>(".works__scroll");
+    expect(scroller).toBeTruthy();
+    scroller!.scrollLeft = 37;
+
+    window.dispatchEvent(new CustomEvent("op:works-project-refresh"));
+    currentY = 92;
+    scroller!.scrollLeft = 0;
+    refresh.resolve(calendar([work("new", todayIsoLisbon(), todayIsoLisbon(), { name: "Obra nova" })]));
+    await screen.findByText("Obra nova");
+    expect(scrollTo).toHaveBeenCalledWith({ left: 0, top: 240, behavior: "auto" });
+    expect(scroller!.scrollLeft).toBe(37);
+
+    scrollTo.mockClear();
+    const second = deferred<WorksCalendar>();
+    getWorksCalendar.mockReturnValueOnce(second.promise);
+    currentY = 240;
+    scroller!.scrollLeft = 37;
+    window.dispatchEvent(new CustomEvent("op:works-project-refresh"));
+    fireEvent.wheel(window);
+    currentY = 400;
+    scroller!.scrollLeft = 80;
+    second.resolve(calendar([work("newer", todayIsoLisbon(), todayIsoLisbon(), { name: "Obra mais nova" })]));
+    await screen.findByText("Obra mais nova");
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(scroller!.scrollLeft).toBe(80);
+    scrollTo.mockRestore();
+  });
+
   describe("arrastar para replanear", () => {
     const dragBar = (name: string, dx: number) => {
       const bar = screen.getByRole("link", { name: new RegExp(name) });
@@ -341,6 +978,42 @@ describe("Works (calendário de obras)", () => {
       dragBar("Obra Alfa", 30);
       expect(await screen.findByText("O fim da obra não pode ser anterior ao início.")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Anular" })).toBeNull();
+    });
+
+    it("mostra uma barra por afectação sem enviar a edição legada da obra", async () => {
+      const today = todayIsoLisbon();
+      getWorksCalendar.mockResolvedValue(
+        calendar([
+          work("same-project", today, addDays(today, 4), {
+            name: "Obra com duas equipas",
+            assignment_id: "assignment-a",
+            assignment_start_date: today,
+            assignment_end_date: addDays(today, 1),
+            team_id: "t-1",
+            team_name: "Equipa 1",
+            can_plan_work: true,
+          }),
+          work("same-project", today, addDays(today, 4), {
+            name: "Obra com duas equipas",
+            assignment_id: "assignment-b",
+            assignment_start_date: addDays(today, 3),
+            assignment_end_date: addDays(today, 4),
+            team_id: "t-2",
+            team_name: "Equipa 2",
+            can_plan_work: true,
+          }),
+        ])
+      );
+      renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+      const bars = await screen.findAllByRole("link", { name: /Obra com duas equipas/ });
+      expect(bars).toHaveLength(2);
+      expect(new Set(bars.map((bar) => bar.getAttribute("data-entry-key")))).toEqual(new Set(["assignment-a", "assignment-b"]));
+      expect(bars[0]).not.toHaveClass("works__bar--draggable");
+
+      fireEvent.pointerDown(bars[0], { button: 0, clientX: 100, clientY: 0, pointerId: 1 });
+      fireEvent.pointerMove(bars[0], { clientX: 130, clientY: 0, pointerId: 1 });
+      fireEvent.pointerUp(bars[0], { clientX: 130, clientY: 0, pointerId: 1 });
+      expect(updateProjectWorkPlan).not.toHaveBeenCalled();
     });
   });
 });

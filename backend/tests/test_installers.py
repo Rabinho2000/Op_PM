@@ -200,11 +200,24 @@ def test_team_alone_needs_an_installer(db_session, api_client):
     assert with_null.status_code == 422 and "Sem instalador" in with_null.json()["detail"]
 
 
-def test_removing_the_installer_removes_the_team(db_session, api_client):
+def test_removing_the_installer_is_blocked_while_assignments_exist(db_session, api_client):
     project = _project(db_session, OWN)
     resp = _plan(api_client, project, installer_id=None)
-    assert resp.status_code == 200
-    assert resp.json()["installer_id"] is None and resp.json()["installer_team_id"] is None
+    assert resp.status_code == 422
+    assert "afecta" in resp.json()["detail"].lower()
+
+
+def test_removing_the_installer_removes_the_team_when_no_assignments_exist(db_session, api_client):
+    project = _project(db_session, OTHER)
+    alfa = _installer(db_session, ALFA)
+    equipa2 = _team(db_session, ALFA, "Equipa 2")
+    assigned = _plan(api_client, project, installer_id=str(alfa.id), installer_team_id=str(equipa2.id))
+    assert assigned.status_code == 200, assigned.text
+
+    resp = _plan(api_client, project, installer_id=None)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["installer_id"] is None
+    assert resp.json()["installer_team_id"] is None
 
 
 def test_unknown_installer_or_team_is_rejected(db_session, api_client):
@@ -247,8 +260,18 @@ def test_editing_dates_confirms_estimated_ones(db_session, api_client):
     project = _project(db_session, OWN)
     project.work_dates_estimated = True
     db_session.flush()
-    only_team = _plan(api_client, project, installer_team_id=str(_team(db_session, ALFA, "Equipa 2").id))
-    assert only_team.json()["work_dates_estimated"] is True  # mudar a equipa não confirma as datas
+    team2 = _team(db_session, ALFA, "Equipa 2")
+    only_team = api_client.post(
+        f"/api/projects/{project.id}/team-assignments",
+        json={
+            "team_id": str(team2.id),
+            "start_date": project.work_start_date.isoformat(),
+            "end_date": project.work_end_date.isoformat(),
+        },
+        headers=_h(CHEFE),
+    )
+    assert only_team.status_code == 201  # atribuir uma equipa não confirma a janela legada
+    assert api_client.get(f"/api/projects/{project.id}", headers=_h(CHEFE)).json()["work_dates_estimated"] is True
     confirmed = _plan(api_client, project, work_end_date="2027-02-26")
     assert confirmed.json()["work_dates_estimated"] is False
 

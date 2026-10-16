@@ -5,6 +5,7 @@ import { devLoginEnabled, isEntraConfigured, loginWithMicrosoft } from "../auth/
 import Icon from "../components/Icon";
 import { Alert, Avatar } from "../components/ui";
 import { SolcorLogo } from "../components/SolcorLogo";
+import ThemeToggle from "../components/ThemeToggle";
 
 // Fase 1 (D-031): login real via Microsoft Entra ID com MSAL —
 // Authorization Code + PKCE, access token dedicado à API (nunca o ID
@@ -136,6 +137,9 @@ export default function Login() {
 
       <main className="login__panel">
         <div className="login__card">
+          <div className="login__theme">
+            <ThemeToggle accessibleName="Aparência no login" />
+          </div>
           <h2>Iniciar sessão</h2>
           <p className="muted" style={{ marginTop: 0 }}>
             Use a sua conta Microsoft da organização.

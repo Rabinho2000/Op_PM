@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { ApiError, Installer, listInstallers, Project, updateProjectWorkPlan } from "../api/client";
 import { formatDatePt } from "../utils/dates";
 import Icon from "./Icon";
+import TeamAssignments from "./TeamAssignments";
 import { useToast } from "./Toast";
 import { Alert, Badge, Card, Modal } from "./ui";
 
@@ -56,6 +57,7 @@ export default function WorkPlanCard({ project, onChanged }: { project: Project;
             Estimadas a partir do modelo do processo (não refletem a realidade). Edite o plano para as confirmar.
           </p>
         )}
+        <TeamAssignments project={project} />
       </Card>
       {open && (
         <WorkPlanModal

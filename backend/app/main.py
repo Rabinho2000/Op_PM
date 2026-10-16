@@ -7,6 +7,7 @@ from app.api.routes_absences import router as absences_router
 from app.api.routes_client_reports import router as client_reports_router
 from app.api.routes_dashboard import router as dashboard_router
 from app.api.routes_health import router as health_router
+from app.api.routes_installer_access import router as installer_access_router
 from app.api.routes_imports import router as imports_router
 from app.api.routes_inventory import project_router as project_inventory_router
 from app.api.routes_inventory import router as inventory_router
@@ -16,16 +17,24 @@ from app.api.routes_me import router as me_router
 from app.api.routes_migration import router as migration_router
 from app.api.routes_people import router as people_router
 from app.api.routes_performance import router as performance_router
+from app.api.routes_planning import preferences_router as planning_preferences_router
 from app.api.routes_planning import router as planning_router
 from app.api.routes_project_data import router as project_data_router
 from app.api.routes_projects import router as projects_router
+from app.api.routes_project_list_views import preferences_router as project_list_preferences_router
+from app.api.routes_project_list_views import views_router as project_list_views_router
 from app.api.routes_process import router as process_router
 from app.api.routes_my_process import router as my_process_router
 from app.api.routes_support_delegations import router as support_delegations_router
 from app.api.routes_installers import router as installers_router
 from app.api.routes_suppliers import router as suppliers_router
 from app.api.routes_works import router as works_router
+from app.api.routes_works_preferences import router as works_preferences_router
+from app.api.routes_works_saved_views import router as works_saved_views_router
 from app.api.routes_tasks import router as tasks_router
+from app.api.routes_task_list_views import preferences_router as task_list_preferences_router
+from app.api.routes_task_list_views import views_router as task_list_views_router
+from app.api.routes_time_bank import router as time_bank_router
 from app.config import get_settings
 
 settings = get_settings()
@@ -53,12 +62,18 @@ app.include_router(health_router)
 app.include_router(me_router)
 app.include_router(client_reports_router)
 app.include_router(projects_router)
+app.include_router(project_list_preferences_router)
+app.include_router(project_list_views_router)
 app.include_router(process_router)
 app.include_router(my_process_router)
 app.include_router(support_delegations_router)
 app.include_router(migration_router)
 app.include_router(people_router)
 app.include_router(tasks_router)
+app.include_router(task_list_preferences_router)
+app.include_router(task_list_views_router)
+app.include_router(time_bank_router)
+app.include_router(installer_access_router)
 app.include_router(absences_router)
 app.include_router(dashboard_router)
 app.include_router(inventory_router)
@@ -69,7 +84,10 @@ app.include_router(map_router)
 app.include_router(suppliers_router)
 app.include_router(installers_router)
 app.include_router(works_router)
+app.include_router(works_preferences_router)
+app.include_router(works_saved_views_router)
 app.include_router(planning_router)
+app.include_router(planning_preferences_router)
 app.include_router(performance_router)
 app.include_router(imports_router)
 

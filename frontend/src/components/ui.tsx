@@ -254,6 +254,12 @@ export function Avatar({ name, small }: { name: string | null | undefined; small
   );
 }
 
+// Modal instances share one document-level keyboard channel. A stack is
+// needed instead of a selector lookup: nested modals may be rendered by a
+// different component tree, and only the most recently mounted one may own
+// Escape/Tab while it is open.
+const modalStack: symbol[] = [];
+
 export function Modal({
   title,
   onClose,
@@ -271,11 +277,14 @@ export function Modal({
   onCloseRef.current = onClose;
 
   useEffect(() => {
+    const token = Symbol("modal");
+    modalStack.push(token);
     const previouslyFocused = document.activeElement as HTMLElement | null;
     const first = dialogRef.current?.querySelector<HTMLElement>("input, select, textarea, button");
     first?.focus();
 
     function onKey(e: KeyboardEvent) {
+      if (modalStack[modalStack.length - 1] !== token) return;
       if (e.key === "Escape") onCloseRef.current();
       if (e.key === "Tab" && dialogRef.current) {
         const focusables = dialogRef.current.querySelectorAll<HTMLElement>(
@@ -296,6 +305,8 @@ export function Modal({
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
+      const index = modalStack.indexOf(token);
+      if (index !== -1) modalStack.splice(index, 1);
       previouslyFocused?.focus?.();
     };
   }, []);

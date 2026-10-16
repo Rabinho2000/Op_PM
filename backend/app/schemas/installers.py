@@ -43,6 +43,22 @@ class InstallerRead(BaseModel):
     project_count: int = 0
 
 
+class InstallerAccessTeamRead(BaseModel):
+    """Minimal team catalog for the scoped external channel."""
+
+    id: uuid.UUID
+    installer_id: uuid.UUID
+    name: str
+    is_active: bool
+
+
+class InstallerAccessInstallerRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    is_active: bool
+    teams: list[InstallerAccessTeamRead] = []
+
+
 class InstallerCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -111,6 +127,105 @@ class TeamUpdate(TeamBase):
         if not value:
             raise ValueError("O nome não pode ficar vazio.")
         return value
+
+
+
+
+class TeamAssignmentCreate(BaseModel):
+    """Cria uma afectação de uma equipa à janela indicada."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    team_id: uuid.UUID
+    start_date: dt.date
+    end_date: dt.date
+    note: str = Field(default="", max_length=4000)
+
+class TeamAssignmentUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    team_id: uuid.UUID | None = None
+    start_date: dt.date | None = None
+    end_date: dt.date | None = None
+    note: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _required_fields_not_null(cls, value: object) -> object:
+        if isinstance(value, dict):
+            invalid = sorted(
+                field for field in ("team_id", "start_date", "end_date") if field in value and value[field] is None
+            )
+            if invalid:
+                raise ValueError(f"Os campos {', '.join(invalid)} não podem ser nulos.")
+        return value
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> "TeamAssignmentUpdate":
+        if not self.model_fields_set:
+            raise ValueError("Indique pelo menos um campo a alterar.")
+        return self
+
+class TeamAssignmentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    project_id: uuid.UUID
+    installer_id: uuid.UUID
+    team_id: uuid.UUID
+    start_date: dt.date
+    end_date: dt.date
+    note: str
+    created_by_person_id: uuid.UUID | None
+    team_name: str | None = None
+    installer_name: str | None = None
+    team_leader_name: str | None = None
+    team_leader_phone: str | None = None
+    warning: str | None = None
+
+
+class TeamLocationAssignmentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    project_id: uuid.UUID
+    project_name: str
+    address: str | None
+    lat: float | None
+    lon: float | None
+    pm_person_id: uuid.UUID | None
+    pm_display_name: str | None
+    lifecycle_status: str | None
+    start_date: dt.date
+    end_date: dt.date
+    note: str
+    conflict: bool = False
+
+
+class TeamLocationTeamRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    installer_id: uuid.UUID
+    name: str
+    assignments: list[TeamLocationAssignmentRead] = []
+    # livre | ocupada | ocupada_noutra_obra. `free` mantém a forma anterior.
+    status: str = "livre"
+    free: bool = True
+
+
+class TeamLocationInstallerRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    teams: list[TeamLocationTeamRead] = []
+
+
+class TeamsViewRead(BaseModel):
+    date: dt.date
+    days: int
+    installers: list[TeamLocationInstallerRead] = []
 
 
 class WorkPlanUpdate(BaseModel):

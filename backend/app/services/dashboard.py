@@ -151,6 +151,8 @@ def compute_dashboard_summary(db: Session, ctx: AuthContext) -> DashboardSummary
         scope = "own"
     elif ctx.has_permission("project.view_delegated"):
         scope = "delegated"
+    elif ctx.has_permission("project.view_assigned_installer"):
+        scope = "assigned_installer"
     else:
         scope = "none"
 

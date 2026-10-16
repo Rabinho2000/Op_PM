@@ -9,11 +9,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from uuid import UUID
 
+from sqlalchemy import and_, exists, or_
 from sqlalchemy.orm import Session
 
 from app.models.absence import Absence
 from app.models.identity import Role, RolePermission, User, UserRole
-from app.models.project import Project
+from app.models.installer_access import InstallerAccessMembership
+from app.models.project import Project, ProjectTeamAssignment
 from app.models.task import Task
 from app.models.workflow import SupportDelegation
 
@@ -31,6 +33,7 @@ class AuthContext:
     role_codes: frozenset[str]
     permission_codes: frozenset[str] = field(default_factory=frozenset)
     delegating_pm_ids: frozenset[UUID] = field(default_factory=frozenset)
+    active_installer_ids: frozenset[UUID] = field(default_factory=frozenset)
 
     def has_permission(self, code: str) -> bool:
         return code in self.permission_codes
@@ -67,12 +70,24 @@ def load_auth_context(db: Session, user: User) -> AuthContext:
             .filter(SupportDelegation.support_person_id == user.person_id)
             .all()
         )
+    active_installer_ids = frozenset()
+    if "project.view_assigned_installer" in permission_codes:
+        active_installer_ids = frozenset(
+            installer_id
+            for (installer_id,) in db.query(InstallerAccessMembership.installer_id)
+            .filter(
+                InstallerAccessMembership.person_id == user.person_id,
+                InstallerAccessMembership.is_active.is_(True),
+            )
+            .all()
+        )
     return AuthContext(
         user=user,
         person_id=user.person_id,
         role_codes=role_codes,
         permission_codes=permission_codes,
         delegating_pm_ids=delegating_pm_ids,
+        active_installer_ids=active_installer_ids,
     )
 
 
@@ -155,13 +170,64 @@ def can_manage_installers(ctx: AuthContext) -> bool:
     return ctx.has_permission("installer.manage")
 
 
+def has_only_installer_project_scope(ctx: AuthContext) -> bool:
+    """True when assigned-installer is the only broad project scope.
+
+    The predicate is capability based, so a user with an additional broad role
+    keeps the additive behaviour of the existing RBAC model.
+    """
+    return (
+        ctx.has_permission("project.view_assigned_installer")
+        and not ctx.has_permission("project.view_all")
+        and not ctx.has_permission("project.view_own")
+        and not ctx.has_permission("project.view_delegated")
+    )
+
+
+def is_installer_readonly_scope(ctx: AuthContext) -> bool:
+    return has_only_installer_project_scope(ctx)
+
+
+def installer_project_scope_conditions(ctx: AuthContext) -> list[object]:
+    """Return the SQL predicates for the assigned-installer project scope."""
+    if not ctx.has_permission("project.view_assigned_installer"):
+        return []
+    if not ctx.active_installer_ids:
+        return [Project.id.is_(None)]
+    assignment_exists = exists().where(
+        and_(
+            ProjectTeamAssignment.project_id == Project.id,
+            ProjectTeamAssignment.installer_id.in_(ctx.active_installer_ids),
+        )
+    )
+    return [
+        or_(
+            Project.installer_id.in_(ctx.active_installer_ids),
+            assignment_exists,
+        )
+    ]
+
+
+def project_matches_installer_scope(ctx: AuthContext, project: Project) -> bool:
+    if not ctx.has_permission("project.view_assigned_installer"):
+        return False
+    if project.installer_id in ctx.active_installer_ids:
+        return True
+    return any(
+        assignment.installer_id in ctx.active_installer_ids
+        for assignment in (project.team_assignments or [])
+    )
+
+
 def can_view_project(ctx: AuthContext, project: Project) -> bool:
     if ctx.has_permission("project.view_all"):
         return True
     if ctx.has_permission("project.view_own"):
         if project.pm_person_id == ctx.person_id:
             return True
-    return is_delegated_project(ctx, project)
+    if is_delegated_project(ctx, project):
+        return True
+    return project_matches_installer_scope(ctx, project)
 
 
 def can_view_task(ctx: AuthContext, task: Task) -> bool:
@@ -172,10 +238,12 @@ def can_view_task(ctx: AuthContext, task: Task) -> bool:
     """
     if ctx.has_permission("task.view_all"):
         return True
-    if has_only_delegated_project_scope(ctx):
+    if has_only_delegated_project_scope(ctx) or is_installer_readonly_scope(ctx):
         return can_view_project(ctx, task.project)
     if task.assigned_to_person_id == ctx.person_id:
         return True
+    if ctx.has_permission("task.view_assigned_installer"):
+        return can_view_project(ctx, task.project)
     return can_view_project(ctx, task.project)
 
 
@@ -294,6 +362,10 @@ def can_collect_inventory_for_project(ctx: AuthContext, project: Project) -> boo
     return ctx.has_permission("inventory.collect_project") and can_edit_project(ctx, project)
 
 
+def can_reverse_inventory_movement_for_project(ctx: AuthContext, project: Project) -> bool:
+    return ctx.has_permission("inventory.reverse_project") and can_edit_project(ctx, project)
+
+
 def can_manage_material_requirements(ctx: AuthContext, project: Project) -> bool:
     return ctx.has_permission("inventory.manage_requirements") and can_edit_project(ctx, project)
 
@@ -329,12 +401,17 @@ def can_view_calendar_event(
     project: Project | None,
     *,
     assigned_to_person_id: UUID | None = None,
+    assigned_to_person_ids: tuple[UUID, ...] | list[UUID] | None = None,
 ) -> bool:
-    if not ctx.has_permission("calendar.view"):
+    if not (ctx.has_permission("calendar.view") or ctx.has_permission("works_calendar.view_assigned_installer")):
         return False
     if project is None:
-        if has_only_delegated_project_scope(ctx):
-            return assigned_to_person_id == ctx.person_id
+        if has_only_delegated_project_scope(ctx) or is_installer_readonly_scope(ctx):
+            participants = set(assigned_to_person_ids or ())
+            if assigned_to_person_id is not None:
+                participants.add(assigned_to_person_id)
+            # Scoped external users never receive unrelated internal events.
+            return not is_installer_readonly_scope(ctx) and ctx.person_id in participants
         # Mantém o comportamento dos restantes papéis para eventos internos.
         return True
     return can_view_project(ctx, project)
@@ -362,3 +439,17 @@ def can_import_notes(ctx: AuthContext) -> bool:
 
 def can_import_licensing(ctx: AuthContext) -> bool:
     return ctx.has_permission("import.licensing")
+
+
+def can_view_time_bank(ctx: AuthContext) -> bool:
+    return ctx.has_permission("time_bank.view_all") or ctx.has_permission("time_bank.view_own")
+
+
+def can_view_time_bank_person(ctx: AuthContext, person_id: UUID) -> bool:
+    if ctx.has_permission("time_bank.view_all"):
+        return True
+    return ctx.has_permission("time_bank.view_own") and person_id == ctx.person_id
+
+
+def can_manage_time_bank(ctx: AuthContext) -> bool:
+    return ctx.has_permission("time_bank.manage_all")

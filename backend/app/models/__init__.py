@@ -23,6 +23,10 @@ from app.models.imports import (  # noqa: F401
     SurplusContract,
 )
 from app.models.installer import Installer, InstallerTeam  # noqa: F401
+from app.models.installer_access import (  # noqa: F401
+    InstallerAccessMembership,
+    InstallerAccessMembershipHistory,
+)
 from app.models.inventory import (  # noqa: F401
     InventoryCatalogHistory,
     InventoryItem,
@@ -41,6 +45,9 @@ from app.models.migration import (  # noqa: F401
 )
 from app.models.notification import Notification  # noqa: F401
 from app.models.people import Person  # noqa: F401
+from app.models.planning import UserPlanningPreference  # noqa: F401
+from app.models.works_preferences import UserWorksPreference  # noqa: F401
+from app.models.works_saved_views import WorksCalendarSavedView  # noqa: F401
 from app.models.performance import GoalPeriod, GoalPeriodHistory  # noqa: F401
 from app.models.project import (  # noqa: F401
     Project,
@@ -48,15 +55,27 @@ from app.models.project import (  # noqa: F401
     ProjectHistory,
     ProjectStageProgress,
     ProjectSubtaskProgress,
+    ProjectTeamAssignment,
 )
-from app.models.project_data import (  # noqa: F401
+from app.models.project_data import (
     ProjectCommunicationData,
     ProjectDataHistory,
     ProjectInstallationData,
     ProjectLicensingData,
 )
-from app.models.supplier import Supplier, SupplierMaterialType  # noqa: F401
+from app.models.project_list_views import (  # noqa: F401
+    ProjectListView,
+    UserProjectListPreference,
+)
+from app.models.supplier import Supplier, SupplierContact, SupplierMaterialType  # noqa: F401
 from app.models.task import Task, TaskHistory  # noqa: F401
+from app.models.task_list_views import TaskListView, UserTaskListPreference  # noqa: F401
+from app.models.time_bank import (  # noqa: F401
+    TimeBankAdjustment,
+    TimeBankAudit,
+    TimeBankEntry,
+    TimeBankImportBatch,
+)
 from app.models.workflow import (  # noqa: F401
     Phase,
     SupportDelegation,

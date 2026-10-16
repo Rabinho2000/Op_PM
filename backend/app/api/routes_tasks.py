@@ -17,7 +17,7 @@ from app.models.project import Project
 from app.models.task import Task, TaskHistory
 from app.schemas.tasks import TaskCreate, TaskHistoryRead, TaskRead, TaskUpdate
 from app.security.current_user import get_auth_context
-from app.security.permissions import AuthContext, PermissionDenied, can_edit_task
+from app.security.permissions import AuthContext, PermissionDenied, can_edit_task, is_installer_readonly_scope
 from app.services.tasks import InvalidTaskAssignment, InvalidTaskTransition, create_task, get_visible_task, list_tasks
 from app.services.tasks import update_task as update_task_service
 
@@ -33,6 +33,13 @@ def _to_read(db: Session, task: Task, ctx: AuthContext) -> TaskRead:
         data.assigned_to_display_name = assignee.display_name if assignee else None
     data.is_overdue = task.is_overdue
     data.can_edit = can_edit_task(ctx, task)
+    if is_installer_readonly_scope(ctx):
+        data.description = ""
+        data.notes = ""
+        data.created_by_person_id = None
+        data.assigned_to_person_id = None
+        data.assigned_to_display_name = None
+        data.can_edit = False
     return data
 
 
@@ -80,6 +87,8 @@ def create_task_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> TaskRead:
+    if is_installer_readonly_scope(ctx):
+        raise HTTPException(status_code=403, detail="O papel externo tem acesso somente de leitura.")
     try:
         task = create_task(db, changes=body, ctx=ctx)
     except PermissionDenied as exc:
@@ -98,7 +107,9 @@ def update_task_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> TaskRead:
-    task = db.get(Task, task_id)
+    if is_installer_readonly_scope(ctx):
+        raise HTTPException(status_code=403, detail="O papel externo tem acesso somente de leitura.")
+    task = get_visible_task(db, ctx, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada.")
     try:
@@ -123,6 +134,9 @@ def get_task_history_endpoint(
     task = get_visible_task(db, ctx, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada ou sem permissão para a ver.")
+
+    if is_installer_readonly_scope(ctx):
+        raise HTTPException(status_code=403, detail="O histórico administrativo não está disponível neste canal.")
 
     entries = (
         db.query(TaskHistory)

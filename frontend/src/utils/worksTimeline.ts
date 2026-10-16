@@ -3,12 +3,13 @@
 // nunca deslocarem um dia.
 import type { Installer, WorkItem, WorkPlanInput } from "../api/client";
 
-export type Zoom = "weeks" | "months" | "quarters";
+export type Zoom = "weeks" | "months" | "quarters" | "month_days";
 
 export const ZOOMS: Record<Zoom, { label: string; dayPx: number }> = {
   weeks: { label: "Semanas", dayPx: 24 },
   months: { label: "Meses", dayPx: 6 },
   quarters: { label: "Trimestres", dayPx: 3 },
+  month_days: { label: "Mês — dias", dayPx: 28 },
 };
 
 const DAY_MS = 86_400_000;
@@ -59,22 +60,41 @@ export function windowFrom(zoom: Zoom, from: string): Window {
     return { from: monday, to: addDays(monday, 10 * 7 - 1) };
   }
   const first = startOfMonth(from);
+  if (zoom === "month_days") return { from: first, to: endOfMonth(first) };
   return { from: first, to: endOfMonth(addMonths(first, zoom === "months" ? 9 : 18)) };
 }
 
 /** Janela por omissão à volta de hoje (D10): semanas −2/+8; meses −3/+6; trimestres −6/+12. */
 export function defaultWindow(zoom: Zoom, today: string): Window {
   if (zoom === "weeks") return windowFrom("weeks", addDays(today, -14));
+  if (zoom === "month_days") return windowFrom("month_days", today);
   return windowFrom(zoom, addMonths(today, zoom === "months" ? -3 : -6));
 }
 
 /** Desloca a janela para a frente (+1) ou para trás (−1): 4 semanas, 3 meses ou 6 meses. */
 export function shiftWindow(zoom: Zoom, from: string, direction: 1 | -1): Window {
   if (zoom === "weeks") return windowFrom("weeks", addDays(from, 28 * direction));
+  if (zoom === "month_days") return windowFrom("month_days", addMonths(from, direction));
   return windowFrom(zoom, addMonths(from, (zoom === "months" ? 3 : 6) * direction));
 }
 
 export const totalDays = (w: Window): number => daysBetween(w.from, w.to) + 1;
+
+/** Datas efetivas da barra. A linha do calendário passa a representar uma
+ * afectação quando existe; os campos legados continuam a servir de fallback. */
+export function workStartDate(work: WorkItem): string {
+  return work.assignment_start_date ?? work.assignment_start ?? work.work_start_date;
+}
+
+export function workEndDate(work: WorkItem): string {
+  return work.assignment_end_date ?? work.assignment_end ?? work.work_end_date;
+}
+
+/** Identidade visual de uma linha. Uma obra pode ter várias afectações, por isso
+ * o ID da afectação prevalece sobre o ID do projeto. */
+export function workEntryKey(work: WorkItem): string {
+  return work.assignment_id ?? work.project_id;
+}
 
 // --- geometria das barras ----------------------------------------------------------
 
@@ -112,19 +132,21 @@ export function dayPosition(iso: string, w: Window, dayPx: number): number | nul
  * ficam na mesma faixa (as datas são inclusivas). */
 export function packLanes(works: WorkItem[]): { lanes: Map<string, number>; count: number } {
   const ordered = [...works].sort(
-    (a, b) => a.work_start_date.localeCompare(b.work_start_date) || a.work_end_date.localeCompare(b.work_end_date)
+    (a, b) => workStartDate(a).localeCompare(workStartDate(b)) || workEndDate(a).localeCompare(workEndDate(b))
   );
   const laneEnds: string[] = [];
   const lanes = new Map<string, number>();
   for (const work of ordered) {
-    let lane = laneEnds.findIndex((end) => end < work.work_start_date);
+    const startDate = workStartDate(work);
+    const endDate = workEndDate(work);
+    let lane = laneEnds.findIndex((end) => end < startDate);
     if (lane === -1) {
       lane = laneEnds.length;
-      laneEnds.push(work.work_end_date);
+      laneEnds.push(endDate);
     } else {
-      laneEnds[lane] = work.work_end_date;
+      laneEnds[lane] = endDate;
     }
-    lanes.set(work.project_id, lane);
+    lanes.set(workEntryKey(work), lane);
   }
   return { lanes, count: laneEnds.length };
 }
@@ -177,12 +199,12 @@ export function buildRows(works: WorkItem[], installers: Installer[], showIdle =
     const own = byInstaller.get(installer.id) ?? [];
     const teamRows: TimelineRow[] = [];
     for (const team of installer.teams) {
-      const teamWorks = own.filter((w) => w.installer_team_id === team.id);
+      const teamWorks = own.filter((w) => (w.installer_team_id ?? w.team_id) === team.id);
       if (teamWorks.length > 0 || (showIdle && team.is_active)) {
         teamRows.push(laneRow(`${installer.id}:${team.id}`, team.name, true, teamWorks, installer.id, team.id, teamWorks.length === 0));
       }
     }
-    const noTeam = own.filter((w) => w.installer_team_id === null);
+    const noTeam = own.filter((w) => (w.installer_team_id ?? w.team_id ?? null) === null);
     if (installer.teams.length === 0) {
       if (own.length > 0 || (showIdle && installer.is_active)) {
         rows.push(laneRow(installer.id, installer.name, false, own, installer.id, null, own.length === 0));
@@ -241,6 +263,34 @@ export function weekTicks(w: Window, dayPx: number): WeekTick[] {
   if (monday < w.from) monday = addDays(monday, 7);
   for (; monday <= w.to; monday = addDays(monday, 7)) {
     ticks.push({ left: daysBetween(w.from, monday) * dayPx, day: Number(monday.slice(8)), iso: monday });
+  }
+  return ticks;
+}
+
+const WEEKDAYS_PT = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+
+export interface DayTick {
+  iso: string;
+  left: number;
+  width: number;
+  day: number;
+  weekday: string;
+  weekend: boolean;
+}
+
+/** Uma marca por cada dia real da janela (usada no zoom mês diário). */
+export function dayTicks(w: Window, dayPx: number): DayTick[] {
+  const ticks: DayTick[] = [];
+  for (let iso = w.from; iso <= w.to; iso = addDays(iso, 1)) {
+    const weekdayIndex = new Date(parse(iso)).getUTCDay();
+    ticks.push({
+      iso,
+      left: daysBetween(w.from, iso) * dayPx,
+      width: dayPx,
+      day: Number(iso.slice(8, 10)),
+      weekday: WEEKDAYS_PT[weekdayIndex],
+      weekend: weekdayIndex === 0 || weekdayIndex === 6,
+    });
   }
   return ticks;
 }

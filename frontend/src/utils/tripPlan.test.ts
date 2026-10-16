@@ -64,7 +64,7 @@ describe("buildTripSummaryText", () => {
     );
     expect(text).toContain("- Tarefa: Medir telhado (atrasada), prazo 01/10/2026 [alta]");
     expect(text).toContain("- Pendência: Acesso bloqueado [urgente]");
-    expect(text).toContain("- Recolher: 3.000 un Painel 450 W");
+    expect(text).toContain("- Recolher: 3 un Painel 450 W");
     expect(text).toContain("- Visita agendada: Visita técnica (");
   });
 

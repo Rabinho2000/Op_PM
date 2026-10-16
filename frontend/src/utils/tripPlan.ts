@@ -4,6 +4,7 @@
 // como "nada a fazer".
 import type { TripPlan } from "../api/client";
 import { formatDatePt, formatDateTimePt } from "./dates";
+import { formatQuantity } from "./quantities";
 
 const PRIORITY_LABELS: Record<string, string> = { low: "baixa", medium: "média", high: "alta", urgent: "urgente" };
 
@@ -39,7 +40,7 @@ export function buildTripSummaryText(plan: TripPlan): string {
       lines.push(`   - Tarefa: ${task.title}${task.is_overdue ? " (atrasada)" : ""}${due} [${priority(task.priority)}]`);
     }
     for (const issue of jobs.issues ?? []) lines.push(`   - Pendência: ${issue.description} [${priority(issue.priority)}]`);
-    for (const item of jobs.collect ?? []) lines.push(`   - Recolher: ${item.quantity} ${item.item_unit ?? ""} ${item.item_name ?? ""}`.replace(/\s+/g, " ").trimEnd());
+    for (const item of jobs.collect ?? []) lines.push(`   - Recolher: ${formatQuantity(item.quantity, item.item_unit)} ${item.item_unit ?? ""} ${item.item_name ?? ""}`.replace(/\s+/g, " ").trimEnd());
     if (jobs.next_visit) lines.push(`   - Visita agendada: ${jobs.next_visit.title} (${formatDateTimePt(jobs.next_visit.starts_at)})`);
     if (jobs.tasks === null || jobs.issues === null || jobs.collect === null) {
       lines.push("   (algumas secções não visíveis com as suas permissões)");

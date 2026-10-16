@@ -177,14 +177,15 @@ async function requestUpload<T>(path: string, formData: FormData): Promise<T> {
   return handleResponse<T>(res);
 }
 
-const apiGet = <T>(path: string) => request<T>(path);
-const apiPatch = <T>(path: string, body: unknown) =>
+export const apiGet = <T>(path: string) => request<T>(path);
+export const apiPatch = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
-const apiPut = <T>(path: string, body: unknown) =>
+export const apiPut = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "PUT", body: JSON.stringify(body) });
-const apiPost = <T>(path: string, body?: unknown) =>
+export const apiPost = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "POST", body: body !== undefined ? JSON.stringify(body) : undefined });
-const apiUpload = <T>(path: string, formData: FormData) => requestUpload<T>(path, formData);
+export const apiDelete = <T>(path: string) => request<T>(path, { method: "DELETE" });
+export const apiUpload = <T>(path: string, formData: FormData) => requestUpload<T>(path, formData);
 
 export { ApiError };
 
@@ -393,6 +394,66 @@ export interface WorkPlanInput {
 }
 
 export const listInstallers = () => apiGet<Installer[]>("/api/installers");
+
+// Canal mínimo de consulta para instaladores colaboradores. Nunca substitui os
+// endpoints de staff: o servidor aplica o âmbito da membership em cada pedido.
+export interface InstallerAccessTeam {
+  id: string;
+  installer_id: string;
+  name: string;
+  is_active: boolean;
+}
+
+export interface InstallerAccessInstaller {
+  id: string;
+  name: string;
+  is_active: boolean;
+  teams: InstallerAccessTeam[];
+}
+
+export interface InstallerAccessTeamsEnvelope {
+  teams: InstallerAccessTeam[];
+  installers: Array<{ id: string; name: string; is_active: boolean }>;
+  scoped: boolean;
+}
+
+export type InstallerAccessTeamsResponse = InstallerAccessInstaller[] | InstallerAccessTeamsEnvelope;
+
+export const listInstallerAccessTeams = () =>
+  apiGet<InstallerAccessTeamsResponse>("/api/installer-access/teams");
+
+export interface InstallerInventoryLocation {
+  id?: string;
+  label: string;
+}
+
+export interface InstallerInventoryRow {
+  project_id: string;
+  project_name?: string;
+  article_name: string;
+  unit: string;
+  required_quantity: string | number;
+  reserved_quantity: string | number;
+  consumed_quantity: string | number;
+  delivered_quantity: string | number;
+  locations: InstallerInventoryLocation[];
+}
+
+export interface InstallerInventoryPage {
+  items: InstallerInventoryRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export const listInstallerInventory = (filters: { projectId?: string; limit?: number; offset?: number } = {}) => {
+  const params = new URLSearchParams();
+  if (filters.projectId) params.set("project_id", filters.projectId);
+  params.set("limit", String(filters.limit ?? 100));
+  params.set("offset", String(filters.offset ?? 0));
+  return apiGet<InstallerInventoryPage>(`/api/installer-access/inventory?${params.toString()}`);
+};
+
 export const createInstaller = (name: string) => apiPost<Installer>("/api/installers", { name });
 export const updateInstaller = (id: string, changes: { name?: string; is_active?: boolean }) =>
   apiPatch<Installer>(`/api/installers/${id}`, changes);
@@ -407,6 +468,45 @@ export const updateInstallerTeam = (
 ) => apiPatch<Installer>(`/api/installers/${installerId}/teams/${teamId}`, changes);
 export const updateProjectWorkPlan = (id: string, plan: WorkPlanInput) =>
   apiPatch<Project>(`/api/projects/${id}/work-plan`, plan);
+
+export interface TeamAssignment {
+  id: string;
+  project_id: string;
+  installer_id: string;
+  team_id: string;
+  start_date: string;
+  end_date: string;
+  note: string;
+  created_by_person_id: string | null;
+  team_name?: string | null;
+  installer_name?: string | null;
+  team_leader_name?: string | null;
+  team_leader_phone?: string | null;
+  warning?: string | null;
+}
+
+export interface TeamAssignmentInput {
+  team_id: string;
+  start_date: string;
+  end_date: string;
+  note?: string;
+}
+
+export interface TeamAssignmentUpdate {
+  team_id?: string;
+  start_date?: string;
+  end_date?: string;
+  note?: string;
+}
+
+export const listTeamAssignments = (projectId: string) =>
+  apiGet<TeamAssignment[]>(`/api/projects/${projectId}/team-assignments`);
+export const createTeamAssignment = (projectId: string, payload: TeamAssignmentInput) =>
+  apiPost<TeamAssignment>(`/api/projects/${projectId}/team-assignments`, payload);
+export const updateTeamAssignment = (projectId: string, assignmentId: string, changes: TeamAssignmentUpdate) =>
+  apiPatch<TeamAssignment>(`/api/projects/${projectId}/team-assignments/${assignmentId}`, changes);
+export const deleteTeamAssignment = (projectId: string, assignmentId: string) =>
+  apiDelete<void>(`/api/projects/${projectId}/team-assignments/${assignmentId}`);
 
 // --- Processo do projeto (D-073) ---
 export interface ProcessSubtask {
@@ -512,6 +612,14 @@ export interface WorkItem {
   work_dates_estimated: boolean;
   // A mesma equipa tem outra obra sobreposta (só entre preparação e construção).
   conflict: boolean;
+  assignment_id?: string | null;
+  assignment_start_date?: string | null;
+  assignment_end_date?: string | null;
+  assignment_start?: string | null;
+  assignment_end?: string | null;
+  team_id?: string | null;
+  team_name?: string | null;
+  team_leader_name?: string | null;
   // O utilizador pode alterar o plano desta obra (arrastar no calendário).
   can_plan_work?: boolean;
 }
@@ -544,6 +652,46 @@ export interface WorksFilters {
   team_id?: string;
 }
 
+export type WorksZoom = "weeks" | "months" | "quarters" | "month_days";
+
+export interface WorksPreferences {
+  zoom: WorksZoom;
+  lifecycle_status: string[];
+  pm_person_id: string | null;
+  installer_id: string | null;
+  team_id: string | null;
+  show_idle: boolean;
+}
+
+export const getWorksPreferences = () => apiGet<WorksPreferences>("/api/me/works-preferences");
+export const updateWorksPreferences = (changes: WorksPreferences) =>
+  apiPatch<WorksPreferences>("/api/me/works-preferences", changes);
+
+export interface SavedWorksView {
+  id: string;
+  name: string;
+  zoom: WorksZoom;
+  lifecycle_status: string[];
+  pm_person_id: string | null;
+  installer_id: string | null;
+  team_id: string | null;
+  show_idle: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type SavedWorksViewInput = Omit<SavedWorksView, "id" | "created_at" | "updated_at">;
+
+export const listSavedWorksViews = () => apiGet<SavedWorksView[]>("/api/me/works-saved-views");
+export const createSavedWorksView = (payload: SavedWorksViewInput) =>
+  apiPost<SavedWorksView>("/api/me/works-saved-views", payload);
+export const updateSavedWorksView = (id: string, changes: Partial<SavedWorksViewInput>) =>
+  apiPatch<SavedWorksView>(`/api/me/works-saved-views/${id}`, changes);
+export const deleteSavedWorksView = (id: string) =>
+  apiDelete<void>(`/api/me/works-saved-views/${id}`);
+export const applySavedWorksView = (id: string) =>
+  apiPost<WorksPreferences>(`/api/me/works-saved-views/${id}/apply`);
+
 export function getWorksCalendar(filters: WorksFilters): Promise<WorksCalendar> {
   const params = new URLSearchParams({ from: filters.from, to: filters.to });
   if (filters.pm_person_id) params.set("pm_person_id", filters.pm_person_id);
@@ -551,6 +699,57 @@ export function getWorksCalendar(filters: WorksFilters): Promise<WorksCalendar> 
   if (filters.team_id) params.set("team_id", filters.team_id);
   for (const s of filters.lifecycle_status ?? []) params.append("lifecycle_status", s);
   return apiGet<WorksCalendar>(`/api/works/calendar?${params.toString()}`);
+}
+
+export interface TeamLocationAssignment {
+  id: string;
+  project_id: string;
+  project_name: string;
+  address: string | null;
+  lat: number | null;
+  lon: number | null;
+  pm_person_id: string | null;
+  pm_display_name: string | null;
+  lifecycle_status: string | null;
+  start_date: string;
+  end_date: string;
+  note: string;
+  conflict?: boolean;
+}
+
+export type TeamLocationStatus = "livre" | "ocupada" | "ocupada_noutra_obra" | string;
+
+export interface TeamLocationTeam {
+  id: string;
+  installer_id: string;
+  name: string;
+  assignments?: TeamLocationAssignment[];
+  status?: TeamLocationStatus;
+  free?: boolean;
+}
+
+export interface TeamLocationInstaller {
+  id: string;
+  name: string;
+  teams?: TeamLocationTeam[];
+}
+
+export interface TeamsView {
+  date: string;
+  days: number;
+  installers: TeamLocationInstaller[];
+}
+
+export interface WorksTeamsFilters {
+  date: string;
+  days: number;
+  installer_id?: string;
+}
+
+export function getWorksTeams(filters: WorksTeamsFilters): Promise<TeamsView> {
+  const params = new URLSearchParams({ date: filters.date, days: String(filters.days) });
+  if (filters.installer_id) params.set("installer_id", filters.installer_id);
+  return apiGet<TeamsView>(`/api/works/teams?${params.toString()}`);
 }
 
 // --- Estado do ciclo de vida do projeto (D-069) ---
@@ -1185,6 +1384,7 @@ export interface InventoryMovement {
   created_at: string;
   item_name: string | null;
   project_name: string | null;
+  reversal_of_movement_id?: string | null;
 }
 
 export function listInventoryMovements(
@@ -1274,6 +1474,12 @@ export const deliverProjectMaterial = (projectId: string, payload: { item_id: st
   projectInventoryOperation(projectId, "deliver", payload);
 export const collectProjectMaterial = (projectId: string, payload: { item_id: string; quantity: string; reference?: string }) =>
   projectInventoryOperation(projectId, "collect", payload);
+
+export const reverseProjectMovement = (projectId: string, movementId: string, reason?: string) =>
+  apiPost<InventoryMovement>(
+    `/api/projects/${projectId}/inventory/movements/${movementId}/reverse`,
+    { reason: reason || "Anulação manual" },
+  );
 
 // --- Metas e indicadores (página única — nunca "Metas"/"Dashboards" separados) ---
 
@@ -1726,9 +1932,20 @@ export const planTrip = (stops: { kind: RouteStopKind; id: string }[], roundTrip
   apiPost<TripPlan>("/api/map/trip-plan", { stops, round_trip: roundTrip });
 
 // --- Fornecedores (D-070) ---
+export interface SupplierContact {
+  id?: string;
+  name: string;
+  department: string | null;
+  phone: string | null;
+  email: string | null;
+}
+
 export interface Supplier extends MapSupplier {
   phone: string | null;
   website: string | null;
+  // Ligação ao mapa (localização exata) e contactos (pessoas/departamentos) — D-090.
+  maps_url: string | null;
+  contacts: SupplierContact[];
   notes: string;
   // Vários tipos por fornecedor, por ordem alfabética.
   material_types: string[];
@@ -1742,6 +1959,8 @@ export interface SupplierInput {
   email: string | null;
   website: string | null;
   address: string | null;
+  maps_url: string | null;
+  contacts: SupplierContact[];
   lat: number | null;
   lon: number | null;
   is_preferred: boolean;
@@ -1798,21 +2017,45 @@ export const convertIssueToTask = (projectId: string, issueId: string, title: st
 
 // --- Planeamento (calendário) ---
 
+export type PlanningView = "month" | "week" | "list";
+
+export interface CalendarEventCategory {
+  code: string;
+  label: string;
+  color: string;
+}
+
 export interface CalendarEvent {
   id: string;
   visit_id: string | null;
   project_id: string | null;
   task_id: string | null;
   assigned_to_person_id: string | null;
+  assigned_to_person_ids?: string[];
   title: string;
+  category?: string;
   starts_at: string;
   ends_at: string;
   status: string;
   graph_event_id: string | null;
   created_at: string;
   project_name: string | null;
+  project_url?: string | null;
   task_title: string | null;
   assigned_to_display_name: string | null;
+  assigned_to_display_names?: string[];
+  process_stage_id?: string | null;
+  process_stage_code?: string | null;
+  process_stage_title?: string | null;
+  process_subtask_id?: string | null;
+  process_subtask_code?: string | null;
+  process_subtask_title?: string | null;
+  responsible_person_ids?: string[];
+  responsible_display_names?: string[];
+  source?: "manual" | "process";
+  source_id?: string | null;
+  category_label?: string | null;
+  category_color?: string | null;
   can_manage: boolean;
 }
 
@@ -1820,6 +2063,7 @@ export interface CalendarEventFilters {
   project_id?: string;
   assigned_to_person_id?: string;
   mine_only?: boolean;
+  category?: string;
   starts_from?: string;
   starts_to?: string;
 }
@@ -1829,6 +2073,7 @@ function calendarFiltersToParams(filters: CalendarEventFilters): URLSearchParams
   if (filters.project_id) params.set("project_id", filters.project_id);
   if (filters.assigned_to_person_id) params.set("assigned_to_person_id", filters.assigned_to_person_id);
   if (filters.mine_only) params.set("mine_only", "true");
+  if (filters.category) params.set("category", filters.category);
   if (filters.starts_from) params.set("starts_from", filters.starts_from);
   if (filters.starts_to) params.set("starts_to", filters.starts_to);
   return params;
@@ -1839,6 +2084,48 @@ export function listCalendarEvents(filters: CalendarEventFilters = {}): Promise<
   return apiGet<CalendarEvent[]>(`/api/planning/events${qs ? `?${qs}` : ""}`);
 }
 
+export function listProcessCalendarEvents(filters: CalendarEventFilters = {}): Promise<CalendarEvent[]> {
+  const qs = calendarFiltersToParams(filters).toString();
+  return apiGet<CalendarEvent[]>(`/api/planning/process-events${qs ? `?${qs}` : ""}`);
+}
+
+export const listPlanningEventCategories = () => apiGet<CalendarEventCategory[]>("/api/planning/event-categories");
+// Short aliases keep the planning surface discoverable for consumers that do
+// not use the longer feature-qualified names.
+export const listEventCategories = listPlanningEventCategories;
+
+export interface PlanningPreferences {
+  view: PlanningView;
+  hide_weekends: boolean;
+}
+
+export const getPlanningPreferences = () => apiGet<PlanningPreferences>("/api/me/planning-preferences");
+export const updatePlanningPreferences = (changes: Partial<PlanningPreferences>) =>
+  apiPatch<PlanningPreferences>("/api/me/planning-preferences", changes);
+
+export interface PlanningProcessSubtaskOption {
+  id: string;
+  code: string;
+  title: string;
+  planned_start: null;
+  planned_end: null;
+}
+
+export interface PlanningProcessOption {
+  project_id: string;
+  stage_id: string;
+  stage_code: string;
+  stage_title: string;
+  planned_start: string | null;
+  planned_end: string | null;
+  responsible_person_ids: string[];
+  responsible_display_names: string[];
+  subtasks: PlanningProcessSubtaskOption[];
+}
+
+export const getPlanningProcessOptions = (projectId: string) =>
+  apiGet<PlanningProcessOption[]>(`/api/planning/process-options/${projectId}`);
+
 export interface CalendarEventCreatePayload {
   title: string;
   starts_at: string;
@@ -1846,6 +2133,10 @@ export interface CalendarEventCreatePayload {
   project_id?: string | null;
   task_id?: string | null;
   assigned_to_person_id?: string | null;
+  assigned_to_person_ids?: string[];
+  category?: string;
+  process_stage_id?: string | null;
+  process_subtask_id?: string | null;
 }
 
 export const createCalendarEvent = (payload: CalendarEventCreatePayload) =>
@@ -1858,6 +2149,10 @@ export interface CalendarEventUpdatePayload {
   project_id?: string | null;
   task_id?: string | null;
   assigned_to_person_id?: string | null;
+  assigned_to_person_ids?: string[];
+  category?: string;
+  process_stage_id?: string | null;
+  process_subtask_id?: string | null;
   status?: string;
 }
 

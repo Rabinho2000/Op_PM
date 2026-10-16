@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   approveClientReportSend,
   discardClientReportSend,
@@ -71,6 +71,10 @@ beforeEach(() => {
   vi.mocked(api.discardClientReportSend).mockResolvedValue({ ...report.last_sends[0], status: "discarded" });
 });
 
+afterEach(() => {
+  document.documentElement.removeAttribute("data-theme");
+});
+
 describe("ClientReport", () => {
   it("guarda a configuração com os valores editados", async () => {
     renderWithProviders(<ClientReport projectId="proj-1" />, { me: makeMe({ permissions: ["client_report.manage"] }) });
@@ -115,14 +119,37 @@ describe("ClientReport", () => {
     expect(screen.getByLabelText("Hora")).toBeDisabled();
   });
 
-  it("mostra o modo de teste e usa iframe sandbox na pré-visualização", async () => {
+  it("mantém a pré-visualização clara e isolada no tema escuro sem alterar o conteúdo do servidor", async () => {
+    const bodyHtml = "<h1>Conteúdo sintético</h1>";
+    const previewResponse = {
+      subject: "Relatório semanal",
+      body_html: bodyHtml,
+      from_email: "noreply@example.invalid",
+      to: ["cliente@example.invalid"],
+      cc: ["pm@example.invalid"],
+    };
+    vi.mocked(api.previewClientReport).mockResolvedValue(previewResponse);
+    document.documentElement.dataset.theme = "dark";
     renderWithProviders(<ClientReport projectId="proj-1" />, { me: makeMe() });
     expect(await screen.findByText(/Modo de teste — nenhum email é entregue ao cliente/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Pré-visualizar email" }));
 
     const iframe = await screen.findByTitle("Conteúdo do email");
     expect(iframe).toHaveAttribute("sandbox", "");
-    expect(iframe).toHaveAttribute("srcdoc", "<h1>Conteúdo sintético</h1>");
+    const srcDoc = iframe.getAttribute("srcdoc") ?? "";
+    const previewDocument = new DOMParser().parseFromString(srcDoc, "text/html");
+    const themeStyle = previewDocument.querySelector<HTMLStyleElement>('style[data-client-report-theme="light"]');
+
+    expect(previewDocument.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(previewDocument.querySelector('meta[name="color-scheme"]')?.getAttribute("content")).toBe("light");
+    expect(themeStyle?.textContent).toContain("color-scheme: light !important");
+    expect(themeStyle?.textContent).toContain("background: #ffffff !important");
+    expect(themeStyle?.textContent).toContain("color: #0e1d26 !important");
+    expect(previewDocument.body.querySelector("h1")?.textContent).toBe("Conteúdo sintético");
+    expect(previewResponse.body_html).toBe(bodyHtml);
+    expect(api.previewClientReport).toHaveBeenCalledWith("proj-1");
+    expect(api.updateClientReport).not.toHaveBeenCalled();
+    expect(api.sendClientReportNow).not.toHaveBeenCalled();
   });
 
   it("pede confirmação antes de enviar agora", async () => {

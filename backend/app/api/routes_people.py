@@ -17,7 +17,11 @@ from app.models.project import Project
 from app.models.task import Task
 from app.schemas.people import PersonRead
 from app.security.current_user import get_auth_context
-from app.security.permissions import AuthContext, can_manage_support_delegations
+from app.security.permissions import (
+    AuthContext,
+    can_manage_support_delegations,
+    is_installer_readonly_scope,
+)
 from app.services.projects import visible_projects_query
 
 router = APIRouter(prefix="/api/people", tags=["people"])
@@ -75,6 +79,9 @@ def _to_read(person: Person, *, include_email: bool) -> PersonRead:
 def list_people(
     db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
 ) -> list[PersonRead]:
+    if is_installer_readonly_scope(ctx):
+        person = db.query(Person).filter(Person.id == ctx.person_id).one_or_none()
+        return [] if person is None else [_to_read(person, include_email=False)]
     include_email = _can_list_global_people(ctx)
     query = db.query(Person) if include_email else _filtered_people_query(db, ctx)
     people = query.order_by(Person.display_name.asc()).all()

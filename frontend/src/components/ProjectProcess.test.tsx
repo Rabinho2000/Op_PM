@@ -78,6 +78,27 @@ describe("ProjectProcess", () => {
     expect(getProjectProcess).toHaveBeenCalledWith("p-1");
   });
 
+  it("mantém nomes e estados legíveis e usa phase.color só em swatches contrastados", async () => {
+    const basePhase = process().phases[0];
+    const phases = [
+      { ...basePhase, id: "phase-missing", code: "phase-missing", name: "Fase sem cor", color: "" },
+      { ...basePhase, id: "phase-dark", code: "phase-dark", name: "Fase escura", color: "#111111" },
+      { ...basePhase, id: "phase-light", code: "phase-light", name: "Fase clara", color: "#eeeeee" },
+    ];
+    getProjectProcess.mockResolvedValue(process({ phases }));
+    const { container } = renderWithProviders(<ProjectProcess projectId="p-1" />);
+
+    expect(await screen.findByText("Fase sem cor")).toBeInTheDocument();
+    expect(screen.getByText("Fase escura")).toBeInTheDocument();
+    expect(screen.getByText("Fase clara")).toBeInTheDocument();
+    const swatches = container.querySelectorAll<HTMLElement>(".process__phase-swatch");
+    expect(swatches).toHaveLength(3);
+    expect(swatches[0].style.getPropertyValue("--phase-color")).toBe("");
+    expect(swatches[1].style.getPropertyValue("--phase-color")).toBe("#111111");
+    expect(swatches[2].style.getPropertyValue("--phase-color")).toBe("#eeeeee");
+    expect(swatches[1].closest("h3")).not.toHaveAttribute("style");
+  });
+
   it("abre por omissão as etapas em curso ou em atraso e fecha as outras", async () => {
     getProjectProcess.mockResolvedValue(
       process({}, [

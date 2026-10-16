@@ -50,7 +50,7 @@ LOCATION_TYPE_PROJECT = "project"
 LOCATION_TYPE_VEHICLE = "vehicle"
 LOCATION_TYPE_SUPPLIER = "supplier"
 # Escritório — localização fixa para material que não está nem no armazém
-# central nem alocado a um projeto/viatura/fornecedor (pedido do Sérgio,
+# central nem alocado a um projeto/viatura/fornecedor (pedido do responsável,
 # backlog F3). Sem singularidade imposta na BD (ao contrário de `central`):
 # pode haver mais de um "escritório" se a operação vier a precisar.
 LOCATION_TYPE_OFFICE = "office"
@@ -134,7 +134,7 @@ class InventoryItem(UUIDPk, TimestampMixin, Base):
     # Categoria livre (não um enum fechado na BD): o catálogo sugere um
     # conjunto inicial no frontend (inversores, painéis, cabo DC, cabo AC,
     # contadores de produção, meters, estrutura, comunicação — pedido do
-    # Sérgio, backlog F1) mas permite adicionar categorias novas sem
+    # responsável, backlog F1) mas permite adicionar categorias novas sem
     # migração, porque o próprio pedido exige essa extensibilidade.
     category: Mapped[str | None] = mapped_column(String(64), nullable=True)
     min_stock: Mapped[Decimal] = mapped_column(QUANTITY, default=0)
@@ -192,13 +192,19 @@ class InventoryMovement(UUIDPk, TimestampMixin, Base):
     # chave devolve o movimento já criado em vez de duplicar (ver
     # app/services/inventory.py).
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    idempotency_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    idempotency_fingerprint: Mapped[str | None] = mapped_column(String(length=64), nullable=True)
+    # A reversão é uma nova linha compensatória ligada ao movimento original.
+    # O original permanece imutável e a unicidade limita a uma compensação.
+    reversal_of_movement_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("inventory_movements.id"), nullable=True
+    )
     created_by_person_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("people.id"), nullable=True
     )
 
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_inventory_movement_idempotency_key"),
+        UniqueConstraint("reversal_of_movement_id", name="uq_inventory_movement_one_reversal"),
     )
 
 

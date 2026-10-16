@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.schemas.process import ContactProgressUpdate, ProcessRead, SubtaskProgressUpdate
 from app.security.current_user import get_auth_context
-from app.security.permissions import AuthContext, PermissionDenied
+from app.security.permissions import AuthContext, PermissionDenied, is_installer_readonly_scope
 from app.services.process import ProcessError, build_project_process, set_contact_done, set_subtask_done
 from app.services.projects import get_visible_project
 from app.utils.timezones import today_lisbon
@@ -28,12 +28,28 @@ def _visible(db: Session, ctx: AuthContext, project_id: uuid.UUID):
     return project
 
 
+def _redact_process(process: ProcessRead, ctx: AuthContext) -> ProcessRead:
+    if not is_installer_readonly_scope(ctx):
+        return process
+    redacted = process.model_copy(deep=True)
+    redacted.can_update = False
+    for phase in redacted.phases:
+        for stage in phase.stages:
+            stage.note = ""
+            stage.responsible.names = []
+            if stage.contact is not None:
+                stage.contact.note = ""
+            for subtask in stage.subtasks:
+                subtask.done_by_display_name = None
+    return redacted
+
+
 @router.get("/{project_id}/process", response_model=ProcessRead)
 def get_process_endpoint(
     project_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
 ) -> ProcessRead:
     project = _visible(db, ctx, project_id)
-    return build_project_process(db, project, ctx, today_lisbon())
+    return _redact_process(build_project_process(db, project, ctx, today_lisbon()), ctx)
 
 
 @router.patch("/{project_id}/process/subtasks/{subtask_id}", response_model=ProcessRead)
@@ -44,6 +60,8 @@ def update_subtask_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProcessRead:
+    if is_installer_readonly_scope(ctx):
+        raise HTTPException(status_code=403, detail="O papel externo tem acesso somente de leitura.")
     project = _visible(db, ctx, project_id)
     try:
         set_subtask_done(db, project=project, subtask_id=subtask_id, done=body.done, ctx=ctx)
@@ -51,7 +69,7 @@ def update_subtask_endpoint(
         raise HTTPException(status_code=403, detail="Sem permissão para marcar o progresso deste projeto.")
     except ProcessError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-    return build_project_process(db, project, ctx, today_lisbon())
+    return _redact_process(build_project_process(db, project, ctx, today_lisbon()), ctx)
 
 
 @router.patch("/{project_id}/process/stages/{stage_id}/contact", response_model=ProcessRead)
@@ -62,6 +80,8 @@ def update_contact_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProcessRead:
+    if is_installer_readonly_scope(ctx):
+        raise HTTPException(status_code=403, detail="O papel externo tem acesso somente de leitura.")
     project = _visible(db, ctx, project_id)
     try:
         set_contact_done(db, project=project, stage_id=stage_id, done=body.done, ctx=ctx)
@@ -69,4 +89,4 @@ def update_contact_endpoint(
         raise HTTPException(status_code=403, detail="Sem permissão para marcar o progresso deste projeto.")
     except ProcessError as exc:
         raise HTTPException(status_code=404 if "não encontrada" in str(exc) else 422, detail=str(exc))
-    return build_project_process(db, project, ctx, today_lisbon())
+    return _redact_process(build_project_process(db, project, ctx, today_lisbon()), ctx)

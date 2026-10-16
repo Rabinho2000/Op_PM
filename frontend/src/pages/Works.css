@@ -1,0 +1,66 @@
+.works__preference-alert {
+  display: grid;
+  gap: 8px;
+  margin: -8px 0 12px;
+}
+
+/* Daily month header: preserve real day boundaries without widening the page. */
+.works__axis--days {
+  overflow: hidden;
+}
+
+.works__axis--days .works__month {
+  z-index: 1;
+  height: 24px;
+  background: var(--surface);
+}
+
+.works__day {
+  position: absolute;
+  top: 24px;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  border-left: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  line-height: 1.1;
+  z-index: 0;
+}
+
+.works__day--weekend {
+  background: var(--surface-2);
+  color: var(--text-subtle);
+}
+
+.works__day--today {
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-weight: 700;
+}
+
+.works__day-number {
+  font-weight: 700;
+}
+
+.works__day-weekday {
+  text-transform: lowercase;
+  font-size: 0.62rem;
+}
+
+.works__gridline--day {
+  background: var(--border);
+  opacity: 0.7;
+}
+
+@media (max-width: 760px) {
+  .works__day {
+    font-size: 0.62rem;
+  }
+  .works__day-weekday {
+    font-size: 0.56rem;
+  }
+}

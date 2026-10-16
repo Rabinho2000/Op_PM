@@ -11,7 +11,8 @@ progresso do projeto, os prazos calculados e o responsável **resolvido por proj
   - `support_delegate`: a pessoa de suporte delegada para o PM do projeto
     (`SupportDelegation`), ou o próprio PM se não houver delegação;
   - `installer`: o instalador da obra;
-  - `team_leader`: o chefe da equipa atribuída.
+  - `team_leader`: os chefes de todas as equipas atribuídas (ou a equipa
+    principal legada enquanto não houver afectações).
   Um dado em falta (sem PM, sem instalador, sem equipa/chefe) fica `unresolved`.
 - Escrever progresso exige `workflow.update_progress` no âmbito do projeto; cada
   alteração grava uma entrada em `project_history`, e repetir o mesmo valor não faz nada.
@@ -22,12 +23,12 @@ import datetime as dt
 import uuid
 
 from sqlalchemy import func
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.audit.log import record_project_change
 from app.models.identity import Role, User, UserRole
 from app.models.people import Person
-from app.models.project import Project, ProjectStageProgress, ProjectSubtaskProgress
+from app.models.project import Project, ProjectStageProgress, ProjectSubtaskProgress, ProjectTeamAssignment
 from app.models.workflow import Phase, SupportDelegation, WorkflowStage, WorkflowSubtask
 from app.schemas.process import (
     ProcessContactRead,
@@ -69,6 +70,7 @@ def _resolve_responsible(
     project: Project,
     role_holders: dict[str, list[str]],
     support_name: str | None,
+    team_leader_names: list[str] | None = None,
 ) -> ProcessResponsibleRead:
     label = stage.responsible_label or "—"
     rule = stage.responsible_rule
@@ -85,8 +87,10 @@ def _resolve_responsible(
         name = project.installer.name if project.installer else None
         return ProcessResponsibleRead(rule=rule, label=label, names=[name] if name else [], unresolved=name is None)
     if rule == "team_leader":
-        leader = project.installer_team.leader_name if project.installer_team else None
-        return ProcessResponsibleRead(rule=rule, label=label, names=[leader] if leader else [], unresolved=leader is None)
+        names = team_leader_names or []
+        if not names and project.installer_team and project.installer_team.leader_name:
+            names = [project.installer_team.leader_name]
+        return ProcessResponsibleRead(rule=rule, label=label, names=names, unresolved=not names)
     return ProcessResponsibleRead(rule=rule, label=label, names=[], unresolved=True)
 
 
@@ -128,6 +132,23 @@ def build_project_process(db: Session, project: Project, ctx: AuthContext, today
     }
     stage_by_id = {s.id: s for phase in phases for s in phase.stages}
 
+    # Uma query para todas as afectações do projeto. A responsabilidade da
+    # etapa é a união ordenada dos chefes das equipas, não apenas a equipa
+    # principal legada; isto representa correctamente uma obra com duas
+    # equipas e mantém a compatibilidade dos projetos ainda sem afectações.
+    assignments = (
+        db.query(ProjectTeamAssignment)
+        .options(joinedload(ProjectTeamAssignment.team))
+        .filter(ProjectTeamAssignment.project_id == project.id)
+        .order_by(ProjectTeamAssignment.start_date, ProjectTeamAssignment.created_at)
+        .all()
+    )
+    team_leader_names: list[str] = []
+    for assignment in assignments:
+        leader = assignment.team.leader_name if assignment.team else None
+        if leader and leader not in team_leader_names:
+            team_leader_names.append(leader)
+
     person_ids = {p.done_by_person_id for p in subtask_progress.values() if p.done_by_person_id}
     names = {p.id: p.display_name for p in db.query(Person).filter(Person.id.in_(person_ids)).all()} if person_ids else {}
     holders = _role_holders(db, {s.responsible_role_code for s in stage_by_id.values() if s.responsible_rule == "role" and s.responsible_role_code})
@@ -164,7 +185,7 @@ def build_project_process(db: Session, project: Project, ctx: AuthContext, today
                 )
             stage_done = bool(subtasks) and done_count == len(subtasks)
             start = end = None
-            if project.start_date is not None and stage.planned_start_offset_days and stage.planned_end_offset_days:
+            if project.start_date is not None and stage.planned_start_offset_days is not None and stage.planned_end_offset_days is not None:
                 start = business_day(project.start_date, stage.planned_start_offset_days)
                 end = business_day(project.start_date, stage.planned_end_offset_days)
             status = _stage_status(stage_done, start, end, today, hide_overdue)
@@ -193,7 +214,7 @@ def build_project_process(db: Session, project: Project, ctx: AuthContext, today
                     code=stage.code,
                     title=stage.title,
                     note=stage.note,
-                    responsible=_resolve_responsible(stage, project, holders, support_name),
+                    responsible=_resolve_responsible(stage, project, holders, support_name, team_leader_names),
                     depends_on_code=dep.code if dep else None,
                     start_day=stage.planned_start_offset_days,
                     end_day=stage.planned_end_offset_days,

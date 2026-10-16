@@ -4,6 +4,7 @@
 import type { ReactNode } from "react";
 import type { TripPlan, TripStop } from "../api/client";
 import { formatDatePt, formatDateTimePt } from "../utils/dates";
+import { formatQuantity } from "../utils/quantities";
 import { buildTripSummaryText } from "../utils/tripPlan";
 import Icon from "./Icon";
 import { Badge, Modal } from "./ui";
@@ -71,7 +72,7 @@ function StopJobs({ stop }: { stop: TripStop }) {
           <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>
             {jobs.collect.map((c) => (
               <li key={c.item_id}>
-                {c.quantity} {c.item_unit} — {c.item_name}
+                {formatQuantity(c.quantity, c.item_unit)} {c.item_unit} — {c.item_name}
               </li>
             ))}
           </ul>

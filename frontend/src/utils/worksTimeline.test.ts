@@ -6,6 +6,7 @@ import {
   barGeometry,
   buildPlanChange,
   buildRows,
+  dayTicks,
   dayPosition,
   daysBetween,
   defaultWindow,
@@ -13,6 +14,9 @@ import {
   formatIsoPt,
   monthTicks,
   packLanes,
+  workEndDate,
+  workEntryKey,
+  workStartDate,
   pixelsToDays,
   rowAtOffset,
   shiftDates,
@@ -103,6 +107,14 @@ describe("janelas", () => {
     expect(windowFrom("months", "2026-06-17").from).toBe("2026-06-01");
     expect(windowFrom("weeks", "2026-09-24").from).toBe("2026-09-21");
   });
+
+  it("mês diário usa todos os dias reais, incluindo 29 de fevereiro", () => {
+    const w = windowFrom("month_days", "2028-02-17");
+    expect(w).toEqual({ from: "2028-02-01", to: "2028-02-29" });
+    expect(totalDays(w)).toBe(29);
+    expect(shiftWindow("month_days", w.from, 1)).toEqual({ from: "2028-03-01", to: "2028-03-31" });
+    expect(shiftWindow("month_days", w.from, -1)).toEqual({ from: "2028-01-01", to: "2028-01-31" });
+  });
 });
 
 describe("barGeometry", () => {
@@ -143,10 +155,31 @@ describe("packLanes", () => {
     expect(packLanes(works).count).toBe(3);
   });
 
-  it("sem obras não há faixas", () => {
-    expect(packLanes([]).count).toBe(0);
+  it("usa as datas e a identidade da afectação quando a obra aparece várias vezes", () => {
+    const first = work("same-project", "2026-06-01", "2026-06-02", {
+      assignment_id: "assignment-a",
+      assignment_start_date: "2026-07-01",
+      assignment_end_date: "2026-07-03",
+      team_id: "team-a",
+      team_name: "Equipa A",
+    });
+    const second = work("same-project", "2026-06-01", "2026-06-02", {
+      assignment_id: "assignment-b",
+      assignment_start_date: "2026-07-03",
+      assignment_end_date: "2026-07-05",
+      team_id: "team-a",
+      team_name: "Equipa A",
+    });
+
+    expect(workStartDate(first)).toBe("2026-07-01");
+    expect(workEndDate(first)).toBe("2026-07-03");
+    expect(workEntryKey(first)).toBe("assignment-a");
+    expect(packLanes([first, second]).lanes.has("same-project")).toBe(false);
+    expect(packLanes([first, second]).lanes.get("assignment-a")).toBe(0);
+    expect(packLanes([first, second]).lanes.get("assignment-b")).toBe(1);
   });
 });
+
 
 describe("buildRows", () => {
   const installers: Installer[] = [
@@ -219,6 +252,14 @@ describe("cabeçalho", () => {
     const ticks = weekTicks({ from: "2026-09-09", to: "2026-09-30" }, 10); // quarta
     expect(ticks.map((t) => t.iso)).toEqual(["2026-09-14", "2026-09-21", "2026-09-28"]);
     expect(ticks[0]).toMatchObject({ left: 50, day: 14 });
+  });
+
+  it("marca cada dia com número, dia da semana e fins de semana", () => {
+    const ticks = dayTicks({ from: "2028-02-01", to: "2028-02-29" }, 28);
+    expect(ticks).toHaveLength(29);
+    expect(ticks[0]).toMatchObject({ iso: "2028-02-01", left: 0, width: 28, day: 1, weekday: "ter" });
+    expect(ticks[4]).toMatchObject({ iso: "2028-02-05", day: 5, weekday: "sáb", weekend: true });
+    expect(ticks[6]).toMatchObject({ iso: "2028-02-07", day: 7, weekday: "seg", weekend: false });
   });
 });
 

@@ -145,6 +145,15 @@ class Project(UUIDPk, TimestampMixin, Base):
         lazy="selectin",
     )
     external_ids: Mapped[list["ProjectExternalId"]] = relationship(back_populates="project")
+    # Do not load this collection while deleting a project: the cascade load can
+    # autoflush unrelated caller state before import preconditions are checked.
+    # Unloaded rows are removed by the project's FK ON DELETE CASCADE.
+    team_assignments: Mapped[list["ProjectTeamAssignment"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="ProjectTeamAssignment.start_date",
+    )
 
     @property
     def has_pm(self) -> bool:
@@ -161,6 +170,46 @@ class Project(UUIDPk, TimestampMixin, Base):
     @property
     def has_contact(self) -> bool:
         return bool(self.client_contact)
+
+
+class ProjectTeamAssignment(UUIDPk, TimestampMixin, Base):
+    """Afectação de uma equipa a uma obra durante uma janela inclusiva.
+
+    A equipa pode aparecer em várias obras, desde que as janelas não se
+    sobreponham; a validação da sobreposição vive no serviço para poder
+    devolver uma mensagem útil à API.
+    """
+
+    __tablename__ = "project_team_assignments"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["installer_id", "team_id"],
+            ["installer_teams.installer_id", "installer_teams.id"],
+            name="fk_assignment_team_belongs_to_installer",
+        ),
+        CheckConstraint("end_date >= start_date", name="ck_assignment_dates_order"),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    installer_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False, index=True)
+    team_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False, index=True)
+    start_date: Mapped[dt.date] = mapped_column(nullable=False)
+    end_date: Mapped[dt.date] = mapped_column(nullable=False)
+    note: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    created_by_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("people.id"), nullable=True
+    )
+
+    project: Mapped["Project"] = relationship(back_populates="team_assignments")
+    team: Mapped[InstallerTeam] = relationship(
+        primaryjoin="and_(ProjectTeamAssignment.team_id == InstallerTeam.id, "
+        "ProjectTeamAssignment.installer_id == InstallerTeam.installer_id)",
+        foreign_keys="[ProjectTeamAssignment.team_id, ProjectTeamAssignment.installer_id]",
+        viewonly=True,
+    )
+    created_by: Mapped["Person | None"] = relationship(foreign_keys=[created_by_person_id])
 
 
 class ProjectExternalId(UUIDPk, TimestampMixin, Base):

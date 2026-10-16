@@ -218,11 +218,12 @@ describe("Preço unitário", () => {
       total: "294.20",
       allowed_actions: [],
       lines: [
-        { id: "l1", item_id: null, description: "Cabo", quantity: "12.000", unit: "m", unit_price: "10.1000", line_total: "121.20" },
+        { id: "l1", item_id: null, description: "Cabo", quantity: "12.000", unit: "un", unit_price: "10.1000", line_total: "121.20" },
         { id: "l2", item_id: null, description: "Conectores", quantity: "40.000", unit: null, unit_price: "4.3250", line_total: "173.00" },
       ],
     });
     const table = within(await screen.findByLabelText("Linhas do pedido"));
+    expect(table.getByText("12 un")).toBeInTheDocument();
     expect(table.getByText("10.10 €")).toBeInTheDocument();
     expect(table.getByText("4.325 €")).toBeInTheDocument();
     expect(table.getByText("173.00 €")).toBeInTheDocument();

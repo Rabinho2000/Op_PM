@@ -12,6 +12,7 @@ ROLE_PM = "project_manager"
 ROLE_COMERCIAL = "comercial"
 ROLE_FINANCEIRO = "financeiro"
 ROLE_SUPORTE_OPERACOES = "suporte_operacoes"
+ROLE_INSTALLER_COLLABORATOR = "instalador_colaborador"
 
 ROLES: dict[str, str] = {
     ROLE_ADMIN: "Administrador",
@@ -20,6 +21,7 @@ ROLES: dict[str, str] = {
     ROLE_COMERCIAL: "Comercial",
     ROLE_FINANCEIRO: "Financeiro",
     ROLE_SUPORTE_OPERACOES: "Suporte de Operações",
+    ROLE_INSTALLER_COLLABORATOR: "Colaborador externo por instalador",
 }
 
 # Permissões (código, descrição)
@@ -27,6 +29,11 @@ PERMISSIONS: dict[str, str] = {
     "project.view_all": "Ver todos os projetos",
     "project.view_own": "Ver os projetos próprios (como PM)",
     "project.view_delegated": "Ver os projetos dos PMs que delegam em mim (Suporte de Operações)",
+    "project.view_assigned_installer": "Ver projetos atribuídos aos meus instaladores associados",
+    "task.view_assigned_installer": "Ver tarefas básicas dos projetos dos meus instaladores associados",
+    "works_calendar.view_assigned_installer": "Ver obras e calendário dos meus instaladores associados",
+    "installer_team.view_assigned_installer": "Ver equipas dos meus instaladores associados",
+    "inventory.view_assigned_installer": "Ver inventário por projeto dos meus instaladores associados",
     "project.edit_all": "Editar identidade/atribuição de qualquer projeto",
     "project.edit_own_progress": "Editar progresso/checklist dos projetos próprios",
     "workflow.update_progress": "Marcar subtarefas e pontos de contacto do processo dos projetos visíveis (todos, ou só os próprios como PM)",
@@ -75,6 +82,7 @@ PERMISSIONS: dict[str, str] = {
     "inventory.release_project": "Libertar uma reserva de material de um projeto",
     "inventory.deliver_project": "Registar material entregue numa instalação",
     "inventory.collect_project": "Registar material recolhido de uma instalação",
+    "inventory.reverse_project": "Anular movimentos de inventário de um projeto (mantendo o histórico)",
     "inventory.manage_requirements": "Criar/editar necessidades de material de um projeto",
     "project.view_installation_data": "Ver dados de instalação do projeto",
     "project.edit_installation_data": "Editar dados de instalação do projeto (combinado com o âmbito de project.edit_*)",
@@ -97,6 +105,9 @@ PERMISSIONS: dict[str, str] = {
     "import.licensing": "Importar o Excel de licenciamento (dry-run/aplicar/reverter)",
     "client_report.manage": "Configurar, pré-visualizar, enviar e rever relatórios semanais ao cliente no âmbito permitido",
     "client_report.view": "Ver configurações, pré-visualizações e histórico de relatórios semanais ao cliente",
+    "time_bank.view_own": "Consultar os próprios lançamentos e saldo do Banco de Horas",
+    "time_bank.view_all": "Consultar os lançamentos e saldos de todas as pessoas",
+    "time_bank.manage_all": "Registar, ajustar, anular e importar Banco de Horas de qualquer pessoa",
 }
 
 # Matriz papel -> permissões concedidas por omissão.
@@ -139,6 +150,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "inventory.release_project",
         "inventory.deliver_project",
         "inventory.collect_project",
+        "inventory.reverse_project",
         "inventory.manage_requirements",
         "project.view_installation_data",
         "project.edit_installation_data",
@@ -157,6 +169,8 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "performance.manage_goals",
         "import.notes",
         "import.licensing",
+        "time_bank.view_all",
+        "time_bank.manage_all",
     ],
     ROLE_PM: [
         "client_report.manage",
@@ -195,6 +209,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "inventory.release_project",
         "inventory.deliver_project",
         "inventory.collect_project",
+        "inventory.reverse_project",
         "inventory.manage_requirements",
         "project.view_installation_data",
         "project.edit_installation_data",
@@ -208,6 +223,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "calendar.view",
         "calendar.manage",
         "performance.view_own",
+        "time_bank.view_own",
     ],
     ROLE_COMERCIAL: [
         "client_report.view",
@@ -226,6 +242,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         # O formulário de notas iniciais é usado pelo Comercial/Sales
         # Support (papel não modelado à parte — reaproveita Comercial).
         "import.notes",
+        "time_bank.view_own",
     ],
     ROLE_FINANCEIRO: [
         "client_report.view",
@@ -242,6 +259,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "project_issue.view",
         "calendar.view",
         "performance.view_all",
+        "time_bank.view_own",
     ],
     ROLE_SUPORTE_OPERACOES: [
         "project.view_delegated",
@@ -258,5 +276,14 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "calendar.view",
         "absence.view_own",
         "absence.manage_own",
+        "time_bank.view_own",
+    ],
+    ROLE_INSTALLER_COLLABORATOR: [
+        "project.view_assigned_installer",
+        "task.view_assigned_installer",
+        "works_calendar.view_assigned_installer",
+        "installer_team.view_assigned_installer",
+        "inventory.view_assigned_installer",
+        "time_bank.view_own",
     ],
 }

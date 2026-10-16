@@ -1,0 +1,186 @@
+.tasks-list__preference-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -8px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.tasks-list__settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin: -8px 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.tasks-list__settings > .field {
+  flex: 0 1 180px;
+}
+
+.tasks-list__saved-view-field {
+  flex-basis: 220px !important;
+}
+
+.tasks-list__view-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.tasks-list__column-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.tasks-list__column-dialog {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  left: 0;
+  width: min(360px, calc(100vw - 32px));
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgb(0 0 0 / 18%));
+}
+
+.tasks-list__column-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.tasks-list__column-options {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.tasks-list__column-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 40px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tasks-list__column-option .checkbox {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.tasks-list__column-order {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+.tasks-list__kanban-help {
+  margin: 0 0 12px;
+}
+
+/* The global mobile stylesheet converts tables to cards. For this page the
+   accepted behavior is a local horizontal wrapper, not page-wide overflow. */
+@media (max-width: 760px) {
+  .tasks-list__settings {
+    align-items: stretch;
+  }
+
+  .tasks-list__settings > .field,
+  .tasks-list__saved-view-field {
+    flex: 1 1 180px !important;
+  }
+
+  .tasks-list__view-actions {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+
+  .tasks-list__view-actions .btn {
+    flex: 1 1 180px;
+    min-height: 44px;
+  }
+
+  .tasks-list__preference-alert {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .tasks-page .table-wrap {
+    overflow-x: auto;
+  }
+
+  .tasks-page .table {
+    display: table;
+    width: max-content;
+    min-width: 760px;
+  }
+
+  .tasks-page .table thead {
+    display: table-header-group;
+  }
+
+  .tasks-page .table tbody {
+    display: table-row-group;
+  }
+
+  .tasks-page .table tr {
+    display: table-row;
+    padding: 0;
+  }
+
+  .tasks-page .table th,
+  .tasks-page .table td {
+    display: table-cell;
+    width: auto;
+    min-width: 0;
+    padding: 12px 16px;
+    text-align: left;
+    overflow-wrap: normal;
+    vertical-align: middle;
+  }
+
+  .tasks-page .table td::before,
+  .tasks-page .table td:first-child::before {
+    content: none;
+  }
+
+  .tasks-page .table td:first-child {
+    display: table-cell;
+    padding-bottom: 12px;
+  }
+}
+
+@media (max-width: 390px) {
+  .tasks-list__settings {
+    padding: 10px;
+  }
+
+  .tasks-list__view-actions .btn {
+    flex-basis: 100%;
+  }
+
+  .tasks-list__column-dialog {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    left: 16px;
+    width: auto;
+  }
+}

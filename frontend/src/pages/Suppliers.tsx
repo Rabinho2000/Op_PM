@@ -174,6 +174,24 @@ export default function Suppliers() {
                           )}
                           {s.contact && <> {s.website ? "· " : ""}{s.contact}</>}
                         </span>
+                        {s.contacts.map((c) => (
+                          <span key={c.id ?? c.name} className="cell-sub">
+                            <strong>{c.name}</strong>
+                            {c.department && <> ({c.department})</>}
+                            {c.phone && (
+                              <>
+                                {" · "}
+                                <a href={`tel:${c.phone.replace(/[^\d+]/g, "")}`}>{c.phone}</a>
+                              </>
+                            )}
+                            {c.email && (
+                              <>
+                                {" · "}
+                                <a href={`mailto:${c.email}`}>{c.email}</a>
+                              </>
+                            )}
+                          </span>
+                        ))}
                         {!s.is_active && (
                           <div style={{ marginTop: 4 }}>
                             <Badge>Inativo</Badge>
@@ -199,6 +217,13 @@ export default function Suppliers() {
                       <td>{s.email ? <a href={`mailto:${s.email}`}>{s.email}</a> : <span className="muted">—</span>}</td>
                       <td>
                         {s.address ? <span>{s.address}</span> : <span className="muted">—</span>}
+                        {s.maps_url && (
+                          <span className="cell-sub">
+                            <a href={s.maps_url} target="_blank" rel="noreferrer noopener">
+                              Abrir localização
+                            </a>
+                          </span>
+                        )}
                         {s.lat !== null && s.lon !== null && (
                           <span className="cell-sub">
                             <Link to="/map">Ver no mapa</Link>
