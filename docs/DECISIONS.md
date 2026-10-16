@@ -3541,3 +3541,30 @@ Verificado no snapshot local não publicado:
 - testes focados de API e migração SQLite: 7 aprovados;
 - migração SQLite `upgrade head → downgrade f3b5d7e9a1c2 → upgrade head`: exits 0;
 - não houve commit, push, deploy, restart ou alteração da produção.
+
+## D-101 — BD privada de preços de materiais
+
+A informação comercial de materiais fica numa base física separada,
+`material_prices`, configurável por `PRICES_DATABASE_URL`, sem FK para a BD
+operacional. O schema v1 é mantido por um mini-migrador idempotente próprio,
+com `schema_version`, e usa SQLite WAL ou PostgreSQL. Preços são históricos:
+uma nova importação cria uma linha e o preço corrente é a linha ativa mais
+recente por `(domain, ref)`; datasets completos (`breakers`, `indus`, `hager`)
+são imutáveis e têm apenas uma versão corrente por nome.
+
+O CLI valida `prices.json`, `brk.json`, `hager.json` e o literal `INDUS` de
+`rt-indus.js` sem executar JavaScript. O SHA-256 de cada ficheiro é registado
+em `price_import_batches`, tornando o apply idempotente; dados reais ficam
+fora do repositório. `GET /api/cable-design/engine-data` exige
+`cable_design.edit`, usa ETag e não armazena cache; `GET /api/material-prices`
+exige `price.view`. Indisponibilidade da base privada é redigida como `503`.
+
+A migração `b2d4f6a8c0e1` provisiona apenas `price.view` e `price.manage`, com
+tracking para downgrade seguro: a primeira é concedida a administrador e
+chefe de operações, a segunda apenas a administrador. O backup SQLite inclui
+`material_prices.db` como ficheiro separado e com modo `0600`.
+
+**Verificado** no snapshot local não publicado: implementação, testes
+sintéticos, migração de permissões e loader em dry-run contra a pasta privada
+foram executados; não houve commit, push, deploy ou execução do backup em
+produção.

@@ -66,6 +66,13 @@ class Settings(BaseSettings):
         default="sqlite:///./data/op_pm_local.db",
         alias="DATABASE_URL",
     )
+    # BD privada de preços: não partilha engine, sessões, tabelas ou
+    # migrações com a BD operacional. Em produção pode apontar para PostgreSQL;
+    # local/test usa um ficheiro ao lado da BD principal.
+    prices_database_url: str = Field(
+        default="sqlite:///./data/material_prices.db",
+        alias="PRICES_DATABASE_URL",
+    )
 
     # --- Autenticação (Microsoft Entra ID) ---
     entra_tenant_id: str = Field(default="", alias="ENTRA_TENANT_ID")
