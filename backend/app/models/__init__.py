@@ -43,6 +43,12 @@ from app.models.inventory import (  # noqa: F401
     ProjectMaterialRequirement,
 )
 from app.models.map_ops import PickupPoint, ProjectIssue  # noqa: F401
+from app.models.material_prices import (  # noqa: F401
+    CatalogDataset,
+    MaterialPrice,
+    PriceImportBatch,
+    PriceSource,
+)
 from app.models.migration import (  # noqa: F401
     ImportBatch,
     PersonReconciliationItem,
