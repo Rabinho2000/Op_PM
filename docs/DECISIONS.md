@@ -3514,3 +3514,30 @@ A aceitação deste marco exige os testes focados SQLite/PostgreSQL, round-trip
 Alembic up/down/up nos dois motores, ownership/validação/redacção/soft-delete
 e as corridas PostgreSQL. Não houve publicação, restart, commit, push, deploy
 ou alteração da produção.
+
+## D-100 — Estudos de dimensionamento de cabos ligados ao projeto
+
+O dimensionamento AC vive em `cable_designs`, com revisões de conteúdo
+append-only e histórico curto transacional em `cable_design_history`. Só a
+revisão corrente em rascunho ou análise pode ser guardada; uma revisão aprovada
+é imutável e uma alteração posterior começa numa nova revisão. A aprovação usa
+a mesma capability de edição, exige `unresolved_circuits == 0` e regista ator e
+data. O `version` do estudo protege todas as mutações com `expected_version`.
+
+O âmbito é sempre o do projeto: leitura usa `can_view_project` e edição,
+aprovação ou desativação usa `can_edit_project`, além das capabilities
+`cable_design.view`/`cable_design.edit`. A ausência de capability dá `403`
+antes do lookup; projeto ou estudo fora do âmbito dá `404` indistinguível.
+Suporte de Operações é leitura delegada; Comercial, Financeiro e colaborador de
+instalador não recebem acesso. `lifecycle_status = NULL` não exclui um projeto.
+
+A migração `a1c3e5f7b9d0` sucede `f3b5d7e9a1c2` e usa uma tabela de tracking para
+provisionar apenas permissões/grants criados por si. JSON de input/resultado é
+canónico, limitado a 2 MiB por objeto, validado sem coerções silenciosas, e o
+hash cobre os dois textos canónicos. Preços, catálogos comerciais, frontend e
+integrações de cálculo ficam fora deste PR.
+
+Verificado no snapshot local não publicado:
+- testes focados de API e migração SQLite: 7 aprovados;
+- migração SQLite `upgrade head → downgrade f3b5d7e9a1c2 → upgrade head`: exits 0;
+- não houve commit, push, deploy, restart ou alteração da produção.

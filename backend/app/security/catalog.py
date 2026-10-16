@@ -105,6 +105,8 @@ PERMISSIONS: dict[str, str] = {
     "import.licensing": "Importar o Excel de licenciamento (dry-run/aplicar/reverter)",
     "client_report.manage": "Configurar, pré-visualizar, enviar e rever relatórios semanais ao cliente no âmbito permitido",
     "client_report.view": "Ver configurações, pré-visualizações e histórico de relatórios semanais ao cliente",
+    "cable_design.view": "Consultar estudos de dimensionamento de cabos no âmbito do projeto",
+    "cable_design.edit": "Criar, editar, aprovar e desativar estudos de dimensionamento de cabos",
     "time_bank.view_own": "Consultar os próprios lançamentos e saldo do Banco de Horas",
     "time_bank.view_all": "Consultar os lançamentos e saldos de todas as pessoas",
     "time_bank.manage_all": "Registar, ajustar, anular e importar Banco de Horas de qualquer pessoa",
@@ -115,6 +117,8 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
     ROLE_ADMIN: list(PERMISSIONS.keys()),
     ROLE_CHEFE_OPERACOES: [
         "client_report.manage",
+        "cable_design.view",
+        "cable_design.edit",
         "supplier.view",
         "workflow.update_progress",
         "project.plan_work",
@@ -174,6 +178,8 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
     ],
     ROLE_PM: [
         "client_report.manage",
+        "cable_design.view",
+        "cable_design.edit",
         "supplier.view",
         "workflow.update_progress",
         "project.plan_work",
@@ -263,6 +269,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
     ],
     ROLE_SUPORTE_OPERACOES: [
         "project.view_delegated",
+        "cable_design.view",
         "workflow.update_progress",
         "task.view_own",
         "task.edit_own",
