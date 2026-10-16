@@ -4,6 +4,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes_absences import router as absences_router
+from app.api.routes_cable_designs import designs_router as cable_designs_router
+from app.api.routes_cable_designs import projects_router as cable_projects_router
 from app.api.routes_client_reports import router as client_reports_router
 from app.api.routes_dashboard import router as dashboard_router
 from app.api.routes_health import router as health_router
@@ -62,6 +64,8 @@ app.include_router(health_router)
 app.include_router(me_router)
 app.include_router(client_reports_router)
 app.include_router(projects_router)
+app.include_router(cable_projects_router)
+app.include_router(cable_designs_router)
 app.include_router(project_list_preferences_router)
 app.include_router(project_list_views_router)
 app.include_router(process_router)
