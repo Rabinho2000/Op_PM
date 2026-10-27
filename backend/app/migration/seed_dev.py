@@ -50,7 +50,7 @@ from app.models.map_ops import PickupPoint, ProjectIssue
 from app.models.people import Person
 from app.models.performance import GoalPeriod
 from app.models.project import Project, ProjectTeamAssignment
-from app.models.project_data import ProjectCommunicationData, ProjectInstallationData, ProjectLicensingData
+from app.models.project_data import ProjectCommunicationData, ProjectInstallationData, ProjectLicensingData, ProjectSimCard
 from app.models.supplier import Supplier
 from app.models.task import (
     STATUS_BLOCKED,
@@ -585,13 +585,15 @@ def seed_map_and_inventory(db: Session) -> None:
     db.add_all([cable, connectors, breaker, rail, clamp])
     db.flush()
 
+    # The synthetic opening balances intentionally remain locationless legacy
+    # rows: they contribute to Solcor's compatibility balance, but are not
+    # presented as owner-attributed movements in the scoped movement list.
     db.add_all(
         [
             InventoryMovement(
                 item_id=cable.id,
                 movement_type=MOVEMENT_ENTRADA,
                 quantity="100.000",
-                location_id=central.id,
                 reference="Entrada sintética inicial de cabo DC.",
                 created_by_person_id=chefe.id,
             ),
@@ -631,14 +633,12 @@ def seed_map_and_inventory(db: Session) -> None:
                 item_id=connectors.id,
                 movement_type=MOVEMENT_ENTRADA,
                 quantity="200.000",
-                location_id=central.id,
                 created_by_person_id=chefe.id,
             ),
             InventoryMovement(
                 item_id=breaker.id,
                 movement_type=MOVEMENT_ENTRADA,
                 quantity="2.000",
-                location_id=central.id,
                 created_by_person_id=chefe.id,
             ),
         ]
@@ -745,10 +745,17 @@ def seed_map_and_inventory(db: Session) -> None:
     db.add(
         ProjectCommunicationData(
             project_id=demo.id,
-            operator="Operador Sintético",
-            gsm_m2m_number="912000000",
             communication_status="ativo",
             notes="Dados de comunicação/M2M sintéticos — nunca contêm credenciais.",
+        )
+    )
+    db.add(
+        ProjectSimCard(
+            project_id=demo.id,
+            purpose="comunicacoes",
+            operator="Operador Sintético",
+            phone_number="912000000",
+            notes="Cartão SIM sintético de demonstração.",
         )
     )
 

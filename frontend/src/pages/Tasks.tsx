@@ -756,6 +756,7 @@ export default function Tasks() {
         </div>
       )}
 
+      <section className="tasks-page__control-surface" aria-label="Filtros e configuração de tarefas">
       <form className="toolbar" aria-label="Filtros de tarefas" onSubmit={(event) => event.preventDefault()}>
         <div className="field field--wide">
           <label htmlFor="tf-project">Projeto</label>
@@ -889,7 +890,9 @@ export default function Tasks() {
       </div>
       <p className="small muted tasks-list__kanban-help">As colunas configuradas aplicam-se à Lista; o Kanban mantém sempre as colunas por estado.</p>
       {preferenceSaved && <p className="small text-success" role="status">Preferência de abertura guardada.</p>}
+      </section>
 
+      <div className={`tasks-page__results tasks-page__results--${view}`}>
       {error && (
         <div className="card">
           <ErrorState message={error} onRetry={load} />
@@ -960,7 +963,9 @@ export default function Tasks() {
           <p className="small muted" style={{ marginTop: 0 }}>
             Arraste um cartão para outra coluna ou use o seletor de estado no cartão.
           </p>
-          <div className="kanban">
+          <div className="tasks-page__kanban-area">
+            <p className="tasks-page__kanban-scroll-hint small muted">Deslize horizontalmente para ver todas as colunas.</p>
+            <div className="kanban" role="region" aria-label="Quadro Kanban" tabIndex={0}>
             {ALL_STATUSES.map((status) => {
               const column = sortedTasks.filter((task) => task.status === status);
               const visible = expanded[status] ? column : column.slice(0, KANBAN_PAGE);
@@ -1007,9 +1012,11 @@ export default function Tasks() {
                 </section>
               );
             })}
+            </div>
           </div>
         </>
       )}
+      </div>
 
       {creating && (
         <TaskFormModal

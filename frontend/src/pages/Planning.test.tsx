@@ -481,4 +481,14 @@ describe("Planeamento", () => {
     fireEvent.click(within(detail).getByRole("button", { name: /cancelar evento/i }));
     await waitFor(() => expect(api.cancelCalendarEvent).toHaveBeenCalledWith("evt-1"));
   });
+
+  it("identifica as ações acionáveis do mês por classe", async () => {
+    renderPlanning();
+    await screen.findByText("Visita técnica sintética");
+
+    const addEvent = screen.getByRole("button", { name: `Novo evento em ${TODAY}` });
+    const eventChip = screen.getByRole("button", { name: /Visita técnica sintética/ });
+    expect(addEvent).toHaveClass("planning-day-add");
+    expect(eventChip).toHaveClass("planning-event-chip");
+  });
 });

@@ -60,12 +60,20 @@ describe("ClientReports", () => {
     expect(screen.getAllByRole("status")[0]).toHaveTextContent("2 rascunho(s)");
     expect(screen.getByText("cliente1@example.invalid")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Filtrar por estado"), { target: { value: "enabled" } });
+    const statusFilter = await screen.findByRole("combobox", { name: "Estado" });
+    const pmFilter = screen.getByRole("combobox", { name: "PM" });
+    expect(statusFilter).toHaveClass("select");
+    expect(statusFilter.parentElement).toHaveClass("field");
+    expect(pmFilter).toHaveClass("select");
+    expect(pmFilter.parentElement).toHaveClass("field");
+
+    fireEvent.change(statusFilter, { target: { value: "enabled" } });
     expect(screen.queryByText("Projeto Sintético Dois")).not.toBeInTheDocument();
     expect(screen.getByText("Projeto Sintético Um")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Filtrar por PM"), { target: { value: "PM Sintético Dois" } });
+    fireEvent.change(pmFilter, { target: { value: "PM Sintético Dois" } });
     await waitFor(() => expect(screen.getByText("Nenhum relatório corresponde aos filtros")).toBeInTheDocument());
+    expect(screen.getByText("Altere os filtros de estado ou PM para voltar a ver resultados.")).toBeInTheDocument();
   });
 
   it("preserva os filtros no URL e liga ao separador do projeto", async () => {
@@ -85,5 +93,6 @@ describe("ClientReports", () => {
     vi.mocked(listClientReports).mockResolvedValue([]);
     renderWithProviders(<ClientReports />, { me: makeMe({ permissions: ["client_report.view"] }) });
     expect(await screen.findByText("Ainda não há relatórios a clientes")).toBeInTheDocument();
+    expect(screen.getByText("Os projetos com relatórios semanais configurados aparecerão aqui.")).toBeInTheDocument();
   });
 });

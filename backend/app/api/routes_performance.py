@@ -19,11 +19,15 @@ from app.schemas.performance import (
     PerformanceSummary,
     PortfolioBreakdownRead,
     YearlyIndicator,
+    CompletedTaskRead,
+    CompletedTasksWeeklyPmRead,
+    CompletedTasksWeeklyRead,
 )
 from app.security.current_user import get_auth_context
 from app.security.permissions import AuthContext, can_manage_goals, can_view_performance
 from app.services.performance import (
     PerformanceError,
+    completed_tasks_by_week,
     compute_goal_progress,
     compute_portfolio_breakdown,
     create_goal,
@@ -38,6 +42,48 @@ router = APIRouter(prefix="/api/performance", tags=["performance"])
 def _require_view(ctx: AuthContext) -> None:
     if not can_view_performance(ctx):
         raise HTTPException(status_code=403, detail="Sem permissão para ver metas e indicadores.")
+
+
+@router.get("/completed-tasks-weekly", response_model=list[CompletedTasksWeeklyRead])
+def completed_tasks_weekly_endpoint(
+    from_date: dt.date | None = Query(default=None, alias="from"),
+    to_date: dt.date | None = Query(default=None, alias="to"),
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> list[CompletedTasksWeeklyRead]:
+    _require_view(ctx)
+    try:
+        weeks = completed_tasks_by_week(db, ctx, from_date=from_date, to_date=to_date)
+    except PerformanceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return [
+        CompletedTasksWeeklyRead(
+            iso_year=week.iso_year,
+            iso_week=week.iso_week,
+            week_start=week.week_start,
+            week_end=week.week_end,
+            pms=[
+                CompletedTasksWeeklyPmRead(
+                    pm_person_id=pm.pm_person_id,
+                    pm_display_name=pm.pm_display_name,
+                    task_count=len(pm.tasks),
+                    subtask_count=pm.subtask_count,
+                    tasks=[
+                        CompletedTaskRead(
+                            id=task.id,
+                            title=task.title,
+                            project_id=task.project_id,
+                            project_name=task.project_name,
+                            completed_at=task.completed_at,
+                        )
+                        for task in pm.tasks
+                    ],
+                )
+                for pm in week.pms
+            ],
+        )
+        for week in weeks
+    ]
 
 
 def _goal_to_read(db: Session, goal: GoalPeriod) -> GoalPeriodRead:

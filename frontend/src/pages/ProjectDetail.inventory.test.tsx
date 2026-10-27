@@ -143,6 +143,7 @@ describe("Detalhe do projeto — material no local", () => {
         item_id: "item-1",
         quantity: "13",
         reference: "Transportadora",
+        owner: "solcor",
       })
     );
     expect(api.collectProjectMaterial).not.toHaveBeenCalled();
@@ -173,7 +174,7 @@ describe("Detalhe do projeto — material no local", () => {
     fireEvent.click(screen.getByRole("button", { name: /^aplicar$/i }));
 
     expect(await screen.findByText(/Não pode recolher mais do que o que está no local/)).toBeInTheDocument();
-    expect(api.collectProjectMaterial).toHaveBeenCalledWith("proj-1", { item_id: "item-1", quantity: "9", reference: undefined });
+    expect(api.collectProjectMaterial).toHaveBeenCalledWith("proj-1", { item_id: "item-1", quantity: "9", reference: undefined, owner: "solcor" });
   });
 
   it("mantém o catálogo completo para formatar movimentos de artigos inativos", async () => {

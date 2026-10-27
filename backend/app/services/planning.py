@@ -35,6 +35,7 @@ from app.security.permissions import (
 )
 from app.services.installers import business_day
 from app.services.process import build_project_process
+from app.services.projects import visible_projects_query
 
 
 # Catálogo fechado: os códigos são estáveis e independentes dos títulos do
@@ -678,23 +679,13 @@ def _stage_responsible(
 def _projection_projects(
     db: Session, ctx: AuthContext, project_id: uuid.UUID | None
 ) -> list[Project]:
-    query = (
-        db.query(Project)
-        .filter(Project.start_date.is_not(None))
-        .options(
-            joinedload(Project.pm),
-            joinedload(Project.installer),
-            joinedload(Project.installer_team),
-            selectinload(Project.team_assignments).joinedload(ProjectTeamAssignment.team),
-        )
+    query = visible_projects_query(db, ctx).filter(Project.start_date.is_not(None)).options(
+        joinedload(Project.pm),
+        joinedload(Project.installer),
+        joinedload(Project.installer_team),
+        selectinload(Project.team_assignments).joinedload(ProjectTeamAssignment.team),
     )
-    # Reuse the same SQL project scope without querying each project through
-    # build_project_process. A requested hidden project becomes an empty read.
-    if not ctx.has_permission("project.view_all"):
-        conditions = _project_scope_condition(ctx)
-        if not conditions:
-            return []
-        query = query.filter(or_(*conditions))
+    # A requested hidden project becomes an empty read.
     if project_id is not None:
         query = query.filter(Project.id == project_id)
     return query.order_by(Project.start_date, Project.id).all()

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import InstallerMultiSelect from "../components/InstallerMultiSelect";
 import {
   ApiError,
   getWorksTeams,
@@ -114,7 +115,11 @@ export default function WorksTeams() {
   const dateParam = params.get("date");
   const date = validDate(dateParam) ? dateParam : today;
   const days = readDays(params.get("days"), params.get("period"));
-  const installerParam = params.get("installer_id") ?? params.get("inst") ?? "";
+  const installerParamIds = [...new Set([
+    ...params.getAll("installer_ids"),
+    ...params.getAll("inst"),
+    ...params.getAll("installer_id"),
+  ].filter(Boolean))];
   const [installers, setInstallers] = useState<Installer[]>([]);
   const [data, setData] = useState<TeamsView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -128,33 +133,35 @@ export default function WorksTeams() {
   }, []);
 
   const activeInstallers = useMemo(() => installers.filter((installer) => installer.is_active), [installers]);
-  const installerId = useMemo(
-    () => installerParam && activeInstallers.some((installer) => installer.id === installerParam) ? installerParam : "",
-    [installerParam, activeInstallers]
+  const installerIds = useMemo(
+    () => installerParamIds.filter((id) => activeInstallers.some((installer) => installer.id === id)),
+    [installerParamIds.join(","), activeInstallers]
   );
+  const installerKey = installerIds.join(",");
 
   useEffect(() => {
     let cancelled = false;
     setData(null);
     setError(null);
-    getWorksTeams({ date, days, installer_id: installerId || undefined })
+    getWorksTeams({ date, days, installer_ids: installerIds.length > 0 ? installerIds : undefined })
       .then((result) => !cancelled && setData(result))
       .catch((reason) => !cancelled && setError(apiErrorMessage(reason)));
     return () => { cancelled = true; };
-  }, [date, days, installerId, reloadKey]);
+  }, [date, days, installerKey, reloadKey]);
 
-  function update(patch: { date?: string; days?: PeriodDays; installerId?: string }) {
+  function update(patch: { date?: string; days?: PeriodDays; installerIds?: string[] }) {
     setParams((previous) => {
       const next = new URLSearchParams(previous);
       if (patch.date !== undefined) next.set("date", patch.date);
       if (patch.days !== undefined) next.set("days", String(patch.days));
-      if (patch.installerId !== undefined) {
+      if (patch.installerIds !== undefined) {
         next.delete("inst");
         next.delete("installer_id");
-        if (patch.installerId) next.set("inst", patch.installerId);
+        next.delete("installer_ids");
+        patch.installerIds.forEach((id) => next.append("inst", id));
       }
       return next;
-    }, { replace: true });
+    });
   }
 
   return (
@@ -175,14 +182,14 @@ export default function WorksTeams() {
             {PERIODS.map((period) => <button key={period.days} type="button" className={days === period.days ? "is-active" : ""} aria-pressed={days === period.days} onClick={() => update({ days: period.days })}>{period.label}</button>)}
           </div>
         </div>
-        <div className="field">
-          <label htmlFor="teams-installer">Instalador</label>
-          <select id="teams-installer" className="select" value={installerId} onChange={(event) => update({ installerId: event.target.value })}>
-            <option value="">Todos os instaladores</option>
-            {activeInstallers.map((installer) => <option key={installer.id} value={installer.id}>{installer.name}</option>)}
-          </select>
-        </div>
-        <div className="toolbar__end"><button type="button" className="btn btn--ghost" onClick={() => update({ date: today, days: 1, installerId: "" })}>Hoje</button></div>
+        <InstallerMultiSelect
+          id="teams-installer"
+          label="Instalador"
+          value={installerIds}
+          installers={activeInstallers}
+          onChange={(next) => update({ installerIds: next })}
+        />
+        <div className="toolbar__end"><button type="button" className="btn btn--ghost" onClick={() => update({ date: today, days: 1, installerIds: [] })}>Hoje</button></div>
       </div>
       {error && <div className="card"><ErrorState message={error} onRetry={() => setReloadKey((key) => key + 1)} /></div>}
       {!error && !data && <div className="card"><LoadingState label="A carregar localização das equipas…" rows={4} /></div>}

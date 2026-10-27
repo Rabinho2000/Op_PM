@@ -109,6 +109,42 @@ describe("Suppliers (lista)", () => {
     expect(screen.getByRole("link", { name: "Abrir localização" })).toHaveAttribute("href", "https://maps.example.invalid/abc");
   });
 
+  it("abre o detalhe completo ao clicar no nome e fecha com Escape", async () => {
+    listSuppliers.mockResolvedValue([
+      makeSupplier({
+        materials: "Painéis, cabos e fixadores",
+        notes: "Nota sintética do fornecedor.",
+        contacts: [
+          { id: "c-1", name: "Contacto Sintético Um", department: "Comercial", phone: "000 000 001", email: "um@example.invalid" },
+          { id: "c-2", name: "Contacto Sintético Dois", department: "Logística", phone: null, email: "dois@example.invalid" },
+        ],
+      }),
+    ]);
+    renderWithProviders(<Suppliers />, { me: viewOnly() });
+    await screen.findByText("Fornecedor A");
+
+    fireEvent.click(screen.getByRole("button", { name: "Ver detalhe de Fornecedor A" }));
+    const dialog = await screen.findByRole("dialog", { name: "Detalhe do fornecedor: Fornecedor A" });
+    expect(within(dialog).getByText("Dados gerais")).toBeInTheDocument();
+    expect(within(dialog).getByText("Carports")).toBeInTheDocument();
+    expect(within(dialog).getByText("Painéis, cabos e fixadores")).toBeInTheDocument();
+    expect(within(dialog).getByText("Contacto Sintético Um")).toBeInTheDocument();
+    expect(within(dialog).getByText("Contacto Sintético Dois")).toBeInTheDocument();
+    expect(within(dialog).getByText("Nota sintética do fornecedor.")).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Detalhe do fornecedor: Fornecedor A" })).not.toBeInTheDocument());
+  });
+
+  it("fecha o detalhe do fornecedor ao clicar fora da janela", async () => {
+    renderWithProviders(<Suppliers />, { me: viewOnly() });
+    await screen.findByText("Fornecedor A");
+    fireEvent.click(screen.getByRole("button", { name: "Ver detalhe de Fornecedor A" }));
+    const dialog = await screen.findByRole("dialog", { name: "Detalhe do fornecedor: Fornecedor A" });
+    fireEvent.mouseDown(dialog.parentElement!);
+    expect(screen.queryByRole("dialog", { name: "Detalhe do fornecedor: Fornecedor A" })).not.toBeInTheDocument();
+  });
+
   it("edita os contactos e envia a lista completa (valida antes)", async () => {
     updateSupplier.mockResolvedValue(makeSupplier());
     renderWithProviders(<Suppliers />, { me: withManage() });

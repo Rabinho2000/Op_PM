@@ -7,6 +7,7 @@ import re
 import uuid
 from collections import defaultdict
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -20,14 +21,15 @@ from app.models.time_bank import (
     TimeBankEntry,
     TimeBankImportBatch,
 )
-from app.schemas.time_bank import EntryCreate, AdjustmentCreate
+from app.schemas.time_bank import EntryCreate, AdjustmentCreate, MyEntryCreate
 from app.security.permissions import (
     AuthContext,
+    can_log_time_bank_own,
     can_manage_time_bank,
     can_view_time_bank,
     can_view_time_bank_person,
 )
-from app.services.time_bank import TimeBankValidationError, calculate_work_seconds
+from app.services.time_bank import DAILY_LIMIT_SECONDS, TimeBankValidationError, calculate_work_seconds
 from app.services.time_bank_import import PARSER_VERSION, parse_time_bank_xlsx
 
 
@@ -316,8 +318,132 @@ def create_entry(db: Session, ctx: AuthContext, body: EntryCreate) -> TimeBankEn
     return entry
 
 
-def reverse_entry(db: Session, ctx: AuthContext, entry_id: uuid.UUID, reason: str) -> TimeBankEntry:
-    _require_manage(ctx)
+def _require_log_own(ctx: AuthContext) -> uuid.UUID:
+    if not can_log_time_bank_own(ctx) or ctx.person_id is None:
+        raise TimeBankForbidden("Sem permissão para registar a própria jornada no Banco de Horas.")
+    return ctx.person_id
+
+
+def _lisbon_today() -> dt.date:
+    return dt.datetime.now(ZoneInfo("Europe/Lisbon")).date()
+
+
+def _my_entry_mode(work_date: dt.date) -> str:
+    if work_date > _lisbon_today():
+        raise TimeBankError(
+            "A data de trabalho não pode ser futura. "
+            f"Hoje é {_lisbon_today().isoformat()} (Europe/Lisbon)."
+        )
+    if work_date.weekday() == 6:
+        raise TimeBankError("Domingos e feriados só podem ser lançados por um Chefe ou Administrador.")
+    return "saturday" if work_date.weekday() == 5 else "standard"
+
+
+def _active_entry_for_date(db: Session, person_id: uuid.UUID, work_date: dt.date) -> TimeBankEntry | None:
+    entries = (
+        db.query(TimeBankEntry)
+        .filter(TimeBankEntry.person_id == person_id, TimeBankEntry.work_date == work_date)
+        .all()
+    )
+    reversed_ids = {entry.reversal_of_id for entry in entries if entry.reversal_of_id is not None}
+    return next(
+        (
+            entry
+            for entry in entries
+            if entry.reversal_of_id is None and entry.id not in reversed_ids
+        ),
+        None,
+    )
+
+
+def _prepare_my_entry(
+    db: Session,
+    ctx: AuthContext,
+    body: MyEntryCreate,
+) -> tuple[str, int, bool, uuid.UUID]:
+    person_id = _require_log_own(ctx)
+    calculation_mode = _my_entry_mode(body.work_date)
+    # The person lock deliberately precedes the duplicate lookup.  On
+    # PostgreSQL it serializes concurrent self-service submissions for a person.
+    _lock_person(db, person_id)
+    try:
+        balance = calculate_work_seconds(
+            work_date=body.work_date,
+            start_minute=body.start_minute,
+            end_minute=body.end_minute,
+            lunch_taken=body.lunch_taken,
+            calculation_mode=calculation_mode,
+        )
+    except TimeBankValidationError as exc:
+        raise TimeBankError(str(exc)) from exc
+    duplicate = _active_entry_for_date(db, person_id, body.work_date) is not None
+    return calculation_mode, balance, duplicate, person_id
+
+
+def _my_entry_warnings(balance_seconds: int) -> list[dict[str, str]]:
+    if balance_seconds > DAILY_LIMIT_SECONDS:
+        return [{
+            "code": "daily_limit",
+            "message": "O saldo deste dia excede o limite diário de 2 horas.",
+        }]
+    return []
+
+
+def preview_my_entry(db: Session, ctx: AuthContext, body: MyEntryCreate) -> dict[str, Any]:
+    calculation_mode, balance, duplicate, _person_id = _prepare_my_entry(db, ctx, body)
+    return {
+        "work_date": body.work_date,
+        "calculation_mode": calculation_mode,
+        "balance_seconds": balance,
+        "warnings": _my_entry_warnings(balance),
+        "duplicate": duplicate,
+    }
+
+
+def create_my_entry(db: Session, ctx: AuthContext, body: MyEntryCreate) -> TimeBankEntry:
+    calculation_mode, balance, duplicate, person_id = _prepare_my_entry(db, ctx, body)
+    if duplicate:
+        raise TimeBankConflict("Já existe um lançamento para este dia. Anule-o primeiro se quiser corrigir.")
+    entry = TimeBankEntry(
+        person_id=person_id,
+        work_date=body.work_date,
+        start_minute=body.start_minute,
+        end_minute=body.end_minute,
+        lunch_taken=body.lunch_taken,
+        balance_seconds=balance,
+        calculated_seconds=balance,
+        calculation_mode=calculation_mode,
+        reason=None,
+        needs_review=False,
+        review_flags={},
+        provenance={"source": "self_service"},
+        created_by_user_id=ctx.user.id,
+        occurred_at=_now_utc(),
+    )
+    db.add(entry)
+    db.flush()
+    _audit(
+        db,
+        ctx,
+        action="entry.create_self",
+        entity_id=entry.id,
+        data={
+            "person_id": str(person_id),
+            "work_date": body.work_date.isoformat(),
+            "balance_seconds": balance,
+        },
+    )
+    return entry
+
+
+def _reverse_entry_core(
+    db: Session,
+    ctx: AuthContext,
+    entry_id: uuid.UUID,
+    reason: str,
+    *,
+    audit_action: str,
+) -> TimeBankEntry:
     clean_reason = reason.strip()
     if not clean_reason:
         raise TimeBankError("O motivo da anulação é obrigatório.")
@@ -350,8 +476,30 @@ def reverse_entry(db: Session, ctx: AuthContext, entry_id: uuid.UUID, reason: st
     )
     db.add(compensation)
     db.flush()
-    _audit(db, ctx, action="entry.reverse", entity_id=compensation.id, data={"reversal_of_id": str(target.id), "balance_seconds": compensation.balance_seconds})
+    _audit(
+        db,
+        ctx,
+        action=audit_action,
+        entity_id=compensation.id,
+        data={"reversal_of_id": str(target.id), "balance_seconds": compensation.balance_seconds},
+    )
     return compensation
+
+
+def reverse_entry(db: Session, ctx: AuthContext, entry_id: uuid.UUID, reason: str) -> TimeBankEntry:
+    _require_manage(ctx)
+    return _reverse_entry_core(db, ctx, entry_id, reason, audit_action="entry.reverse")
+
+
+def reverse_my_entry(db: Session, ctx: AuthContext, entry_id: uuid.UUID, reason: str) -> TimeBankEntry:
+    person_id = _require_log_own(ctx)
+    target = db.get(TimeBankEntry, entry_id)
+    if target is None or target.person_id != person_id:
+        raise TimeBankNotFound("Lançamento não encontrado.")
+    provenance = target.provenance if isinstance(target.provenance, dict) else {}
+    if provenance.get("source") != "self_service" or target.created_by_user_id != ctx.user.id:
+        raise TimeBankForbidden("Só pode anular os seus próprios lançamentos self-service.")
+    return _reverse_entry_core(db, ctx, entry_id, reason, audit_action="entry.reverse_self")
 
 
 def create_adjustment(db: Session, ctx: AuthContext, body: AdjustmentCreate) -> TimeBankAdjustment:
@@ -465,7 +613,7 @@ def _summary_for_person(db: Session, person: Person, *, year: int, month: int | 
             daily[row.work_date] += row.balance_seconds
             iso = row.work_date.isocalendar()
             weekly[(iso.year, iso.week)] += row.balance_seconds
-    if any(value > 2 * 3600 for value in daily.values()):
+    if any(value > DAILY_LIMIT_SECONDS for value in daily.values()):
         warnings.append({"code": "daily_threshold", "message": "Há dias com mais de 2 horas positivas de Banco de Horas."})
     if any(value > 4 * 3600 for value in weekly.values()):
         warnings.append({"code": "weekly_threshold", "message": "Há semanas ISO com mais de 4 horas positivas de Banco de Horas."})

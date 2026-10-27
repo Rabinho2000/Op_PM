@@ -29,6 +29,7 @@ SAVED_VIEW_FILTER_FIELDS = (
     "lifecycle_status",
     "pm_person_id",
     "installer_id",
+    "installer_ids",
     "team_id",
     "show_idle",
 )
@@ -74,19 +75,26 @@ def _default_filters() -> dict[str, object]:
         "lifecycle_status": [],
         "pm_person_id": None,
         "installer_id": None,
+        "installer_ids": [],
         "team_id": None,
         "show_idle": False,
     }
 
 
 def _row_payload(row: WorksCalendarSavedView) -> dict[str, object]:
+    installer_ids = (
+        [uuid.UUID(str(value)) for value in row.installer_ids]
+        if row.installer_ids
+        else ([row.installer_id] if row.installer_id is not None else [])
+    )
     return {
         "id": row.id,
         "name": row.name,
         "zoom": row.zoom,
         "lifecycle_status": list(row.lifecycle_status),
         "pm_person_id": row.pm_person_id,
-        "installer_id": row.installer_id,
+        "installer_id": installer_ids[0] if len(installer_ids) == 1 else None,
+        "installer_ids": installer_ids,
         "team_id": row.team_id,
         "show_idle": bool(row.show_idle),
         "created_at": row.created_at,
@@ -104,8 +112,9 @@ def _scoped_row_payload(db: Session, ctx: AuthContext, row: WorksCalendarSavedVi
     visible_pm_ids, visible_installer_ids, visible_team_ids = _visible_reference_ids(db, ctx)
     if payload["pm_person_id"] not in visible_pm_ids:
         payload["pm_person_id"] = None
-    if payload["installer_id"] not in visible_installer_ids:
-        payload["installer_id"] = None
+    installer_ids = [value for value in cast(list[uuid.UUID], payload["installer_ids"]) if value in visible_installer_ids]
+    payload["installer_ids"] = installer_ids
+    payload["installer_id"] = installer_ids[0] if len(installer_ids) == 1 else None
     if payload["team_id"] not in visible_team_ids:
         payload["team_id"] = None
     return payload
@@ -134,6 +143,30 @@ def _dedupe_statuses(values: object) -> list[str]:
             "Filtro de estado do ciclo de vida inválido."
         )
     return list(dict.fromkeys(values))
+
+
+def _sync_installer_selection(state: dict[str, object], changes: Mapping[str, object]) -> None:
+    if "installer_ids" in changes:
+        raw_ids = changes["installer_ids"]
+        if not isinstance(raw_ids, list) or any(not isinstance(value, uuid.UUID) for value in raw_ids):
+            raise SavedViewValidationError("Filtro de instalador inválido.")
+        installer_ids = list(dict.fromkeys(raw_ids))
+    elif "installer_id" in changes:
+        legacy_id = state["installer_id"]
+        if legacy_id is not None and not isinstance(legacy_id, uuid.UUID):
+            raise SavedViewValidationError("Filtro de instalador inválido.")
+        installer_ids = [legacy_id] if legacy_id is not None else []
+    else:
+        raw_ids = state.get("installer_ids")
+        if raw_ids is None:
+            legacy_id = state.get("installer_id")
+            installer_ids = [legacy_id] if isinstance(legacy_id, uuid.UUID) else []
+        elif isinstance(raw_ids, list) and all(isinstance(value, uuid.UUID) for value in raw_ids):
+            installer_ids = list(dict.fromkeys(raw_ids))
+        else:
+            raise SavedViewValidationError("Filtro de instalador inválido.")
+    state["installer_ids"] = installer_ids
+    state["installer_id"] = installer_ids[0] if len(installer_ids) == 1 else None
 
 
 def _visible_reference_ids(
@@ -254,31 +287,32 @@ def _validate_final_state(db: Session, ctx: AuthContext, state: dict[str, object
         raise SavedViewValidationError("show_idle tem de ser um booleano.")
 
     pm_person_id = state.get("pm_person_id")
-    installer_id = state.get("installer_id")
+    installer_ids = state.get("installer_ids")
     team_id = state.get("team_id")
-    for value in (pm_person_id, installer_id, team_id):
-        if value is not None and not isinstance(value, uuid.UUID):
-            raise SavedViewValidationError("Filtro de referência inválido.")
+    if pm_person_id is not None and not isinstance(pm_person_id, uuid.UUID):
+        raise SavedViewValidationError("Filtro de referência inválido.")
+    if not isinstance(installer_ids, list) or any(not isinstance(value, uuid.UUID) for value in installer_ids):
+        raise SavedViewValidationError("Filtro de instalador inválido.")
+    if team_id is not None and not isinstance(team_id, uuid.UUID):
+        raise SavedViewValidationError("Filtro de referência inválido.")
 
     visible_pm_ids, visible_installer_ids, visible_team_ids = _visible_reference_ids(
         db, ctx
     )
     if pm_person_id is not None:
         _validate_person(db, ctx, pm_person_id, visible_pm_ids)
-    if installer_id is not None:
+    for installer_id in installer_ids:
         _validate_installer(db, ctx, installer_id, visible_installer_ids)
 
     team = None
     if team_id is not None:
         team = _validate_team(db, ctx, team_id, visible_team_ids)
 
-    if team_id is not None and installer_id is None:
+    if team_id is not None and not installer_ids:
         raise SavedViewValidationError(
             "Os filtros de instalador e equipa não são compatíveis."
         )
-    if installer_id is not None and team_id is not None and (
-        team is None or team.installer_id != installer_id
-    ):
+    if team_id is not None and (team is None or team.installer_id not in installer_ids):
         raise SavedViewValidationError(
             "Os filtros de instalador e equipa não são compatíveis."
         )
@@ -378,6 +412,7 @@ def create_saved_view(
     name = _normalise_name(payload.get("name"))
     state = _default_filters()
     state.update({field: payload[field] for field in SAVED_VIEW_FILTER_FIELDS if field in payload})
+    _sync_installer_selection(state, payload)
     _validate_final_state(db, ctx, state)
     _ensure_unique_name(db, ctx, name)
     row = WorksCalendarSavedView(
@@ -387,6 +422,7 @@ def create_saved_view(
         lifecycle_status=list(cast(list[str], state["lifecycle_status"])),
         pm_person_id=cast(uuid.UUID | None, state["pm_person_id"]),
         installer_id=cast(uuid.UUID | None, state["installer_id"]),
+        installer_ids=[str(value) for value in cast(list[uuid.UUID], state["installer_ids"])],
         team_id=cast(uuid.UUID | None, state["team_id"]),
         show_idle=cast(bool, state["show_idle"]),
     )
@@ -403,6 +439,7 @@ def update_saved_view(
     row = _get_owned(db, ctx, saved_view_id)
     state = _filter_payload(row)
     state.update({field: changes[field] for field in SAVED_VIEW_FILTER_FIELDS if field in changes})
+    _sync_installer_selection(state, changes)
     _validate_final_state(db, ctx, state)
 
     if "name" in changes:
@@ -416,6 +453,7 @@ def update_saved_view(
     row.lifecycle_status = list(cast(list[str], state["lifecycle_status"]))
     row.pm_person_id = cast(uuid.UUID | None, state["pm_person_id"])
     row.installer_id = cast(uuid.UUID | None, state["installer_id"])
+    row.installer_ids = [str(value) for value in cast(list[uuid.UUID], state["installer_ids"])]
     row.team_id = cast(uuid.UUID | None, state["team_id"])
     row.show_idle = cast(bool, state["show_idle"])
     return _persist_existing(db, row)

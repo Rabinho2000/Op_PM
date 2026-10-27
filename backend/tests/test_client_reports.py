@@ -9,13 +9,15 @@ from app.config import Settings
 from app.models.client_report import ClientReportConfig, ClientReportSend
 from app.models.identity import User
 from app.models.people import Person
-from app.models.project import Project, ProjectHistory
-from app.models.workflow import Phase
+from app.models.project import Project, ProjectHistory, ProjectStageProgress, ProjectSubtaskProgress
+from app.models.task import STATUS_DONE, STATUS_TODO, Task
+from app.models.workflow import Phase, WorkflowStage, WorkflowSubtask
 from app.security.permissions import load_auth_context
 from app.services.client_reports import (
     ClientReportForbidden,
     ClientReportNotFound,
     ClientReportValidationError,
+    _body_html,
     approve_send,
     discard_send,
     expire_pending_reviews,
@@ -530,3 +532,215 @@ def test_global_manage_roles_can_manage_any_project(db_session, email):
         _context(db_session, email),
     )
     assert result["can_manage"] is True
+
+
+def test_report_completed_work_is_grouped_by_lisbon_iso_week_and_project(db_session):
+    project = _project(db_session)
+    other_project = Project(
+        name="Projeto Sintético Outro",
+        lifecycle_status="construcao",
+        is_active=True,
+        pm_person_id=project.pm_person_id,
+    )
+    db_session.add(other_project)
+    db_session.flush()
+
+    sunday_before_dst = dt.datetime(2026, 3, 29, 0, 30, tzinfo=dt.timezone.utc)
+    sunday_after_dst = dt.datetime(2026, 3, 29, 1, 30, tzinfo=dt.timezone.utc)
+    monday = dt.datetime(2026, 3, 30, 0, 30, tzinfo=dt.timezone.utc)
+    reference = dt.datetime(2026, 3, 30, 12, 0, tzinfo=dt.timezone.utc)
+    title = "<script>alert('tarefa')</script>"
+    db_session.add_all(
+        [
+            Task(project_id=project.id, title=title, status=STATUS_DONE, completed_at=sunday_before_dst, notes="NOTA INTERNA"),
+            Task(project_id=project.id, title="Tarefa após mudança da hora", status=STATUS_DONE, completed_at=sunday_after_dst),
+            Task(project_id=project.id, title="Tarefa de segunda-feira", status=STATUS_DONE, completed_at=monday),
+            Task(
+                project_id=project.id,
+                title="Tarefa sem data concluída",
+                status=STATUS_DONE,
+                completed_at=None,
+                updated_at=sunday_before_dst,
+            ),
+            Task(project_id=project.id, title="Tarefa aberta", status=STATUS_TODO, completed_at=sunday_before_dst),
+            Task(
+                project_id=project.id,
+                title="Tarefa fora do período",
+                status=STATUS_DONE,
+                completed_at=reference - dt.timedelta(days=7, minutes=1),
+            ),
+            Task(
+                project_id=project.id,
+                title="Tarefa futura",
+                status=STATUS_DONE,
+                completed_at=reference + dt.timedelta(minutes=1),
+            ),
+            Task(project_id=other_project.id, title="Tarefa de outro projeto", status=STATUS_DONE, completed_at=monday),
+        ]
+    )
+    db_session.flush()
+
+    stage = (
+        db_session.query(WorkflowStage)
+        .order_by(WorkflowStage.sort_order, WorkflowStage.id)
+        .first()
+    )
+    stage.title = "<script>etapa concluída</script>"
+    db_session.add(
+        ProjectStageProgress(
+            project_id=project.id,
+            stage_id=stage.id,
+            contact_done=True,
+            contact_done_at=sunday_after_dst,
+        )
+    )
+    next_stage = (
+        db_session.query(WorkflowStage)
+        .filter(WorkflowStage.id != stage.id)
+        .order_by(WorkflowStage.sort_order, WorkflowStage.id)
+        .first()
+    )
+    db_session.add(
+        ProjectStageProgress(
+            project_id=project.id,
+            stage_id=next_stage.id,
+            contact_done=True,
+            contact_done_at=None,
+        )
+    )
+    subtask = next(
+        candidate
+        for candidate in db_session.query(WorkflowSubtask).order_by(WorkflowSubtask.id).all()
+        if db_session.query(ProjectSubtaskProgress)
+        .filter_by(project_id=project.id, subtask_id=candidate.id)
+        .one_or_none()
+        is None
+    )
+    db_session.add(
+        ProjectSubtaskProgress(
+            project_id=project.id,
+            subtask_id=subtask.id,
+            done=True,
+            done_at=sunday_before_dst,
+        )
+    )
+    db_session.flush()
+
+    body = _body_html(
+        db_session,
+        project,
+        ClientReportConfig(project_id=project.id),
+        _pm_context(db_session),
+        now=reference,
+    )
+
+    assert "Semana ISO 2026-W13" in body
+    assert "Semana ISO 2026-W14" in body
+    assert "29/03/2026" in body and "30/03/2026" in body
+    assert "&lt;script&gt;alert(&#x27;tarefa&#x27;)&lt;/script&gt;" in body
+    assert "&lt;script&gt;etapa concluída&lt;/script&gt;" in body
+    assert "Tarefa após mudança da hora" in body
+    assert "Tarefa de segunda-feira" in body
+    week_13 = body.split("<h3>Semana ISO 2026-W13", 1)[1].split("</ul>", 1)[0]
+    week_14 = body.split("<h3>Semana ISO 2026-W14", 1)[1].split("</ul>", 1)[0]
+    assert "Tarefa após mudança da hora" in week_13
+    assert "Tarefa de segunda-feira" in week_14
+    assert "&lt;script&gt;etapa concluída&lt;/script&gt;" in week_13
+    assert f"Subtarefa concluída: {subtask.title}" in week_13
+    assert "Tarefa sem data concluída" not in body
+    assert "Tarefa aberta" not in body
+    assert "Tarefa fora do período" not in body
+    assert "Tarefa futura" not in body
+    assert "Tarefa de outro projeto" not in body
+    assert "NOTA INTERNA" not in body
+    assert "<script>alert('tarefa')</script>" not in body
+    assert "<script>etapa concluída</script>" not in body
+
+
+def test_report_work_period_starts_at_last_successful_send_and_empty_report_is_explicit(db_session):
+    project = _project(db_session)
+    reference = dt.datetime(2026, 10, 12, 12, 0, tzinfo=dt.timezone.utc)
+    last_sent = reference - dt.timedelta(days=2)
+    db_session.add(
+        ClientReportSend(
+            project_id=project.id,
+            iso_week="2026-W41",
+            status="sent",
+            trigger="scheduled",
+            subject="Relatório sintético",
+            body_html="<html></html>",
+            from_email="pm@example.invalid",
+            to_emails=["cliente@example.invalid"],
+            cc_emails=[],
+            sent_at=last_sent,
+        )
+    )
+    db_session.add(
+        ClientReportSend(
+            project_id=project.id,
+            iso_week="2026-W41",
+            status="pending_review",
+            trigger="scheduled",
+            subject="Rascunho sintético",
+            body_html="<html></html>",
+            from_email="pm@example.invalid",
+            to_emails=["cliente@example.invalid"],
+            cc_emails=[],
+            sent_at=reference - dt.timedelta(hours=1),
+        )
+    )
+    db_session.add_all(
+        [
+            Task(
+                project_id=project.id,
+                title="Concluída antes do último envio",
+                status=STATUS_DONE,
+                completed_at=last_sent - dt.timedelta(minutes=1),
+            ),
+            Task(
+                project_id=project.id,
+                title="Concluída depois do último envio",
+                status=STATUS_DONE,
+                completed_at=last_sent + dt.timedelta(minutes=1),
+            ),
+        ]
+    )
+    db_session.flush()
+
+    report = _body_html(
+        db_session,
+        project,
+        ClientReportConfig(project_id=project.id),
+        _pm_context(db_session),
+        now=reference,
+    )
+    empty_project = Project(
+        name="Projeto Sintético sem trabalho concluído",
+        lifecycle_status="construcao",
+        is_active=True,
+        pm_person_id=project.pm_person_id,
+    )
+    db_session.add(empty_project)
+    db_session.flush()
+    empty_report = _body_html(
+        db_session,
+        empty_project,
+        ClientReportConfig(project_id=empty_project.id),
+        _pm_context(db_session),
+        now=reference,
+    )
+
+    assert "Concluída depois do último envio" in report
+    assert "Concluída antes do último envio" not in report
+    assert "Sem trabalho concluído neste período" in empty_report
+
+
+def test_deleted_project_cannot_generate_a_client_report(db_session, tmp_path):
+    project = _project(db_session)
+    project.deleted_at = NOW
+    db_session.flush()
+
+    with pytest.raises(ClientReportNotFound, match="Projeto não encontrado"):
+        send_report(db_session, project.id, _pm_context(db_session), settings=_settings(tmp_path), now=NOW)
+
+    assert db_session.query(ClientReportSend).filter_by(project_id=project.id).count() == 0

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, or_, select
@@ -15,6 +16,9 @@ from app.db import get_db
 from app.models.inventory import (
     MOVEMENT_AJUSTE,
     MOVEMENT_ENTRADA,
+    MOVEMENT_TRANSITO_ENTRADA,
+    MOVEMENT_TRANSITO_SAIDA,
+    INVENTORY_CATEGORIES,
     InventoryCatalogHistory,
     InventoryItem,
     InventoryLocation,
@@ -26,6 +30,7 @@ from app.models.project import Project
 from app.schemas.inventory import (
     InventoryItemRead,
     InventoryLocationRead,
+    InventoryLocationStockRead,
     InventoryMovementCreate,
     InventoryMovementRead,
     ProjectInventoryMovementReverse,
@@ -72,6 +77,7 @@ from app.services.inventory import (
     deliver_to_project,
     enter_stock,
     item_balance,
+    physical_stock_by_location,
     material_requirement_status,
     on_site_balances_by_project,
     release_reservation,
@@ -90,6 +96,7 @@ from app.services.inventory_catalog import (
     create_inventory_location,
     deactivate_inventory_item,
     deactivate_inventory_location,
+    inventory_item_section_label,
     update_inventory_item_atomic,
     update_inventory_location_atomic,
 )
@@ -98,13 +105,21 @@ router = APIRouter(prefix="/api/inventory", tags=["inventory"])
 project_router = APIRouter(prefix="/api/projects/{project_id}/inventory", tags=["inventory"])
 
 
-def _item_to_read(db: Session, item: InventoryItem) -> InventoryItemRead:
+def _item_to_read(
+    db: Session, item: InventoryItem, owner: Literal["solcor", "verde_milenar"] = "solcor"
+) -> InventoryItemRead:
     data = InventoryItemRead.model_validate(item)
-    balance = item_balance(db, item)
+    data.section_label = inventory_item_section_label(item)
+    data.has_photo = bool(item.photo_storage_name)
+    balance = item_balance(db, item, owner)
     data.physical_stock = balance.physical_stock
     data.available_stock = balance.available_stock
     data.total_reserved = balance.total_reserved
     data.below_min_stock = balance.physical_stock < item.min_stock
+    data.location_stocks = [
+        InventoryLocationStockRead.model_validate(row)
+        for row in physical_stock_by_location(db, item.id, owner)
+    ]
     return data
 
 
@@ -116,6 +131,15 @@ def _movement_to_read(db: Session, movement: InventoryMovement) -> InventoryMove
         project = db.get(Project, movement.project_id)
         data.project_name = project.name if project else None
     return data
+
+
+def _filter_movement_owner(query, owner: Literal["solcor", "verde_milenar"]):
+    # Legacy movements without a location have no reliable owner attribution;
+    # stock calculations may count them as Solcor for compatibility, but an
+    # owner-scoped movement list must not leak or mislabel them.
+    return query.join(
+        InventoryLocation, InventoryMovement.location_id == InventoryLocation.id
+    ).filter(InventoryLocation.owner == owner)
 
 
 def _require(ctx: AuthContext, permission_code: str) -> None:
@@ -135,10 +159,8 @@ def _visible_project_ids(db: Session, ctx: AuthContext):
 
 def _filter_project_scope(query, project_column, db: Session, ctx: AuthContext):
     """Mantém stock sem projeto visível e restringe o restante ao âmbito de
-    projetos efetivo. `inventory.manage_central`/`manage_catalog` não ampliam
-    esta leitura: só `project.view_all` é global."""
-    if ctx.has_permission("project.view_all"):
-        return query
+    projetos efetivo. `project.view_all` inclui todos os projetos ativos,
+    mas nunca projetos removidos logicamente."""
     project_ids = _visible_project_ids(db, ctx)
     return query.filter(
         or_(
@@ -151,8 +173,6 @@ def _filter_project_scope(query, project_column, db: Session, ctx: AuthContext):
 def _filter_catalog_history_scope(query, db: Session, ctx: AuthContext):
     """Artigo de catálogo é global; histórico de localização segue o projeto
     associado à localização, incluindo a localização central sem projeto."""
-    if ctx.has_permission("project.view_all"):
-        return query
     project_ids = _visible_project_ids(db, ctx)
     return query.outerjoin(
         InventoryLocation,
@@ -175,36 +195,51 @@ def _filter_catalog_history_scope(query, db: Session, ctx: AuthContext):
 
 
 def _get_project_or_404(db: Session, project_id: uuid.UUID, ctx: AuthContext) -> Project:
-    project = db.get(Project, project_id)
+    project = db.query(Project).filter(Project.id == project_id, Project.deleted_at.is_(None)).one_or_none()
     if project is None or not can_view_project(ctx, project):
         raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
     return project
 
 
+@router.get("/categories", response_model=list[str])
+def inventory_categories_endpoint(
+    ctx: AuthContext = Depends(get_auth_context),
+) -> list[str]:
+    _require(ctx, "inventory.view")
+    return list(INVENTORY_CATEGORIES)
+
+
 @router.get("/summary", response_model=list[InventoryItemRead])
 def inventory_summary_endpoint(
-    db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    owner: Literal["solcor", "verde_milenar"] = Query(default="solcor"),
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> list[InventoryItemRead]:
     _require(ctx, "inventory.view")
     items = db.query(InventoryItem).filter(InventoryItem.is_active.is_(True)).order_by(InventoryItem.name).all()
-    return [_item_to_read(db, item) for item in items]
+    return [_item_to_read(db, item, owner) for item in items]
 
 
 @router.get("/items", response_model=list[InventoryItemRead])
 def list_items_endpoint(
-    db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    owner: Literal["solcor", "verde_milenar"] = Query(default="solcor"),
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> list[InventoryItemRead]:
     _require(ctx, "inventory.view")
     items = db.query(InventoryItem).order_by(InventoryItem.name).all()
-    return [_item_to_read(db, item) for item in items]
+    return [_item_to_read(db, item, owner) for item in items]
 
 
 @router.get("/locations", response_model=list[InventoryLocationRead])
 def list_locations_endpoint(
-    db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    owner: Literal["solcor", "verde_milenar"] = Query(default="solcor"),
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> list[InventoryLocationRead]:
     _require(ctx, "inventory.view")
     query = _filter_project_scope(db.query(InventoryLocation), InventoryLocation.project_id, db, ctx)
+    query = query.filter(InventoryLocation.owner == owner)
     return [InventoryLocationRead.model_validate(location) for location in query.order_by(InventoryLocation.name).all()]
 
 
@@ -281,6 +316,7 @@ def deactivate_location_endpoint(
 @router.post("/opening-stock", response_model=InventoryMovementRead, status_code=201)
 def opening_stock_endpoint(
     body: OpeningStockCreate,
+    owner: Literal["solcor", "verde_milenar"] = Query(default="solcor"),
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> InventoryMovementRead:
@@ -289,6 +325,10 @@ def opening_stock_endpoint(
     item = db.get(InventoryItem, body.item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Artigo de inventário não encontrado.")
+    if body.location_id is not None:
+        location = db.get(InventoryLocation, body.location_id)
+        if location is None or location.owner != owner:
+            raise HTTPException(status_code=400, detail="A localização não pertence ao inventário selecionado.")
     try:
         movement = enter_stock(
             db,
@@ -297,6 +337,8 @@ def opening_stock_endpoint(
             created_by_person_id=ctx.person_id,
             reference=body.reference,
             idempotency_key=body.idempotency_key,
+            location_id=body.location_id,
+            owner=owner,
         )
     except InventoryError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
@@ -420,11 +462,13 @@ def list_movements_endpoint(
     item_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
     movement_type: str | None = Query(default=None),
+    owner: Literal["solcor", "verde_milenar"] = Query(default="solcor"),
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[InventoryMovementRead]:
     _require(ctx, "inventory.view")
     query = _filter_project_scope(db.query(InventoryMovement), InventoryMovement.project_id, db, ctx)
+    query = _filter_movement_owner(query, owner)
     if item_id is not None:
         query = query.filter(InventoryMovement.item_id == item_id)
     if project_id is not None:
@@ -446,6 +490,15 @@ def create_central_movement_endpoint(
     item = db.get(InventoryItem, body.item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Item de inventário não encontrado.")
+    if body.movement_type in {MOVEMENT_TRANSITO_ENTRADA, MOVEMENT_TRANSITO_SAIDA}:
+        source = db.get(InventoryLocation, body.location_id) if body.location_id is not None else None
+        destination = (
+            db.get(InventoryLocation, body.destination_location_id)
+            if body.destination_location_id is not None
+            else None
+        )
+        if source is not None and destination is not None and source.owner != destination.owner:
+            raise HTTPException(status_code=400, detail="Não são permitidas transferências entre inventários diferentes.")
     try:
         if body.movement_type == MOVEMENT_ENTRADA:
             movement = enter_stock(
@@ -490,6 +543,7 @@ def create_central_movement_endpoint(
 @project_router.get("", response_model=ProjectInventorySummary)
 def project_inventory_summary_endpoint(
     project_id: uuid.UUID,
+    owner: Literal["solcor", "verde_milenar"] = Query(default="solcor"),
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectInventorySummary:
@@ -505,7 +559,7 @@ def project_inventory_summary_endpoint(
     for req in requirements:
         item = db.get(InventoryItem, req.item_id)
         status = material_requirement_status(
-            db, project_id=project.id, item=item, quantity_required=req.quantity_required
+            db, project_id=project.id, item=item, quantity_required=req.quantity_required, owner=owner
         )
         data = ProjectMaterialRequirementRead.model_validate(req)
         data.item_name = item.name if item else None
@@ -517,12 +571,13 @@ def project_inventory_summary_endpoint(
         requirement_reads.append(data)
 
     reservations = (
-        db.query(InventoryMovement)
-        .filter(InventoryMovement.project_id == project.id)
+        _filter_movement_owner(
+            db.query(InventoryMovement).filter(InventoryMovement.project_id == project.id), owner
+        )
         .order_by(InventoryMovement.created_at.desc())
         .all()
     )
-    on_site_balances = on_site_balances_by_project(db, [project.id]).get(project.id, {})
+    on_site_balances = on_site_balances_by_project(db, [project.id], owner).get(project.id, {})
     items_by_id = (
         {i.id: i for i in db.query(InventoryItem).filter(InventoryItem.id.in_(list(on_site_balances))).all()}
         if on_site_balances
@@ -579,6 +634,7 @@ def reverse_project_movement_endpoint(
 def create_requirement_endpoint(
     project_id: uuid.UUID,
     body: ProjectMaterialRequirementCreate,
+    owner: Literal["solcor", "verde_milenar"] = Query(default="solcor"),
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectMaterialRequirementRead:
@@ -670,6 +726,7 @@ def _project_operation(
             created_by_person_id=ctx.person_id,
             reference=body.reference,
             idempotency_key=body.idempotency_key,
+            owner=body.owner,
         )
     except (InsufficientStockError, InsufficientReservationError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))

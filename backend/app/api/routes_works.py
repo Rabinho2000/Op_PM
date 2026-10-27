@@ -34,17 +34,35 @@ from app.services.works_calendar import WindowError, get_works_calendar
 router = APIRouter(prefix="/api/works", tags=["works"])
 
 
+def _parse_installer_selection(
+    legacy_ids: list[uuid.UUID] | None, multi_ids: list[str] | None
+) -> list[uuid.UUID]:
+    selected_ids = list(legacy_ids or [])
+    try:
+        selected_ids.extend(
+            uuid.UUID(value.strip())
+            for item in (multi_ids or [])
+            for value in item.split(",")
+            if value.strip()
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Filtro de instalador inválido.") from exc
+    return list(dict.fromkeys(selected_ids))
+
+
 @router.get("/teams", response_model=TeamsViewRead)
 def works_teams_endpoint(
     date: dt.date = Query(default_factory=dt.date.today),
     days: int = Query(default=1, ge=1, le=62),
-    installer_id: uuid.UUID | None = None,
+    installer_id: list[uuid.UUID] | None = Query(default=None, description="Instalador (compatível e repetível)"),
+    installer_ids: list[str] | None = Query(default=None, description="Instaladores selecionados (repetível ou CSV)"),
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> TeamsViewRead:
+    selected_installer_ids = _parse_installer_selection(installer_id, installer_ids)
     try:
         view_date, view_days, installers = get_teams_view(
-            db, ctx, date=date, days=days, installer_id=installer_id
+            db, ctx, date=date, days=days, installer_ids=selected_installer_ids or None
         )
     except PermissionDenied:
         raise HTTPException(status_code=403, detail="Sem permissão para ver equipas.")
@@ -99,7 +117,8 @@ def works_calendar_endpoint(
     end: dt.date = Query(alias="to", description="Fim da janela (inclusive)"),
     pm_person_id: uuid.UUID | None = None,
     lifecycle_status: list[str] | None = Query(default=None, description="Estado do projeto (repetível)"),
-    installer_id: uuid.UUID | None = None,
+    installer_id: list[uuid.UUID] | None = Query(default=None, description="Instalador (compatível e repetível)"),
+    installer_ids: list[str] | None = Query(default=None, description="Instaladores selecionados (repetível ou CSV)"),
     team_id: uuid.UUID | None = None,
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
@@ -112,6 +131,7 @@ def works_calendar_endpoint(
     invalid = sorted(set(lifecycle_status or []) - LIFECYCLE_STATUS_CODES)
     if invalid:
         raise HTTPException(status_code=400, detail=f"Estado do ciclo de vida inválido: {', '.join(invalid)}")
+    selected_installer_ids = _parse_installer_selection(installer_id, installer_ids)
     try:
         calendar = get_works_calendar(
             db,
@@ -120,7 +140,7 @@ def works_calendar_endpoint(
             end=end,
             pm_person_id=pm_person_id,
             lifecycle_statuses=lifecycle_status,
-            installer_id=installer_id,
+            installer_ids=selected_installer_ids or None,
             team_id=team_id,
         )
     except WindowError as exc:

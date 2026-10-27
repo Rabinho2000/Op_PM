@@ -41,6 +41,7 @@ from app.schemas.process import (
 )
 from app.security.permissions import AuthContext, PermissionDenied, can_update_process, can_update_process_stage
 from app.services.installers import business_day
+from app.services.process_alerts import notify_stage_completed_if_transitioned, stage_completion_snapshot
 
 
 class ProcessError(ValueError):
@@ -184,6 +185,16 @@ def build_project_process(db: Session, project: Project, ctx: AuthContext, today
                     )
                 )
             stage_done = bool(subtasks) and done_count == len(subtasks)
+            completed_at = None
+            if stage_done:
+                done_dates = [
+                    progress.done_at
+                    for subtask in subtasks
+                    for progress in [subtask_progress.get(subtask.id)]
+                    if progress is not None and progress.done and progress.done_at is not None
+                ]
+                if len(done_dates) == len(subtasks):
+                    completed_at = max(done_dates)
             start = end = None
             if project.start_date is not None and stage.planned_start_offset_days is not None and stage.planned_end_offset_days is not None:
                 start = business_day(project.start_date, stage.planned_start_offset_days)
@@ -220,6 +231,7 @@ def build_project_process(db: Session, project: Project, ctx: AuthContext, today
                     end_day=stage.planned_end_offset_days,
                     planned_start=start,
                     planned_end=end,
+                    completed_at=completed_at,
                     status=status,
                     can_update=can_update_process_stage(ctx, project, stage),
                     done_count=done_count,
@@ -286,10 +298,9 @@ def progress_percent_by_project(db: Session, project_ids: list[uuid.UUID]) -> di
 # --- escrita -----------------------------------------------------------------
 
 
-def set_subtask_done(db: Session, *, project: Project, subtask_id: uuid.UUID, done: bool, ctx: AuthContext) -> None:
-    subtask = db.get(WorkflowSubtask, subtask_id)
-    if subtask is None:
-        raise ProcessError("Subtarefa não encontrada.")
+def _set_subtask_done_without_commit(
+    db: Session, *, project: Project, subtask: WorkflowSubtask, done: bool, ctx: AuthContext
+) -> bool:
     if not can_update_process_stage(ctx, project, subtask.stage):
         raise PermissionDenied("workflow.update_progress")
     progress = (
@@ -299,7 +310,7 @@ def set_subtask_done(db: Session, *, project: Project, subtask_id: uuid.UUID, do
     )
     was_done = bool(progress and progress.done)
     if was_done == done:
-        return
+        return False
     now = dt.datetime.now(dt.timezone.utc)
     if progress is None:
         progress = ProjectSubtaskProgress(project_id=project.id, subtask_id=subtask.id)
@@ -317,7 +328,50 @@ def set_subtask_done(db: Session, *, project: Project, subtask_id: uuid.UUID, do
         changed_by_person_id=ctx.person_id,
         note=subtask.title[:200],
     )
-    db.commit()
+    return True
+
+
+def set_subtask_done(db: Session, *, project: Project, subtask_id: uuid.UUID, done: bool, ctx: AuthContext) -> None:
+    subtask = db.get(WorkflowSubtask, subtask_id)
+    if subtask is None:
+        raise ProcessError("Subtarefa não encontrada.")
+    was_complete = stage_completion_snapshot(db, project.id, subtask.stage_id)
+    try:
+        _set_subtask_done_without_commit(db, project=project, subtask=subtask, done=done, ctx=ctx)
+        notify_stage_completed_if_transitioned(
+            db, project=project, stage=subtask.stage, was_complete=was_complete, actor=ctx
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+
+def set_stage_subtasks_done(
+    db: Session, *, project: Project, stage_id: uuid.UUID, done: bool, ctx: AuthContext
+) -> None:
+    """Marca/desmarca uma etapa inteira numa única transação.
+
+    A permissão é verificada para todas as subtarefas antes de qualquer alteração;
+    assim, uma etapa parcialmente autorizada nunca fica parcialmente escrita.
+    """
+    stage = db.get(WorkflowStage, stage_id)
+    if stage is None:
+        raise ProcessError("Etapa não encontrada.")
+    subtasks = db.query(WorkflowSubtask).filter(WorkflowSubtask.stage_id == stage.id).order_by(WorkflowSubtask.sort_order).all()
+    if any(not can_update_process_stage(ctx, project, subtask.stage) for subtask in subtasks):
+        raise PermissionDenied("workflow.update_progress")
+    was_complete = stage_completion_snapshot(db, project.id, stage.id)
+    try:
+        for subtask in subtasks:
+            _set_subtask_done_without_commit(db, project=project, subtask=subtask, done=done, ctx=ctx)
+        notify_stage_completed_if_transitioned(
+            db, project=project, stage=stage, was_complete=was_complete, actor=ctx
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
 
 def set_contact_done(db: Session, *, project: Project, stage_id: uuid.UUID, done: bool, ctx: AuthContext) -> None:

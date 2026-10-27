@@ -1,10 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const client = vi.hoisted(() => ({
+  apiGet: vi.fn(),
+  apiPost: vi.fn(),
+  apiUpload: vi.fn(),
+}));
+
+vi.mock("./client", () => client);
+
 import {
+  createMyTimeBankEntry,
   formatSignedTimeBankDuration,
   hasBlockingTimeBankImportIssues,
   inferTimeBankMode,
   parseClockMinute,
   parseSignedTimeBankDuration,
+  previewMyTimeBankEntry,
+  reverseMyTimeBankEntry,
   timeBankDateRange,
 } from "./timeBank";
 import type { TimeBankImportRead } from "./timeBank";
@@ -51,5 +63,30 @@ describe("Banco de Horas — valores inteiros e datas", () => {
     expect(hasBlockingTimeBankImportIssues(batch)).toBe(true);
     expect(hasBlockingTimeBankImportIssues(batch, { "Pessoa sintética": "p-1" })).toBe(false);
     expect(hasBlockingTimeBankImportIssues({ ...batch, issues: [{ ...batch.issues[0], blocking: true }] }, { "Pessoa sintética": "p-1" })).toBe(true);
+  });
+
+  it("chama os endpoints self-service com o corpo e o caminho do contrato", async () => {
+    const body = {
+      work_date: "2026-10-16",
+      start_minute: 540,
+      end_minute: 840,
+      lunch_taken: true,
+    };
+    const preview = {
+      work_date: body.work_date,
+      calculation_mode: "standard",
+      balance_seconds: 1800,
+      warnings: [],
+      duplicate: false,
+    };
+    client.apiPost.mockResolvedValueOnce(preview).mockResolvedValueOnce({ id: "entry-1" }).mockResolvedValueOnce({ id: "reverse-1" });
+
+    await expect(previewMyTimeBankEntry(body)).resolves.toEqual(preview);
+    await expect(createMyTimeBankEntry(body)).resolves.toEqual({ id: "entry-1" });
+    await expect(reverseMyTimeBankEntry("entry/1", "Correção sintética")).resolves.toEqual({ id: "reverse-1" });
+
+    expect(client.apiPost).toHaveBeenNthCalledWith(1, "/api/time-bank/my-entries/preview", body);
+    expect(client.apiPost).toHaveBeenNthCalledWith(2, "/api/time-bank/my-entries", body);
+    expect(client.apiPost).toHaveBeenNthCalledWith(3, "/api/time-bank/my-entries/entry%2F1/reverse", { reason: "Correção sintética" });
   });
 });

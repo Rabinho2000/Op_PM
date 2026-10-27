@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api/client";
 import { makeMe } from "../test/fixtures";
@@ -218,6 +218,18 @@ describe("Banco de Horas", () => {
     expect(screen.getByText("16/10/2026")).toBeInTheDocument();
   });
 
+  it("não oferece a ação nem o importador a quem não tem permissão de gestão", async () => {
+    configureReader();
+    renderWithProviders(<IsolatedTimeBank />, {
+      me: makeMe({ person_id: "p-reader", display_name: "Pessoa Sintética", permissions: ["time_bank.view_all"] }),
+    });
+
+    await screen.findByText("Lançamentos (1)");
+    expect(screen.queryByRole("button", { name: "Importar Excel" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Importar Excel" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Ficheiro Excel")).not.toBeInTheDocument();
+  });
+
   it("não aplica preview com pessoa por mapear e só confirma depois do readback", async () => {
     const manager = makeMe({ permissions: ["time_bank.view_all", "time_bank.manage_all"] });
     api.listTimeBankPeople.mockResolvedValue([
@@ -245,23 +257,33 @@ describe("Banco de Horas", () => {
     api.getTimeBankImport.mockResolvedValue(applied);
 
     renderWithProviders(<IsolatedTimeBank />, { me: manager });
-    await screen.findByRole("button", { name: /importar excel/i });
-    const input = screen.getByLabelText(/ficheiro excel/i);
+    const openImport = await screen.findByRole("button", { name: "Importar Excel" });
+    expect(screen.queryByLabelText("Ficheiro Excel")).not.toBeInTheDocument();
+    expect(screen.queryByText("Anomalias e validações")).not.toBeInTheDocument();
+    openImport.focus();
+    fireEvent.click(openImport);
+    const importer = await screen.findByRole("dialog", { name: "Importar Excel" });
+    const input = within(importer).getByLabelText("Ficheiro Excel");
     const file = new File(["xlsx-sintético"], "horas-sinteticas.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     fireEvent.change(input, { target: { files: [file] } });
 
-    expect(await screen.findByText("Pessoa do Excel")).toBeInTheDocument();
-    expect(screen.getByText(/3 linhas de origem · 2 lançamentos · 1 em quarentena/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /aplicar importação/i })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText(/pessoa do excel/i), { target: { value: "p-two" } });
-    fireEvent.click(screen.getByRole("button", { name: /guardar mapeamento/i }));
+    expect(await within(importer).findByText("Pessoa do Excel")).toBeInTheDocument();
+    expect(within(importer).getByText(/3 linhas de origem · 2 lançamentos · 1 em quarentena/)).toBeInTheDocument();
+    expect(within(importer).getByRole("button", { name: /aplicar importação/i })).toBeDisabled();
+    fireEvent.change(within(importer).getByLabelText(/pessoa do excel/i), { target: { value: "p-two" } });
+    fireEvent.click(within(importer).getByRole("button", { name: /guardar mapeamento/i }));
     await waitFor(() => expect(api.resolveTimeBankImport).toHaveBeenCalledWith("import-1", { person_mapping: { "Pessoa do Excel": "p-two" } }));
-    await waitFor(() => expect(screen.getByRole("button", { name: /aplicar importação/i })).not.toBeDisabled());
+    await waitFor(() => expect(within(importer).getByRole("button", { name: /aplicar importação/i })).not.toBeDisabled());
 
-    fireEvent.click(screen.getByRole("button", { name: /aplicar importação/i }));
-    fireEvent.click(screen.getByRole("button", { name: /confirmar aplicação/i }));
+    fireEvent.click(within(importer).getByRole("button", { name: /aplicar importação/i }));
+    const confirmation = await screen.findByRole("dialog", { name: "Confirmar aplicação do Excel" });
+    fireEvent.click(within(confirmation).getByRole("button", { name: /confirmar aplicação/i }));
     await waitFor(() => expect(api.applyTimeBankImport).toHaveBeenCalledWith("import-1"));
     await waitFor(() => expect(api.getTimeBankImport).toHaveBeenCalledWith("import-1"));
+    expect(await within(importer).findByText("Importação aplicada")).toBeInTheDocument();
     expect(await screen.findByText(/importação aplicada: 2 lançamentos/i)).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Importar Excel" })).not.toBeInTheDocument());
+    expect(openImport).toHaveFocus();
   });
 });

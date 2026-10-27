@@ -21,6 +21,8 @@ from app.schemas.time_bank import (
     EntryReverse,
     ImportRead,
     ImportResolve,
+    MyEntryCreate,
+    MyEntryPreview,
     TimeBankPersonRead,
     TimeBankSummary,
 )
@@ -34,14 +36,17 @@ from app.services.time_bank_ledger import (
     apply_import,
     create_adjustment,
     create_entry,
+    create_my_entry,
     import_read,
     list_adjustments,
     list_entries,
     list_people,
     preview_import,
+    preview_my_entry,
     resolve_import,
     reverse_adjustment,
     reverse_entry,
+    reverse_my_entry,
     summary,
 )
 from app.services.time_bank_import import MAX_UPLOAD_BYTES, TimeBankImportError
@@ -141,6 +146,63 @@ def entries_endpoint(
     except SQLAlchemyError as exc:
         raise _storage_http_exception(exc) from exc
     return EntryPage(items=[EntryRead.model_validate(item) for item in items], total=total)
+
+
+@router.post("/my-entries/preview", response_model=MyEntryPreview)
+def preview_my_entry_endpoint(
+    body: MyEntryCreate,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> MyEntryPreview:
+    try:
+        return MyEntryPreview.model_validate(preview_my_entry(db, ctx, body))
+    except TimeBankError as exc:
+        raise _raise(exc)
+    except SQLAlchemyError as exc:
+        raise _storage_http_exception(exc) from exc
+
+
+@router.post("/my-entries", response_model=EntryRead, status_code=201)
+def create_my_entry_endpoint(
+    body: MyEntryCreate,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> EntryRead:
+    committed = False
+    try:
+        entry = create_my_entry(db, ctx, body)
+        response = EntryRead.model_validate(entry)
+        _commit(db)
+        committed = True
+        return response
+    except TimeBankError as exc:
+        _safe_rollback_before_commit(db, committed)
+        raise _raise(exc)
+    except SQLAlchemyError as exc:
+        _safe_rollback_before_commit(db, committed)
+        raise _storage_http_exception(exc) from exc
+
+
+@router.post("/my-entries/{entry_id}/reverse", response_model=EntryRead)
+def reverse_my_entry_endpoint(
+    entry_id: uuid.UUID,
+    body: EntryReverse,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> EntryRead:
+    committed = False
+    try:
+        entry = reverse_my_entry(db, ctx, entry_id, body.reason)
+        response = EntryRead.model_validate(entry)
+        _commit(db)
+        committed = True
+        return response
+    except TimeBankError as exc:
+        _safe_rollback_before_commit(db, committed)
+        raise _raise(exc)
+    except SQLAlchemyError as exc:
+        _safe_rollback_before_commit(db, committed)
+        raise _storage_http_exception(exc) from exc
 
 
 @router.post("/entries", response_model=EntryRead, status_code=201)

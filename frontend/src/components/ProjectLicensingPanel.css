@@ -1,0 +1,95 @@
+/* Separador "Licenciamento e comunicações" (ProjectLicensingPanel). */
+
+.licensing-panel__main,
+.licensing-panel__side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.licensing-state {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.licensing-state__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.licensing-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.licensing-steps__item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.licensing-steps__item--done {
+  color: inherit;
+  font-weight: 600;
+}
+
+.licensing-steps__label::before {
+  content: "○ ";
+}
+
+.licensing-steps__item--done .licensing-steps__label::before {
+  content: "● ";
+}
+
+.licensing-kv {
+  margin-top: 4px;
+}
+
+.secret-reveal {
+  margin: 12px;
+  padding: 12px;
+  border: 1px dashed var(--border, #c9c9c9);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.secret-reveal__head {
+  font-size: 0.95rem;
+}
+
+.secret-reveal__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.secret-reveal__row .input {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.secret-reveal__hint {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.secret-actions {
+  white-space: nowrap;
+}
+
+.secret-actions .btn + .btn {
+  margin-left: 4px;
+}

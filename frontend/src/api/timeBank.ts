@@ -35,6 +35,24 @@ export interface TimeBankSummary {
 
 export type TimeBankProvenance = TimeBankJsonObject;
 
+export interface TimeBankMyEntryCreateInput {
+  work_date: string;
+  start_minute: number;
+  end_minute: number;
+  lunch_taken: boolean;
+}
+
+export interface TimeBankMyEntryPreview {
+  work_date: string;
+  calculation_mode: string;
+  balance_seconds: number;
+  warnings: TimeBankWarning[];
+  duplicate: boolean;
+}
+
+export type MyTimeBankEntryCreateInput = TimeBankMyEntryCreateInput;
+export type MyTimeBankEntryPreview = TimeBankMyEntryPreview;
+
 export interface TimeBankEntryRead {
   id: string;
   person_id: string;
@@ -185,6 +203,15 @@ export const listTimeBankAdjustments = (filters: TimeBankFilters = {}) =>
 
 export const createTimeBankEntry = (payload: TimeBankEntryCreateInput) =>
   apiPost<TimeBankEntryRead>("/api/time-bank/entries", payload);
+
+export const previewMyTimeBankEntry = (payload: TimeBankMyEntryCreateInput) =>
+  apiPost<TimeBankMyEntryPreview>("/api/time-bank/my-entries/preview", payload);
+
+export const createMyTimeBankEntry = (payload: TimeBankMyEntryCreateInput) =>
+  apiPost<TimeBankEntryRead>("/api/time-bank/my-entries", payload);
+
+export const reverseMyTimeBankEntry = (entryId: string, reason: string) =>
+  apiPost<TimeBankEntryRead>(`/api/time-bank/my-entries/${encodeURIComponent(entryId)}/reverse`, { reason });
 
 export const reverseTimeBankEntry = (id: string, payload: { reason: string }) =>
   apiPost<TimeBankEntryRead>(`/api/time-bank/entries/${encodeURIComponent(id)}/reverse`, payload);

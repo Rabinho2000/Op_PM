@@ -14,6 +14,22 @@ class ProjectMini(BaseModel):
     missing_fields: list[str] = []
 
 
+class DashboardWorkProject(BaseModel):
+    id: uuid.UUID
+    name: str
+    expected_start_date: dt.date | None = None
+    pm_display_name: str | None = None
+    installer_display_name: str | None = None
+    team_display_name: str | None = None
+    next_task_title: str | None = None
+    next_task_due_date: dt.date | None = None
+
+
+class DashboardWorks(BaseModel):
+    construction: list[DashboardWorkProject]
+    preparation: list[DashboardWorkProject]
+
+
 class TaskMini(BaseModel):
     id: uuid.UUID
     title: str

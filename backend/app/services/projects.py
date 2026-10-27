@@ -35,6 +35,15 @@ from app.security.project_fields import PM_EDITABLE_PROJECT_FIELDS
 _STANDARD_TASK_TYPES = frozenset(code for code, _ in DEFAULT_TASK_TYPES)
 
 
+def _utc_isoformat(value: dt.datetime) -> str:
+    """Serializa datas em UTC também quando SQLite remove o tzinfo ao ler."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=dt.timezone.utc)
+    else:
+        value = value.astimezone(dt.timezone.utc)
+    return value.isoformat()
+
+
 @dataclasses.dataclass
 class ProjectTaskSummary:
     """Indicadores de tarefas de um projeto, para a lista/detalhe de
@@ -131,8 +140,9 @@ PROJECT_LIST_ORDER = (
 def visible_projects_query(db: Session, ctx: AuthContext) -> Query:
     """Restringe a query à visibilidade do utilizador — nunca devolve tudo
     e filtra depois em Python (evita esquecer o filtro nalgum sítio)."""
+    query = db.query(Project).filter(Project.deleted_at.is_(None))
     if ctx.has_permission("project.view_all"):
-        return db.query(Project)
+        return query
 
     conditions = []
     if ctx.has_permission("project.view_own"):
@@ -141,9 +151,9 @@ def visible_projects_query(db: Session, ctx: AuthContext) -> Query:
         conditions.append(Project.pm_person_id.in_(ctx.delegating_pm_ids))
     conditions.extend(installer_project_scope_conditions(ctx))
     if conditions:
-        return db.query(Project).filter(or_(*conditions))
+        return query.filter(or_(*conditions))
     # Sem nenhuma das permissões, ou sem delegações/associações atribuídas: nada visível.
-    return db.query(Project).filter(False)
+    return query.filter(False)
 
 
 def list_projects(
@@ -183,6 +193,60 @@ def list_projects(
 def get_visible_project(db: Session, ctx: AuthContext, project_id: uuid.UUID) -> Project | None:
     """Read a project through the same SQL scope used by list endpoints."""
     return visible_projects_query(db, ctx).filter(Project.id == project_id).one_or_none()
+
+
+def delete_project(db: Session, *, project: Project, reason: str, ctx: AuthContext) -> Project:
+    """Remove um projeto da operação sem apagar os seus dados nem o histórico."""
+    ctx.require("project.delete")
+    note = reason.strip()
+    if not note:
+        raise ValueError("Indique o motivo da remoção.")
+    if project.deleted_at is not None:
+        raise ValueError("O projeto já está apagado.")
+    deleted_at = dt.datetime.now(dt.timezone.utc)
+    record_project_change(
+        db,
+        project_id=project.id,
+        field_name="deleted_at",
+        old_value=None,
+        new_value=deleted_at.isoformat(),
+        source="ui",
+        changed_by_person_id=ctx.person_id,
+        note=note,
+    )
+    project.deleted_at = deleted_at
+    project.deleted_by_person_id = ctx.person_id
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+def restore_project(db: Session, *, project: Project, ctx: AuthContext) -> Project:
+    """Restaura um projeto apagado, preservando a auditoria de ambas ações."""
+    ctx.require("project.restore")
+    if project.deleted_at is None:
+        raise ValueError("O projeto não está apagado.")
+    deleted_at = project.deleted_at
+    deleted_by_person_id = project.deleted_by_person_id
+    for field_name, old_value in (
+        ("deleted_at", _utc_isoformat(deleted_at)),
+        ("deleted_by_person_id", str(deleted_by_person_id) if deleted_by_person_id else None),
+    ):
+        record_project_change(
+            db,
+            project_id=project.id,
+            field_name=field_name,
+            old_value=old_value,
+            new_value=None,
+            source="ui",
+            changed_by_person_id=ctx.person_id,
+            note="Restauro do projeto via API.",
+        )
+    project.deleted_at = None
+    project.deleted_by_person_id = None
+    db.commit()
+    db.refresh(project)
+    return project
 
 
 def update_project(

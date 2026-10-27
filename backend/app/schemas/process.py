@@ -54,6 +54,7 @@ class ProcessStageRead(BaseModel):
     end_day: int | None
     planned_start: dt.date | None
     planned_end: dt.date | None
+    completed_at: dt.datetime | None = None
     # done | overdue | active | upcoming | no_date | pending (projeto já entregue)
     status: str
     can_update: bool

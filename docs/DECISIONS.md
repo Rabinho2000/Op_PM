@@ -3541,3 +3541,310 @@ Verificado no snapshot local não publicado:
 - testes focados de API e migração SQLite: 7 aprovados;
 - migração SQLite `upgrade head → downgrade f3b5d7e9a1c2 → upgrade head`: exits 0;
 - não houve commit, push, deploy, restart ou alteração da produção.
+
+## D-101 — Pedidos à equipa (chat) e jornada própria no Banco de Horas
+
+**Pedidos.** Qualquer utilizador autenticado (`requests.create`) abre pedidos a
+partir de um botão flutuante; cada pedido é um fio (`user_requests` +
+`user_request_messages`, append-only) com estado `open|resolved`. Quem tem
+`requests.manage` (Administrador e Chefe de Operações — por permissão, nunca por
+nome) vê todos, responde, resolve e reabre numa caixa `/requests` com contagem
+de abertos. O autor só vê os seus pedidos (404 nos alheios) e uma resposta
+sua num pedido resolvido reabre-o. Limite de 20 pedidos abertos por autor;
+respostas sem emails.
+
+**Banco de Horas self-service.** Permissão `time_bank.log_own` (todos os papéis
+com `time_bank.view_own`). `POST /api/time-bank/my-entries` (+ `/preview` e
+`/{id}/reverse`) deriva a pessoa do contexto e o modo de cálculo da data
+(seg–sex `standard`, sábado `saturday` ×1,5); domingo recusado (só Chefe/Admin,
+modo manual); data futura recusada; um lançamento ativo por pessoa/dia (409).
+Entra logo no saldo, avisos de limites mantêm-se (não bloqueiam); correção só
+por anulação compensatória, e o utilizador só anula os seus lançamentos
+`provenance.source = self_service`. Serviço único de cálculo
+(`calculate_work_seconds`) — a pré-visualização é feita pelo servidor.
+
+Migrações `b5e7a9c1d3f4` (permissões/grants rastreados, no-op em base vazia,
+downgrade só remove o que criou) e `c6f8b0d2e4a5` (tabelas dos pedidos), sobre
+`a1c3e5f7b9d0`.
+
+Verificado no snapshot local: pytest SQLite 1131 passed / 11 skipped; focados
+(self-service, pedidos, API do Banco de Horas) em PostgreSQL 16: 38 passed;
+migração `upgrade → downgrade -1 → upgrade` em SQLite e PostgreSQL com exit 0;
+Vitest 453 passed; lint, `tsc` e build verdes.
+
+## D-102 — Frontend do dimensionamento de cabos: ferramenta embebida e alocada ao projeto
+
+A ferramenta de dimensionamento (página única com motor JS validado) é
+**embebida num iframe `sandbox="allow-scripts allow-downloads"` sem
+`allow-same-origin`** e fala com o shell React por `postMessage` (protocolo
+versão 1: `cable:ready/init/dirty/snapshot-request/snapshot/snapshot-saved/error`).
+A ferramenta nunca grava: o shell pede um snapshot e grava por
+`/api/cable-designs` (D-100) com `expected_version`; aprovar = guardar +
+`approve` (409 se houver circuitos a rever); revisão aprovada abre só em
+leitura. Um estudo pertence sempre a um projeto: separador «Cabos» no detalhe
+do projeto e editor em `/projects/:projectId/cables/:designId`, pré-preenchido
+com nome, cliente e morada.
+
+O motor, os preços e os catálogos comerciais **não estão no Git**: a ferramenta
+compilada (sem CDN, bibliotecas inline) vive num ficheiro privado
+(`CABLE_TOOL_FILE`) montado só em leitura no backend e é servida por
+`GET /api/cable-tool` (`{engine_version, sha256, html}`, `no-store`) apenas a
+quem tem a nova capability `cable_design.view_costs` (administrador, chefe de
+operações, PM; migração `d7a9c1e3f5b6`). `suporte_operacoes` mantém só
+`cable_design.view`: vê lista, revisões e histórico, não abre a ferramenta.
+Risco aceite: os preços chegam ao browser de quem tem `view_costs`. O `result`
+guardado em BD não contém custos. Sem importação de `.json` da ferramenta antiga
+nem equipamentos editáveis pela equipa; estados/«em obra»/partilha da ferramenta
+original ficam fora (o Op_PM já tem projeto, ciclo de vida, versões e histórico).
+
+Verificado: ver validação do snapshot; browser real (iframe + bridge) com criação
+pré-preenchida, gravação (versão e hash novos), recarregamento, aprovação, leitura
+apenas e nova revisão B; testes do motor 28/28 e do modo embed (inclui download
+de PDF/DXF dentro do sandbox).
+
+## D-103 — Ações rápidas em projetos, processo e fornecedores
+
+A lista de Projetos reutiliza o controlo de ciclo de vida do detalhe, mostrando a
+edição apenas quando a API fornece a autorização correspondente e mantendo a
+confirmação, o PATCH e a mensagem de erro do detalhe. O Processo acrescenta uma
+operação transacional para marcar ou desmarcar todas as subtarefas de uma etapa:
+a permissão é verificada antes das escritas e cada alteração gera o mesmo registo
+de histórico da operação individual. A lista de Fornecedores abre o detalhe
+completo já devolvido pela API num modal acessível, com dados gerais, tipos,
+materiais, contactos e notas, fechável por Escape ou clique fora.
+
+Estas alterações não exigem migração nem alteram regras de visibilidade. A UI usa exclusivamente
+flags e dados devolvidos pela API para decidir a disponibilidade dos controlos.
+
+Os indicadores de chefia de tarefas concluídas usam `Task.completed_at` como
+única data factual, convertem o instante para `Europe/Lisbon` antes de obter a
+semana ISO e agrupam pelo PM responsável do projeto. A vista chama a capacidade
+já usada por Performance/metas e intersecta `visible_tasks_query` com
+`visible_projects_query`; projetos inativos/removidos logicamente ficam fora.
+Tarefas sem `completed_at` nunca são inferidas a partir de `updated_at`. A
+resposta inclui o detalhe de cada tarefa (ID, título, projeto e timestamp) e
+conta separadamente as `ProjectSubtaskProgress` fechadas com `done_at` fiável;
+registos sem essa data não entram no histórico semanal.
+
+Cada etapa concluída do Processo expõe `completed_at` apenas quando todas as
+suas subtarefas estão feitas e têm `done_at`; o valor é a data da última
+subtarefa que a completou. A interface mostra essa data e oferece o filtro
+«Etapas fechadas», sem criar tabela ou decidir permissões no cliente.
+
+## D-104 — Alertas de etapas do processo (subscrição e notificações in-app)
+
+Cada utilizador com `process_alert.use` (admin, chefe, PM, comercial, financeiro, suporte; não instalador) subscreve etapas do catálogo. O PUT `/api/me/process-alerts/subscriptions` substitui o conjunto completo do próprio utilizador (idempotente). Quando uma etapa transita de incompleta para completa (flush + verificação antes do commit em `set_subtask_done` / `set_stage_subtasks_done`), é criada uma notificação para cada subscritor ativo que: não é o ator, tem a permissão, não é instalador externo e pode ver o projeto. Listagem, contagem, marcar lida e marcar todas são sempre re-filtradas pela visibilidade atual do projeto; id alheio devolve 404; instalador externo recebe 403.
+
+UI: o sino do cabeçalho (`ProcessAlertBell`) mostra a contagem de não lidas, faz polling de 60 s apenas com a aba visível, lista as últimas notificações, liga a `/projects/{project_id}` e permite marcar uma ou todas como lidas. Se a API responder 403, o sino não é renderizado. A página «Alertas» (`/alerts`) grava subscrições por fase com checkbox (PUT) e mostra o histórico com filtro «só não lidas». Nenhuma decisão de permissão é tomada no cliente.
+
+## D-105 — Licenciamento e comunicações: SIM, UPAC, credenciais cifradas e contratos de excedente
+
+O separador de licenciamento e comunicações do projeto ganha quatro blocos no
+backend. Contrato da API para o frontend em `docs/PLANO_LICENCIAMENTO_SIM.md`.
+
+**Comunicações (SIM).** `project_communication_data` acrescenta `whereversim_login`
+(identificador de utilizador, texto — não é segredo), `operator_verified` e
+`operator_verified_date`. Continua sem PIN, PUK, password ou token nesta tabela.
+
+**Licenciamento.** `project_licensing_data` acrescenta `provisional_certificate_date`.
+O estado (`licensing_state`) é **derivado na leitura**, não guardado: a etapa mais
+avançada com data preenchida, por ordem `cadastrado` → `certificacao_pedida` →
+`inspecionado` → `certificado_provisorio` → `certificado_definitivo`, ou
+`sem_registo`. Não há dois sítios a divergir.
+
+**Credenciais de portais (0..n por projeto).** Tabela `project_portal_credentials`.
+A password é cifrada com Fernet (`app/security/secret_box.py`); a chave vem do
+ficheiro indicado por `OPPM_SECRETS_KEY_FILE` (nunca um valor inline, nunca no repo).
+Decisões:
+- Falha fechada: sem chave, ficheiro ilegível ou chave inválida, gravar ou revelar
+  uma password responde 503 e não grava nada em claro.
+- Nenhuma leitura de lista/detalhe/edição devolve a password: só `has_password`.
+- Só `POST .../credentials/{id}/reveal` devolve a password, com permissão própria
+  (`project.credentials.reveal`). Antes de devolver, regista no histórico
+  `field_name=password_revealed` com `changed_by_person_id` e `changed_at`, **sem valor**.
+  Se o registo falhar, a password não sai.
+- O histórico de alteração de password regista só `password` com o marcador
+  `[definida]` e a nota «password alterada» / «password removida».
+- Remoção lógica: `deleted_at` preenchido e `password_encrypted` posto a NULL no mesmo passo.
+- Permissões `project.credentials.edit` e `project.credentials.reveal`, concedidas a
+  `administrador`, `chefe_operacoes` e `project_manager`. Visibilidade da lista:
+  `project.view_communication_data` (mesmo âmbito do M2M).
+- Erros de validação destas rotas respondem 422 `{"detail": "Corpo inválido."}` sem
+  eco do corpo, via `app/api/no_echo_route.py` (`NoEchoRoute`). Aplicado também aos
+  contratos de excedente, porque também podem transportar texto sensível.
+
+**Contratos de venda de excedente (0..n por projeto).** Tabela
+`project_surplus_contracts`, com remoção lógica e histórico por registo
+(`record_id`). Leitura: `project.view_licensing_data`; escrita:
+`project.edit_licensing_data` com o âmbito de edição do projeto (ou delegação).
+
+**Histórico.** `project_data_history` ganha `record_id` (nulo nas entidades 1:1).
+`entity_type` aceita `credential` e `surplus`; cada um exige a permissão de leitura
+da sua entidade.
+
+**Migração.** `b2d4f6a8c0e1` (revises `e9b1d3f5a7c8`). Upgrade/downgrade/upgrade
+provados em SQLite (`tests/test_licensing_state.py`). Quem não tem papéis ainda
+(BD antes do seed) não recebe concessões: o seed concede. O downgrade remove só o
+que a migração criou, via `project_credentials_permission_provisioning`.
+
+**Ajuste em testes existentes.** Em `test_client_report_permissions_migration.py`, os
+dois `upgrade("head")` que afirmavam a versão passaram a `upgrade(THIS_REVISION)`
+(`e9b1d3f5a7c8`), porque a head passou a ser `b2d4f6a8c0e1`. Nenhuma asserção de
+permissões mudou.
+
+**Fora de âmbito.** Frontend; UPAC como campo de licenciamento existente, sem alteração
+de modelo; rotação de chave Fernet (um re-cifrar futuro, sem migração agora).
+
+**Resolução de projeto no importador SIM.** No layout `sim_v1`, o nº do Excel é
+ligado pelo prefixo numérico `^\s*(\d+)_` do `ProjectExternalId.external_id`
+com origem `solcor_nomenclatura_xlsx`; a correspondência do número é exata e não
+confunde prefixos como `12` e `123`. Só projetos ativos contam, e várias
+nomenclaturas do mesmo `project_id` contam como um projeto. Um projeto liga, zero
+são reportados como não encontrados e mais de um como ambíguo (apenas número e
+quantidade), sem aplicar essa linha. A presença de uma nomenclatura correspondente
+bloqueia o fallback, mesmo quando só existem projetos inativos ou quando os ativos
+são ambíguos. `legacy_excel_licensing` é fallback exato apenas na ausência de
+qualquer correspondência de nomenclatura. O layout legado mantém a resolução
+inalterada. Os mapas são carregados uma vez por execução; ver também
+`docs/DATA_IMPORTS.md`, secção 2b.
+
+## D-107 — Painel principal: mapa e obras a decorrer/próximas
+
+O topo de `/` apresenta as obras em construção e em preparação, antes dos
+indicadores e blocos existentes do painel. `GET /api/dashboard/works` devolve
+duas listas agregadas, sempre derivadas de `visible_projects_query`, apenas
+para projetos ativos e para os códigos de ciclo de vida `construcao` e
+`preparacao`. A lista em preparação ordena por início previsto (data da janela
+da obra; na ausência, data de início do projeto; sem data no fim). Cada linha
+inclui PM, equipa/instalador e a tarefa aberta com prazo mais próximo (sem
+prazo no fim; estados concluído/cancelado não contam). Não há migração.
+
+O mapa compacto só é pedido/renderizado com `map.view`; reutiliza `/api/map/data`
+e o componente Leaflet partilhado com a página Mapa. Mostra projetos visíveis
+ativos com coordenadas em construção/preparação, com cores de ciclo de vida
+distintas e clique para abrir o projeto. Sem provider de tiles mantém o aviso
+de fallback existente; a falta de `map.view` não oculta as duas listas. Em
+ecrãs estreitos, mapa e listas empilham-se. Os restantes blocos do painel
+mantêm-se abaixo, sem alteração ao seu cálculo de tarefas.
+
+## D-106 — Inventários separados por proprietário (Solcor e Verde Milenar)
+
+O stock é separado por proprietário; os artigos do catálogo continuam partilhados.
+Cada localização tem um `owner` (`solcor` ou `verde_milenar`). A migração
+`d4f6b8c0e2a3` preenche localizações existentes com `solcor` e cria a central
+por proprietário. Cada inventário mantém a sua própria localização central e os
+totais nunca são somados entre proprietários. Transferências entre proprietários
+são recusadas com HTTP 400. O downgrade falha fechado, sem alterar o schema,
+quando existem duas centrais ativas, pois a regra anterior só admite uma central.
+
+## D-108 — Ficha de segurança por projeto
+
+Cada projeto tem uma ficha de segurança 1:1 (`project_safety_sheets`) com
+versão otimista, trabalhadores em registos ligados a `Person` quando existe
+referência (mais nome snapshot), e histórico append-only por versão. A edição
+usa `expected_version`; versão desatualizada devolve 409. O preenchimento
+inicial dos trabalhadores combina chefes das equipas atribuídas e pessoas com
+associação ativa aos instaladores atribuídos; a lista continua editável.
+
+Leitura e impressão seguem a visibilidade do projeto. A escrita exige
+`can_edit_project` ou `project.safety_sheet.edit` e mantém o âmbito de leitura;
+a capacidade é provisionada para administrador, chefe, PM e suporte de
+operações. A impressão é HTML A4 escapado, sem geração PDF no servidor — o
+browser faz «Imprimir / Guardar como PDF». Contrato em
+`docs/PLANO_FICHA_SEGURANCA.md`; migração `e5a7c9d1f3b4` após
+`d4f6b8c0e2a3`.
+
+## D-109 — Apagar projetos (remoção lógica e restauro)
+
+- Apagar é sempre lógico: `projects.deleted_at` / `deleted_by_person_id`; nunca se apaga fisicamente. Motivo obrigatório, registado em `project_history`.
+- `project.delete` (administrador, chefe_operacoes) e `project.restore` (administrador), provisionadas pela migração `f6b8d0e2a4c5`. Flags `can_delete` / `can_restore` calculadas no servidor.
+- Projeto apagado sai de listas, detalhe (404), mapa, calendário, painel, tarefas, inventário, pedidos de material, metas/indicadores, relatórios de cliente, alertas, ocupação de equipas e avisos de ausências.
+- Importações (notas, SIM/credenciais, licenciamento) nunca escrevem num projeto apagado nem criam um duplicado dele: a linha fica indisponível e exige novo preview. A criação na importação de notas é serializada entre lotes (lock transacional em PostgreSQL).
+- Histórico de um projeto apagado é consultável só com `project.restore`. Restaurar devolve o projeto a todos os caminhos.
+
+## D-110 — Feriados no calendário de férias
+
+A tabela `holidays` guarda data, nome, âmbito (`nacional`, `municipal` ou
+`empresa`) e estado ativo. A migração `a7c9e1f3b5d6` (sobre
+`e5a7c9d1f3b4`) cria os feriados nacionais fixos e móveis de Portugal para
+2025–2030, calculando a Páscoa pelo computus gregoriano; o downgrade remove a
+semente e apenas as permissões/grants que a migração provisionou. Todos os
+utilizadores internos autenticados podem consultar feriados; `holiday.manage`
+é concedida a administrador e chefe de operações para gerir registos.
+
+O calendário de férias mostra feriados ativos com cor própria, nome acessível
+e tooltip. Os aniversários já fornecidos pelo dashboard continuam visíveis na
+grelha com apresentação distinta e legenda. A gestão permite acrescentar
+feriados municipais/da empresa, desativar e reativar registos. Esta alteração
+não muda cálculos de dias úteis: se essa regra for aprovada numa fase futura,
+os pontos a rever são `services/installers.py:business_day` (usado também por
+`services/process.py`, `services/planning.py` e `services/my_process.py`) e as
+regras de dias da semana do Banco de Horas em `services/time_bank.py` e
+`services/time_bank_ledger.py`.
+
+**Verificado:** computus, seed nacional, listagem por intervalo, permissões,
+remoção lógica e migração up/down/up. Backend completo: 1355 passed, 13
+skipped; Vitest: 594 passed; `tsc` e build terminam com exit 0.
+
+## D-111 — Trabalho concluído por semana no relatório de cliente
+
+O relatório automático do projeto e a pré-visualização mostram «Trabalho
+concluído», agrupado por semana ISO em Europe/Lisbon, com datas locais. A
+agregação reutiliza `services/performance.py:completed_tasks_by_week`: inclui
+apenas tarefas `done` com `completed_at`, pontos de contacto de etapas com
+`contact_done_at` e subtarefas `done` com `done_at`; `updated_at` nunca prova
+uma conclusão. O âmbito é só o projeto do relatório.
+
+O período começa no último envio bem-sucedido (`sent_at`); antes do primeiro
+envio usa-se a janela existente de sete dias. Sem registos, a secção indica
+«Sem trabalho concluído neste período». O modelo `Task` não tem flag de
+visibilidade/interno; por isso, as tarefas expõem exclusivamente título e data,
+sem notas, responsáveis ou custos. Títulos são escapados como HTML. Não é
+necessária migração.
+
+## D-112 — Fotografia principal por instalação
+
+Cada projeto pode ter uma única fotografia principal, substituível e removível.
+Os bytes ficam em `PROJECT_PHOTO_DIR`, por omissão `/app/data/project_photos`
+(no volume de dados já montado), com override por ambiente para testes. A BD
+armazena apenas nome UUID e tipo detetado; nomes enviados pelo cliente nunca
+entram no caminho. Aceitam-se JPEG/PNG/WebP por assinatura binária, até 10 MB.
+A leitura e escrita usam endpoint autenticado: ver exige âmbito de projeto;
+carregar/remover exige `can_edit_project` (PM atribuído, chefe ou administrador).
+Uploads/substituições/remoções acrescentam uma entrada `photo_primary` a
+`project_history`; o ficheiro anterior só é removido depois do commit.
+
+Pillow não está no `backend/.venv` nem em `requirements.txt`, pelo que não se
+adiciona dependência: EXIF/GPS permanece no ficheiro original. Não se gera
+miniatura nem se pede uma imagem por projeto na listagem; a foto aparece apenas
+no detalhe para evitar N pedidos adicionais. O endpoint de leitura envia
+`nosniff` e `Cache-Control: private`.
+
+## D-113 — Categorias e pesquisa no inventário
+
+O catálogo apresenta artigos agrupados pela lista canónica devolvida por
+`GET /api/inventory/categories` (requer `inventory.view`): Painéis,
+Inversores, Baterias, Estruturas, Cabos DC, Cabos AC, Proteções/Quadros,
+Conectores, Monitorização/Comunicação, Consumíveis e Outros. O campo
+`InventoryItem.category` permanece texto nullable, não enum na base de dados;
+`null` é apresentado como «Sem categoria» e agrupado em «Outros/Sem
+categoria». Categorias antigas não incluídas na lista também ficam nesse grupo,
+mas o valor original continua visível e não é reescrito por migração nem por
+leitura. A validação de novas categorias normaliza acentos e maiúsculas, sem
+alterar valores já guardados.
+Aliases legados explícitos (ex. «Cabo DC» → «Cabos DC») normalizam novas entradas e agrupam no frontend; um PATCH aceita uma categoria histórica desconhecida apenas quando mantém o valor guardado.
+
+A pesquisa no cliente aplica-se a nome, SKU, categoria, fabricante/modelo se
+algum dia forem fornecidos, ignora diferenças de acentuação e abre as secções
+com resultados. O estado recolhido/expandido persiste em `localStorage`; a opção
+para esconder categorias vazias só remove grupos sem artigos, sem alterar o
+catálogo. Os artigos e movimentos continuam filtrados pelo proprietário
+selecionado; saldos por localização são calculados no servidor a partir dos
+movimentos e devolvidos por artigo (`location_stocks`), sem misturar
+proprietários. Movimentos antigos sem localização são preservados como
+«Sem localização (legado)» nos cálculos aplicáveis.
+
+A secção de Painéis mostra stock físico por localização, mas o modelo atual de
+`InventoryItem`/`InventoryItemRead` não tem potência nominal (Wp), fabricante
+nem modelo. A interface assinala estas ausências em vez de inventar valores;
+a tabela poderá apresentar esses dados quando forem adicionados ao modelo/API.

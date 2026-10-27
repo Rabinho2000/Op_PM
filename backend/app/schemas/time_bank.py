@@ -32,6 +32,15 @@ class EntryCreate(BaseModel):
     reason: str | None = Field(default=None, max_length=2000)
 
 
+class MyEntryCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    work_date: dt.date
+    start_minute: StrictInt = Field(ge=0, le=1439)
+    end_minute: StrictInt = Field(ge=1, le=1440)
+    lunch_taken: StrictBool
+
+
 class EntryReverse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -105,6 +114,14 @@ class AdjustmentPage(BaseModel):
 class SummaryWarning(BaseModel):
     code: str
     message: str
+
+
+class MyEntryPreview(BaseModel):
+    work_date: dt.date
+    calculation_mode: Literal["standard", "saturday"]
+    balance_seconds: int
+    warnings: list[SummaryWarning]
+    duplicate: bool
 
 
 class TimeBankSummaryPerson(BaseModel):

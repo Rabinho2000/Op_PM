@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { ApiError, listSupplierMaterialTypes, listSuppliers, Supplier, SupplierFilters, SupplierMaterialType } from "../api/client";
 import Icon from "../components/Icon";
 import SupplierFormModal from "../components/SupplierForm";
+import SupplierDetailModal from "../components/SupplierDetailModal";
 import { useToast } from "../components/Toast";
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader } from "../components/ui";
 import { useSession } from "../session/SessionContext";
@@ -38,6 +39,7 @@ export default function Suppliers() {
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [editing, setEditing] = useState<Supplier | "new" | null>(null);
+  const [detail, setDetail] = useState<Supplier | null>(null);
 
   useEffect(() => {
     listSupplierMaterialTypes()
@@ -68,7 +70,7 @@ export default function Suppliers() {
   const knownTypeNames = useMemo(() => types.map((t) => t.name), [types]);
 
   return (
-    <>
+    <div className="suppliers-page">
       <PageHeader
         title="Fornecedores"
         subtitle="Contactos, materiais e localização dos fornecedores."
@@ -165,7 +167,14 @@ export default function Suppliers() {
                   {suppliers.map((s) => (
                     <tr key={s.id}>
                       <td>
-                        <span className="cell-title">{s.name}</span>
+                        <button
+                          type="button"
+                          className="link-button cell-title"
+                          onClick={() => setDetail(s)}
+                          aria-label={`Ver detalhe de ${s.name}`}
+                        >
+                          {s.name}
+                        </button>
                         <span className="cell-sub">
                           {s.website && (
                             <a href={s.website} target="_blank" rel="noreferrer noopener">
@@ -246,6 +255,8 @@ export default function Suppliers() {
         )}
       </div>
 
+      {detail && <SupplierDetailModal supplier={detail} onClose={() => setDetail(null)} />}
+
       {editing !== null && (
         <SupplierFormModal
           supplier={editing === "new" ? null : editing}
@@ -258,6 +269,6 @@ export default function Suppliers() {
           }}
         />
       )}
-    </>
+    </div>
   );
 }
