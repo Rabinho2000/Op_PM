@@ -1,5 +1,6 @@
 import { Badge, Card, EmptyState } from "../../../components/ui";
 import type { CabosEngine, CircuitRow, Result, State } from "../engine";
+import type { CableStudyUpdater } from "../useCableStudy";
 import { moneyPt, numberPt, resultCircuitForRow } from "./utils";
 
 interface ResultsTableProps {
@@ -7,6 +8,8 @@ interface ResultsTableProps {
   result: Result;
   rows: readonly CircuitRow[];
   engine: CabosEngine;
+  readOnly: boolean;
+  apply: (updater: CableStudyUpdater, options?: { debounce?: boolean }) => void;
 }
 
 function cableCell(row: CircuitRow) {
@@ -33,8 +36,9 @@ function breakerCell(row: CircuitRow) {
   );
 }
 
-export default function ResultsTable({ state, result, rows, engine }: ResultsTableProps) {
+export default function ResultsTable({ state, result, rows, engine, readOnly, apply }: ResultsTableProps) {
   const resultRows = rows.filter((row) => row.kind === "inv" || row.kind === "perc");
+  const manualCableCircuits = engine.views.manualCableOptions?.(state, result).circuits ?? [];
   const reviewCount = resultRows.filter((row) => row.verdict === "a rever").length;
 
   return (
@@ -64,6 +68,13 @@ export default function ResultsTable({ state, result, rows, engine }: ResultsTab
                 {resultRows.map((row, index) => {
                   const circuit = resultCircuitForRow(result, row);
                   const review = row.verdict === "a rever";
+                  const manualCircuit = manualCableCircuits.find((item) => item.kind === row.kind && item.code !== null && item.code === row.code)
+                    ?? (manualCableCircuits[index]?.kind === row.kind ? manualCableCircuits[index] : undefined);
+                  const selectedOption = manualCircuit?.options.find((option) => option.value === manualCircuit.selected);
+                  const selectionLabel = manualCircuit?.selected === "auto"
+                    ? "Automático (motor)"
+                    : selectedOption?.label ?? "Seleção manual atual não disponível";
+                  const displayedSelection = manualCircuit && (manualCircuit.selected === "auto" || selectedOption) ? manualCircuit.selected : "";
                   return (
                     <tr key={`${row.code ?? "circuit"}-${index}`} className={review ? "row--danger" : undefined}>
                       <td data-label="Circuito">
@@ -74,7 +85,33 @@ export default function ResultsTable({ state, result, rows, engine }: ResultsTab
                         <span>{row.origin} → {row.destination}</span>
                         <span className="cell-sub">{numberPt(row.lengthM, " m", 1)}{row.calculationLengthM !== row.lengthM ? ` · cálculo ${numberPt(row.calculationLengthM, " m", 1)}` : ""}</span>
                       </td>
-                      <td data-label="Cabo escolhido">{cableCell(row)}</td>
+                      <td data-label="Cabo escolhido">
+                        {cableCell(row)}
+                        {manualCircuit && (
+                          <select
+                            className="select"
+                            aria-label={`Selecionar cabo do circuito ${row.code ?? `C${index + 1}`} — estado atual: ${selectionLabel}`}
+                            value={displayedSelection}
+                            disabled={readOnly}
+                            onChange={(event) => {
+                              if (readOnly) return;
+                              apply((current) => engine.actions.setManualCable(current, {
+                                kind: manualCircuit.kind,
+                                id: manualCircuit.id,
+                                value: event.target.value,
+                              }));
+                            }}
+                          >
+                            {displayedSelection === "" && <option value="" disabled>Seleção atual não disponível</option>}
+                            <option value="auto">Automático (motor)</option>
+                            {manualCircuit.options.filter((option) => option.value !== "auto").map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}{option.meetsRequirements ? "" : " · Não cumpre requisitos"}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </td>
                       <td data-label="Iz" className="nowrap">{numberPt(row.Iz, " A", 1)}</td>
                       <td data-label="In" className="nowrap">{numberPt(row.In, " A", 1)}</td>
                       <td data-label="I2" className="nowrap">{numberPt(row.I2, " A", 1)}</td>

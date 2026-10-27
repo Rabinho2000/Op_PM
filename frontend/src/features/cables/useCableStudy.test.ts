@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { CableDesign } from "../../api/cableDesigns";
 import type { CabosEngine, Result, State } from "./engine";
@@ -85,27 +85,78 @@ const design = (input: Record<string, unknown> = {}): CableDesign => ({
   },
 });
 
+function requireDraftStore(store: Awaited<ReturnType<typeof initializeCableStudy>>) {
+  if (!store) throw new Error("Esperava store para revisão em rascunho.");
+  return store;
+}
+
 describe("store do estudo de cabos", () => {
   it("pré-preenche um estudo novo e resolve imediatamente", async () => {
     const store = await initializeCableStudy(fakeEngine, design(), makeProject({ name: "Projeto Sintético", client_name: "Cliente Sintético", address: "Morada Sintética" }));
     expect(fakeEngine.newState).toHaveBeenCalled();
-    expect(store.state.proj).toBe("Projeto Sintético");
-    expect(store.state.obra.cliente).toBe("Cliente Sintético");
-    expect(store.state.obra.morada).toBe("Morada Sintética");
+    expect(store?.state.proj).toBe("Projeto Sintético");
+    expect(store?.state.obra.cliente).toBe("Cliente Sintético");
+    expect(store?.state.obra.morada).toBe("Morada Sintética");
     expect(fakeEngine.solve).toHaveBeenCalledTimes(1);
-    expect(store.dirty).toBe(false);
+    expect(store?.dirty).toBe(false);
+  });
+
+  it("não calcula uma revisão aprovada ao inicializar o estudo", async () => {
+    const solve = vi.spyOn(fakeEngine, "solve");
+    solve.mockClear();
+    const approved = {
+      ...design({ state: baseState }),
+      status: "aprovado",
+      revision: {
+        ...design().revision,
+        status: "aprovada",
+        result_json: {
+          format: 1,
+          engine_version: "historico@3",
+          circuits: [{ code: "OLD-1", name: "Circuito histórico", review: false }],
+          totals: { circuits: 1, review: 0, inverters: 1 },
+        },
+      },
+    };
+
+    const store = await initializeCableStudy(fakeEngine, approved, null);
+
+    expect(store).toBeNull();
+    expect(fakeEngine.solve).not.toHaveBeenCalled();
+    expect(fakeEngine.migrate).not.toHaveBeenCalled();
   });
 
   it("migra uma revisão existente sem pré-preencher por cima", async () => {
     const existing = { ...baseState, proj: "Estado guardado", obra: { ...baseState.obra, cliente: "Cliente guardado" } };
-    const store = await initializeCableStudy(fakeEngine, design({ state: existing }), makeProject({ name: "Outro projeto" }));
+    const store = requireDraftStore(await initializeCableStudy(fakeEngine, design({ state: existing }), makeProject({ name: "Outro projeto" })));
     expect(fakeEngine.migrate).toHaveBeenCalledWith(existing);
     expect(store.state.proj).toBe("Estado guardado");
     expect(store.state.obra.cliente).toBe("Cliente guardado");
   });
 
+  it("inicializa passagens e atribuições migradas pela revisão legada no hook", async () => {
+    const legacy = {
+      ...baseState,
+      invs: [{ ...baseState.invs[0], id: 1, est: "Esteira antiga" }],
+    };
+    const migrated = {
+      ...legacy,
+      rts: [{ ...baseState.rInv, id: 7, nome: "Esteira migrada" }],
+      rtV: 2 as const,
+      invs: [{ ...legacy.invs[0], rtId: 7 }],
+    };
+    vi.spyOn(fakeEngine, "migrate").mockReturnValueOnce(migrated as unknown as State);
+
+    const store = requireDraftStore(await initializeCableStudy(fakeEngine, design({ state: legacy }), null));
+
+    expect(fakeEngine.migrate).toHaveBeenCalledWith(legacy);
+    expect(store.state.rts).toEqual(migrated.rts);
+    expect(store.state.rtV).toBe(2);
+    expect(store.state.invs[0].rtId).toBe(7);
+  });
+
   it("deriva a revisão e aprovação oficiais para views sem sujar o store", async () => {
-    const store = await initializeCableStudy(fakeEngine, design(), null);
+    const store = requireDraftStore(await initializeCableStudy(fakeEngine, design(), null));
     const approvedDesign = {
       ...design(),
       current_revision: "B",
@@ -128,7 +179,7 @@ describe("store do estudo de cabos", () => {
   });
 
   it("não inventa aprovação se a pessoa oficial ainda não tiver nome", async () => {
-    const store = await initializeCableStudy(fakeEngine, design(), null);
+    const store = requireDraftStore(await initializeCableStudy(fakeEngine, design(), null));
     const approvedDesign = {
       ...design(),
       current_revision: "B",
@@ -139,7 +190,7 @@ describe("store do estudo de cabos", () => {
   });
 
   it("produz o corpo de gravação sem guardar o resultado integral", async () => {
-    const store = await initializeCableStudy(fakeEngine, design(), null);
+    const store = requireDraftStore(await initializeCableStudy(fakeEngine, design(), null));
     const payload = buildCableSavePayload(fakeEngine, store);
     expect(payload.input).toEqual({ format: 1, state: store.state });
     expect(payload.result).toMatchObject({ format: 1, engine_version: "cabos-fake@7" });
@@ -148,7 +199,7 @@ describe("store do estudo de cabos", () => {
   });
 
   it("usa hash canónico e marca o estado limpo após guardar", async () => {
-    const store = await initializeCableStudy(fakeEngine, design(), null);
+    const store = requireDraftStore(await initializeCableStudy(fakeEngine, design(), null));
     const changed = { ...store, state: { ...store.state, proj: "B" } };
     const reduced = studyReducer(store, { type: "replace", state: changed.state, result: changed.result, dirty: true });
     expect(canonicalJson({ b: 1, a: 2 })).toBe(canonicalJson({ a: 2, b: 1 }));
@@ -164,4 +215,22 @@ describe("store do estudo de cabos", () => {
     await view.result.current.markSaved();
     await waitFor(() => expect(view.result.current.dirty).toBe(false));
   });
+  it("marks pending intent dirty immediately and flush retains edits before the debounce", async () => {
+    const draft = design();
+    const view = renderHook(() => useCableStudy(fakeEngine, draft, null));
+    await waitFor(() => expect(view.result.current.store).not.toBeNull());
+    vi.useFakeTimers();
+    try {
+      act(() => view.result.current.apply(s => ({ ...s, proj: "Pending" }), { debounce: true }));
+      expect(view.result.current.dirty).toBe(true);
+      expect(view.result.current.state?.proj).not.toBe("Pending");
+      act(() => { expect(view.result.current.flush()?.state.proj).toBe("Pending"); });
+      expect(view.result.current.state?.proj).toBe("Pending");
+      await act(async () => { await view.result.current.markSaved(); });
+      expect(view.result.current.dirty).toBe(false);
+      act(() => vi.advanceTimersByTime(180));
+      expect(view.result.current.state?.proj).toBe("Pending");
+    } finally { vi.useRealTimers(); }
+  });
+
 });

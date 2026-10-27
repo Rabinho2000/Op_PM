@@ -95,11 +95,20 @@ function initialState(engine: CabosEngine, design: CableDesign, project: Project
   };
 }
 
+function isApprovedStatus(status: string): boolean {
+  return status === "aprovado" || status === "aprovada";
+}
+
+function isApprovedDesign(design: CableDesign): boolean {
+  return isApprovedStatus(design.status) || isApprovedStatus(design.revision.status);
+}
+
 export async function initializeCableStudy(
   engine: CabosEngine,
   design: CableDesign,
   project: Project | null,
-): Promise<CableStudyStore> {
+): Promise<CableStudyStore | null> {
+  if (isApprovedDesign(design)) return null;
   const solved = engine.solve(initialState(engine, design, project));
   const savedHash = await hashCanonical(solved.state);
   return { state: solved.state, result: solved.result, savedHash, dirty: false };
@@ -184,7 +193,7 @@ export function useCableStudy(
       .then((initial) => {
         if (!active) return;
         storeRef.current = initial;
-        savedHashRef.current = initial.savedHash;
+        savedHashRef.current = initial?.savedHash ?? "";
         pendingUpdaterRef.current = null;
         setStore(initial);
         setLoading(false);
@@ -238,6 +247,10 @@ export function useCableStudy(
       commit(updater);
       return;
     }
+    if (storeRef.current) {
+      storeRef.current = { ...storeRef.current, dirty: true };
+      setStore(storeRef.current);
+    }
     const previous = pendingUpdaterRef.current;
     pendingUpdaterRef.current = previous
       ? (state) => updater(previous(state))
@@ -257,7 +270,7 @@ export function useCableStudy(
     savedHashRef.current = hash;
     const current = storeRef.current;
     const sameState = canonicalJson(current.state) === canonicalJson(savedState);
-    const next = { ...current, savedHash: hash, dirty: !sameState };
+    const next = { ...current, savedHash: hash, dirty: !sameState || pendingUpdaterRef.current !== null };
     storeRef.current = next;
     setStore(next);
   }, []);

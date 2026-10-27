@@ -24,6 +24,8 @@ const initialState: State = {
   dc: { tmin: -10, tcell: 25, lim: 1.5, ifuse: 0, f: 1, sel: 0, arr: [] },
   invs: [{ id: 1, modelo: "INV-A", pman: 20, q: "QFV", L: 20, S: "auto", cos: null }],
   rInv: { ref: "13", cons: "mono", disp: "trevo", trays: 1, sol: false },
+  rts: [],
+  rtV: 2,
   percs: [{ id: 2, orig: "QFV", dest: "Q. Entrada", L: 10, S: "auto", ref: "13", cons: "mono", disp: "trevo", trays: 1, sol: false }],
   gws: [{ id: 3, nome: "Gateway 1", modelo: "GW-A", fases: 3, In: 63, dimNom: true }],
   obra: { cliente: "", morada: "", desenho: "", estado: "rascunho", rev: "A", aprov: null },
@@ -99,6 +101,30 @@ function makeEngine() {
     setInverterSection: vi.fn((state: State) => state),
     setInverterField: vi.fn((state: State) => state),
     setInverterRoute: vi.fn((state: State) => state),
+    addRoute: vi.fn((state: State, args: { name?: string; nome?: string } = {}) => {
+      const id = Math.max(0, ...(state.rts ?? []).map((route) => route.id)) + 1;
+      return {
+        ...state,
+        rts: [...(state.rts ?? []), { ...state.rInv, id, nome: args.name ?? args.nome ?? `Passagem ${id}` }],
+      };
+    }),
+    updateRoute: vi.fn((state: State, args: { id: number; patch: Record<string, unknown> }) => ({
+      ...state,
+      rts: (state.rts ?? []).map((route) => route.id === args.id ? { ...route, ...args.patch } : route),
+    })),
+    setRouteField: vi.fn((state: State, args: { id: number; field: string; value: unknown }) => ({
+      ...state,
+      rts: (state.rts ?? []).map((route) => route.id === args.id ? { ...route, [args.field]: args.value } : route),
+    })),
+    removeRoute: vi.fn((state: State, args: { id: number }) => ({
+      ...state,
+      rts: (state.rts ?? []).filter((route) => route.id !== args.id),
+      invs: state.invs.map((inverter) => inverter.rtId === args.id ? { ...inverter, rtId: undefined } : inverter),
+    })),
+    assignInverterRoute: vi.fn((state: State, args: { id: number; routeId: number | null }) => ({
+      ...state,
+      invs: state.invs.map((inverter) => inverter.id === args.id ? { ...inverter, rtId: args.routeId ?? undefined } : inverter),
+    })),
     addPerc: vi.fn((state: State) => state),
     removePerc: vi.fn((state: State) => state),
     setPercField: vi.fn((state: State) => state),
@@ -206,6 +232,110 @@ describe("separador Cabos AC", () => {
     expect(engine.actions.removeInverter).toHaveBeenCalledWith(expect.anything(), { id: 1 });
   });
 
+  it("não expõe edição legada de Esteira nem cria passagem a partir de est", () => {
+    const engine = makeEngine();
+    const state = {
+      ...initialState,
+      invs: [{ ...initialState.invs[0], id: 1, est: "Esteira legada" }],
+      rts: [],
+    };
+    render(<Harness engine={engine} state={state} />);
+
+    expect(screen.queryByRole("columnheader", { name: "Esteira" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Esteira do inversor 1")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Passagem do inversor 1")).toHaveValue("");
+    expect(screen.queryByRole("option", { name: "Esteira legada" })).not.toBeInTheDocument();
+    expect(engine.actions.addRoute).not.toHaveBeenCalled();
+    expect(engine.actions.assignInverterRoute).not.toHaveBeenCalled();
+  });
+
+  it("cria duas passagens e atribui cada uma ao inversor escolhido", () => {
+    const engine = makeEngine();
+    const state = {
+      ...initialState,
+      invs: [initialState.invs[0], { ...initialState.invs[0], id: 2, modelo: "INV-B" }],
+    };
+    render(<Harness engine={engine} state={state} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Gerir passagens" }));
+    const dialog = screen.getByRole("dialog", { name: "Gerir passagens dos inversores" });
+    fireEvent.change(within(dialog).getByLabelText("Nome da nova passagem"), { target: { value: "Esteira A" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Adicionar passagem" }));
+    fireEvent.change(within(dialog).getByLabelText("Nome da nova passagem"), { target: { value: "Esteira B" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Adicionar passagem" }));
+
+    expect(engine.actions.addRoute).toHaveBeenCalledWith(expect.anything(), { name: "Esteira A" });
+    expect(engine.actions.addRoute).toHaveBeenCalledWith(expect.anything(), { name: "Esteira B" });
+    expect(screen.getByLabelText("Passagem do inversor 1")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("Passagem do inversor 1"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("Passagem do inversor 2"), { target: { value: "2" } });
+
+    expect(engine.actions.assignInverterRoute).toHaveBeenCalledWith(expect.anything(), { id: 1, routeId: 1 });
+    expect(engine.actions.assignInverterRoute).toHaveBeenCalledWith(expect.anything(), { id: 2, routeId: 2 });
+  });
+
+  it("edita o nome e os parâmetros da passagem pelas actions do motor", () => {
+    const engine = makeEngine();
+    const state = {
+      ...initialState,
+      rts: [{ ...initialState.rInv, id: 10, nome: "Esteira antiga" }],
+    };
+    render(<Harness engine={engine} state={state} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Gerir passagens" }));
+    const dialog = screen.getByRole("dialog", { name: "Gerir passagens dos inversores" });
+    fireEvent.change(within(dialog).getByLabelText("Nome da passagem 10"), { target: { value: "Esteira principal" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Guardar nome da passagem 10" }));
+    fireEvent.change(within(dialog).getByLabelText("Passagem 10: constituição"), { target: { value: "multi" } });
+
+    expect(engine.actions.setRouteField).toHaveBeenCalledWith(expect.anything(), { id: 10, field: "nome", value: "Esteira principal" });
+    expect(engine.actions.updateRoute).toHaveBeenCalledWith(expect.anything(), { id: 10, patch: { cons: "multi" } });
+  });
+
+  it("ao remover uma passagem avisa e deixa os inversores existentes sem atribuição", () => {
+    const engine = makeEngine();
+    const state = {
+      ...initialState,
+      invs: [
+        { ...initialState.invs[0], id: 1, rtId: 10 },
+        { ...initialState.invs[0], id: 2, modelo: "INV-B", rtId: 10 },
+      ],
+      rts: [{ ...initialState.rInv, id: 10, nome: "Esteira partilhada" }],
+    };
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<Harness engine={engine} state={state} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Gerir passagens" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remover passagem Esteira partilhada" }));
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/inversores.*sem passagem/i));
+    expect(engine.actions.removeRoute).toHaveBeenCalledWith(expect.anything(), { id: 10 });
+    expect(screen.getAllByLabelText(/Passagem do inversor/)).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: /Duplicar inversor/ })).toHaveLength(2);
+    expect(screen.getByLabelText("Passagem do inversor 1")).toHaveValue("");
+    expect(screen.getByLabelText("Passagem do inversor 2")).toHaveValue("");
+    confirm.mockRestore();
+  });
+
+  it("não apresenta mutações de passagens nem atribuições em só leitura", () => {
+    const engine = makeEngine();
+    const state = {
+      ...initialState,
+      invs: [{ ...initialState.invs[0], id: 1, rtId: 10 }],
+      rts: [{ ...initialState.rInv, id: 10, nome: "Esteira principal" }],
+    };
+    render(<Harness engine={engine} readOnly state={state} />);
+
+    expect(screen.queryByRole("button", { name: "Gerir passagens" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Passagem do inversor 1")).not.toBeInTheDocument();
+    expect(screen.getByText("Esteira principal")).toBeInTheDocument();
+    expect(engine.actions.addRoute).not.toHaveBeenCalled();
+    expect(engine.actions.updateRoute).not.toHaveBeenCalled();
+    expect(engine.actions.setRouteField).not.toHaveBeenCalled();
+    expect(engine.actions.removeRoute).not.toHaveBeenCalled();
+    expect(engine.actions.assignInverterRoute).not.toHaveBeenCalled();
+  });
+
   it("abre o seletor pesquisável e rejeita valores numéricos inválidos", () => {
     const engine = makeEngine();
     render(<Harness engine={engine} />);
@@ -249,11 +379,16 @@ describe("separador Cabos AC", () => {
     fireEvent.change(screen.getByLabelText("Nome do projeto"), { target: { value: "Projeto editado" } });
     fireEvent.change(screen.getByLabelText("Cliente / dono de obra"), { target: { value: "Cliente editado" } });
     fireEvent.change(screen.getByLabelText("Região"), { target: { value: "Porto" } });
-    fireEvent.change(screen.getByLabelText("cos φ"), { target: { value: "0.95" } });
+    fireEvent.change(screen.getByLabelText("ΔU máx. por troço (%)"), { target: { value: "2" } });
+    for (const label of ["Isolamento", "cos φ", "Desconto ABB (% s/ PVP)", "Proteção de interface a partir de (kW)", "Poder de corte dos disjuntores"]) {
+      expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
+    }
+    expect(screen.queryByLabelText(/cos φ do inversor/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Cabos com isolamento XLPE e cos φ 1/)).toBeInTheDocument();
 
     expect(engine.actions.setWorkData).toHaveBeenCalledWith(expect.anything(), { field: "proj", value: "Projeto editado" });
     expect(engine.actions.setWorkData).toHaveBeenCalledWith(expect.anything(), { field: "cliente", value: "Cliente editado" });
     expect(engine.actions.setCriteria).toHaveBeenCalledWith(expect.anything(), { field: "loc", value: "Porto" });
-    expect(engine.actions.setCriteria).toHaveBeenCalledWith(expect.anything(), { field: "cos", value: 0.95 });
+    expect(engine.actions.setCriteria).toHaveBeenCalledWith(expect.anything(), { field: "limT", value: 2 });
   });
 });

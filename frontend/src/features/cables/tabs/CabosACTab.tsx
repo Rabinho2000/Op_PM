@@ -75,7 +75,7 @@ export default function CabosACTab({ state, result, engine, readOnly, apply }: C
 
       <InvertersTable state={state} rows={rows} engine={engine} readOnly={readOnly} apply={apply} />
       <PercursosTable state={state} rows={rows} engine={engine} readOnly={readOnly} apply={apply} onAddBoard={() => setNewBoardOpen(true)} />
-      <ResultsTable state={state} result={result} rows={rows} engine={engine} />
+      <ResultsTable state={state} result={result} rows={rows} engine={engine} readOnly={readOnly} apply={apply} />
       <GatewaysTable state={state} engine={engine} readOnly={readOnly} apply={apply} />
       <WarningsPanel state={state} result={result} />
       {compareOpen && <CompareDialog engine={engine} state={state} readOnly={readOnly} apply={apply} onClose={() => setCompareOpen(false)} />}

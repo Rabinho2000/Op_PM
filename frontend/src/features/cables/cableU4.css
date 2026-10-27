@@ -92,6 +92,67 @@
   font-size: 0.82rem;
 }
 
+.cable-route-groups__new {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.cable-route-groups {
+  display: grid;
+  gap: 12px;
+  max-height: min(62vh, 560px);
+  overflow-y: auto;
+}
+
+.cable-route-group {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.cable-route-group__content {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.cable-route-group__name {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.cable-route-group__members {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+@media (max-width: 760px) {
+  .cable-route-groups__new,
+  .cable-route-group,
+  .cable-route-group__name {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cable-route-groups__new > .btn,
+  .cable-route-groups__new input,
+  .cable-route-group .btn,
+  .cable-route-group input,
+  .cable-route-group select {
+    min-height: 44px;
+  }
+}
+
 .cable-dialog__fieldset {
   min-width: 0;
   margin: 0 0 16px;

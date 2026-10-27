@@ -14,6 +14,13 @@ export default function QuadrosTab({ state, result, engine }: CableTabProps) {
       return [];
     }
   }, [engine, result, state]);
+  const fronts = useMemo<Array<string | null>>(() => boards.map((board) => {
+    try {
+      return typeof engine.views.boardFront === "function" ? engine.views.boardFront(state, result, board.node) : null;
+    } catch {
+      return null;
+    }
+  }), [boards, engine, result, state]);
 
   return (
     <div className="cable-tab cable-tab--boards">
@@ -32,7 +39,7 @@ export default function QuadrosTab({ state, result, engine }: CableTabProps) {
         {boards.length === 0 ? (
           <EmptyState title="Sem quadros para sugerir" text="Ligue os inversores a um quadro no separador Cabos AC para ver a composição." icon="folder" />
         ) : (
-          <div className="cable-boards-list">{boards.map((board, index) => <BoardCard key={`${board.node}-${index}`} board={board} />)}</div>
+          <div className="cable-boards-list">{boards.map((board, index) => <BoardCard key={`${board.node}-${index}`} board={board} frontSvg={fronts[index] ?? null} />)}</div>
         )}
       </Card>
     </div>

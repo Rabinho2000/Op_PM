@@ -44,6 +44,107 @@ function statusTone(status: string): "neutral" | "warning" | "success" {
   return "neutral";
 }
 
+interface HistoricalCircuit {
+  code: string;
+  name: string;
+  review: boolean;
+  note?: string;
+}
+
+interface HistoricalResultData {
+  circuits: HistoricalCircuit[];
+  totals: { circuits: number; review: number; inverters: number; kw_ac?: number };
+}
+
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function readHistoricalResult(value: unknown): HistoricalResultData | null {
+  const envelope = recordOf(value);
+  const totals = recordOf(envelope?.totals);
+  if (envelope?.format !== 1 || !Array.isArray(envelope.circuits) || !totals) return null;
+  if (!isCount(totals.circuits) || !isCount(totals.review) || !isCount(totals.inverters)) return null;
+  if (totals.kw_ac !== undefined && (typeof totals.kw_ac !== "number" || !Number.isFinite(totals.kw_ac))) return null;
+
+  const circuits: HistoricalCircuit[] = [];
+  for (const value of envelope.circuits) {
+    const circuit = recordOf(value);
+    if (!circuit || typeof circuit.code !== "string" || typeof circuit.name !== "string" || typeof circuit.review !== "boolean") return null;
+    if (circuit.note !== undefined && typeof circuit.note !== "string") return null;
+    circuits.push({
+      code: circuit.code,
+      name: circuit.name,
+      review: circuit.review,
+      ...(typeof circuit.note === "string" ? { note: circuit.note } : {}),
+    });
+  }
+
+  return {
+    circuits,
+    totals: {
+      circuits: totals.circuits,
+      review: totals.review,
+      inverters: totals.inverters,
+      ...(typeof totals.kw_ac === "number" ? { kw_ac: totals.kw_ac } : {}),
+    },
+  };
+}
+
+function formatHistoricalNumber(value: number): string {
+  return new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 2 }).format(value);
+}
+
+function HistoricalResultPanel({ revision }: { revision: CableDesignRevision }) {
+  const historical = readHistoricalResult(revision.result_json);
+  if (!historical) {
+    return (
+      <main className="cable-editor__summary">
+        <Alert tone="warning" title="Resultado histórico indisponível">
+          O resultado persistido desta revisão está ausente ou ilegível. Não será substituído por um cálculo atual; crie uma nova revisão para recalcular com o motor atual.
+        </Alert>
+      </main>
+    );
+  }
+
+  return (
+    <main className="cable-editor__summary">
+      <Card title={`Resultado histórico aprovado · Rev. ${revision.rev}`} icon="activity">
+        <p className="muted">Vista só de leitura dos dados persistidos da revisão aprovada; não foi recalculada com o motor atual.</p>
+        <dl className="kv">
+          <dt>Versão do motor</dt><dd>{revision.engine_version || "—"}</dd>
+          <dt>Circuitos</dt><dd>{historical.totals.circuits}</dd>
+          <dt>Circuitos a rever</dt><dd>{historical.totals.review}</dd>
+          <dt>Inversores</dt><dd>{historical.totals.inverters}</dd>
+          {historical.totals.kw_ac !== undefined && <><dt>Potência AC total</dt><dd>{formatHistoricalNumber(historical.totals.kw_ac)} kW</dd></>}
+        </dl>
+        {historical.circuits.length > 0 ? (
+          <div className="table-wrap">
+            <table className="table">
+              <caption className="sr-only">Circuitos do resultado histórico aprovado</caption>
+              <thead><tr><th scope="col">Código</th><th scope="col">Circuito</th><th scope="col">Estado</th><th scope="col">Nota</th></tr></thead>
+              <tbody>
+                {historical.circuits.map((circuit, index) => (
+                  <tr key={`${circuit.code}-${index}`}>
+                    <td>{circuit.code}</td><td>{circuit.name}</td><td>{circuit.review ? "A rever" : "OK"}</td><td>{circuit.note ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : <p className="muted small">O resultado histórico não contém circuitos.</p>}
+        <p className="muted small">Nova revisão recalcula com o motor atual e permite editar sem alterar esta revisão aprovada.</p>
+      </Card>
+    </main>
+  );
+}
+
 function apiErrorMessage(reason: unknown): string {
   if (reason instanceof ApiError) {
     if (reason.status === 403) return "Não tem permissão para abrir este estudo de cabos.";
@@ -154,7 +255,6 @@ export default function CableDesignEditor() {
   const canView = can("cable_design.view");
   const canEdit = can("cable_design.edit");
   const canViewCosts = can("cable_design.view_costs");
-  const engineState = useCableEngine(canViewCosts);
   const exportRunner = useExportRunner();
   const { notify } = useToast();
   const [design, setDesign] = useState<CableDesign | null>(null);
@@ -174,6 +274,8 @@ export default function CableDesignEditor() {
   const [activeTab, setActiveTab] = useState<TabId>("ac");
   const [peopleById, setPeopleById] = useState<ReadonlyMap<string, string>>(() => new Map());
 
+  const approved = Boolean(design && (isApprovedStatus(design.status) || isApprovedStatus(design.revision.status)));
+  const engineState = useCableEngine(canViewCosts && Boolean(design) && !approved);
   const study = useCableStudy(engineState.engine, design, project);
   const presentationState = useMemo(
     () => engineState.engine && study.state && design
@@ -185,7 +287,6 @@ export default function CableDesignEditor() {
     () => !design || readOnlyOverride || !canEdit || !design.is_active || isApprovedStatus(design.status) || isApprovedStatus(design.revision.status),
     [canEdit, design, readOnlyOverride],
   );
-  const approved = Boolean(design && (isApprovedStatus(design.status) || isApprovedStatus(design.revision.status)));
   const mutationLocked = readOnly || saving || action !== null;
 
   useEffect(() => {
@@ -236,14 +337,14 @@ export default function CableDesignEditor() {
   }, [canView, load]);
 
   useEffect(() => {
-    if (!study.dirty) return undefined;
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!study.flush()?.dirty) return;
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [study.dirty]);
+  }, [study.flush]);
 
   const refreshAudit = useCallback(async () => {
     if (!designId) return;
@@ -336,17 +437,17 @@ export default function CableDesignEditor() {
   }
 
   function goBack() {
-    if (study.dirty && !window.confirm("Tem alterações por guardar. Sair sem guardar?")) return;
+    if (study.flush()?.dirty && !window.confirm("Tem alterações por guardar. Sair sem guardar?")) return;
     navigate(`/projects/${encodeURIComponent(projectId ?? design?.project_id ?? "")}?tab=cabos`);
   }
 
-  const exportDisabled = !engineState.engine || !presentationState || !study.result || exportRunner.isGenerating;
+  const exportDisabled = approved || !engineState.engine || !presentationState || !study.result || exportRunner.isGenerating;
 
   function startExport(exporter: FileExporter): void {
     const engine = engineState.engine;
     const state = presentationState;
     const result = study.result;
-    if (!engine || !state || !result || exportRunner.isGenerating) return;
+    if (approved || !engine || !state || !result || exportRunner.isGenerating) return;
     setMoreOpen(false);
     void exportRunner.run(() => Promise.resolve(exporter(engine, state, result)) as Promise<{ blob: Blob; filename: string }>);
   }
@@ -356,7 +457,7 @@ export default function CableDesignEditor() {
     const state = presentationState;
     const result = study.result;
     setMoreOpen(false);
-    if (!engine || !state || !result || exportRunner.isGenerating) return;
+    if (approved || !engine || !state || !result || exportRunner.isGenerating) return;
     try {
       const text = String(engine.exports.copyTable(state, result));
       if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
@@ -408,7 +509,7 @@ export default function CableDesignEditor() {
     }
   }
 
-  if (loading || (canViewCosts && engineState.status === "loading")) {
+  if (loading || (!approved && canViewCosts && engineState.status === "loading")) {
     return <div className="cable-editor cable-editor--state"><LoadingState label="A carregar o estudo de cabos…" rows={5} /></div>;
   }
 
@@ -416,11 +517,14 @@ export default function CableDesignEditor() {
     return <div className="cable-editor cable-editor--state"><ErrorState message={error ?? "Estudo de cabos indisponível."} onRetry={() => void load()} /></div>;
   }
 
-  if (canViewCosts && engineState.status === "error") {
+  if (!approved && canViewCosts && engineState.status === "error") {
     return <div className="cable-editor cable-editor--state"><ErrorState message={engineState.error ?? "Ferramenta de cálculo indisponível"} onRetry={engineState.retry} /></div>;
   }
 
   const projectPath = `/projects/${encodeURIComponent(projectId ?? design.project_id)}?tab=cabos`;
+  const displayedStatus = approved
+    ? isApprovedStatus(design.status) ? design.status : design.revision.status
+    : design.status;
   const renderTab = () => {
     if (!engineState.engine || !presentationState || !study.result) return null;
     const props = { state: presentationState, result: study.result, engine: engineState.engine, readOnly: mutationLocked, apply: study.apply };
@@ -437,15 +541,15 @@ export default function CableDesignEditor() {
         <div className="cable-editor__identity">
           <h1>{design.title}</h1>
           <div className="cable-editor__meta">
-            <Badge tone={statusTone(design.status)}>{statusLabel(design.status)}</Badge>
+            <Badge tone={statusTone(displayedStatus)}>{statusLabel(displayedStatus)}</Badge>
             <span>Rev. {design.current_revision} · versão {design.version}</span>
             {study.dirty && <span className="cable-editor__dirty">Alterações por guardar</span>}
           </div>
         </div>
         <div className="cable-editor__actions">
-          <button type="button" className="btn btn--primary" onClick={() => void saveCurrent()} disabled={!study.dirty || mutationLocked || !engineState.engine}>
+          {!approved && <button type="button" className="btn btn--primary" onClick={() => void saveCurrent()} disabled={!study.dirty || mutationLocked || !engineState.engine}>
             {saving ? "A guardar…" : "Guardar"}
-          </button>
+          </button>}
           {!approved && canEdit && design.is_active && (
             <button type="button" className="btn" onClick={() => void approve()} disabled={readOnly || saving || action !== null || !engineState.engine}>
               {action === "approve" ? "A aprovar…" : "Aprovar"}
@@ -461,18 +565,19 @@ export default function CableDesignEditor() {
             {moreOpen && (
               <div className="cable-editor__more-menu" role="menu">
                 <button type="button" role="menuitem" onClick={() => { setDrawerOpen(true); setMoreOpen(false); }}>Revisões e histórico</button>
-                <div className="cable-editor__export-group">
+                {!approved && <div className="cable-editor__export-group">
                   <span>Exportar</span>
                   {exportMenuItem("Relatório de cálculo (PDF)", (engine, state, result) => engine.exports.reportPdf(state, result))}
                   {exportMenuItem("Relatório (Word)", (engine, state, result) => engine.exports.reportDocx(state, result))}
                   {exportMenuItem("Orçamento (PDF)", (engine, state, result) => engine.exports.bomPdf(state, result))}
+                  {exportMenuItem("Esquema unifilar (PDF)", (engine, state, result) => engine.exports.sldPdf(state, result))}
                   {exportMenuItem("Esquema unifilar (SVG)", (engine, state, result) => engine.exports.sldSvg(state, result))}
                   {exportMenuItem("Esquema unifilar (PNG)", (engine, state, result) => engine.exports.sldPng(state, result))}
                   {exportMenuItem("Esquema unifilar (DXF)", (engine, state, result) => engine.exports.sldDxf(state, result))}
                   <button type="button" role="menuitem" onClick={() => void copyTable()} disabled={exportDisabled}>
                     Copiar tabela
                   </button>
-                </div>
+                </div>}
                 {canEdit && design.is_active && <button type="button" role="menuitem" className="cable-editor__danger-action" disabled={saving || action !== null} onClick={() => { setMoreOpen(false); void deactivate(); }}>Desativar</button>}
               </div>
             )}
@@ -483,7 +588,9 @@ export default function CableDesignEditor() {
       {actionError && <Alert tone="danger">{actionError}</Alert>}
       {lockedMessage && <Alert tone="warning">{lockedMessage}</Alert>}
 
-      {!canViewCosts ? (
+      {approved ? (
+        <HistoricalResultPanel revision={design.revision} />
+      ) : !canViewCosts ? (
         <main className="cable-editor__summary">
           <Card title="Resumo do estudo" icon="activity">
             <dl className="kv">

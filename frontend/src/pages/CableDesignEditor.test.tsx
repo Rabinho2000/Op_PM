@@ -53,7 +53,9 @@ const state: State = {
   sc: { on: false, fonte: "", sn: 100, ucc: 4, scc: 500, icc: 10, L0: 0, s0: 0, m0: "", n0: 0 },
   dc: { tmin: -10, tcell: 25, lim: 1.5, ifuse: 0, f: 1, sel: 0, arr: [] },
   invs: [],
-  rInv: { ref: "", cons: "", disp: "", trays: 1, sol: false },
+  rInv: { ref: "", cons: "mono", disp: "trevo", trays: 1, sol: false },
+  rts: [],
+  rtV: 2,
   percs: [],
   gws: [],
   obra: { cliente: "", morada: "", desenho: "", estado: "rascunho", rev: "A", aprov: null },
@@ -99,6 +101,7 @@ const fakeEngine = {
     reportDocx: vi.fn(async () => ({ blob: new Blob(["docx"]), filename: "relatorio.docx" })),
     bomPdf: vi.fn(async () => ({ blob: new Blob(["bom"]), filename: "orcamento.pdf" })),
     sldSvg: vi.fn(async () => ({ blob: new Blob(["svg"]), filename: "unifilar.svg" })),
+    sldPdf: vi.fn(async () => ({ blob: new Blob(["pdf"]), filename: "unifilar.pdf" })),
     sldPng: vi.fn(async () => ({ blob: new Blob(["png"]), filename: "unifilar.png" })),
     sldDxf: vi.fn(async () => ({ blob: new Blob(["dxf"]), filename: "unifilar.dxf" })),
     copyTable: vi.fn(() => "Circuito\tCabo"),
@@ -111,7 +114,7 @@ const revision: CableDesignRevision = {
   design_id: "design-1",
   rev: "A",
   input_json: { format: 1 },
-  result_json: { format: 1, circuits: [], totals: { circuits: 0, review: 0, inverters: 0 } },
+  result_json: { format: 1 },
   engine_version: "cabos-fake@1",
   content_sha256: "abcdef1234567890",
   unresolved_circuits: 0,
@@ -177,6 +180,7 @@ async function renderEditor(
     path: "/projects/:projectId/cables/:designId",
   });
   if (waitForNative) await screen.findByRole("tab", { name: "Cabos AC" });
+  else await screen.findByRole("button", { name: /Nova revisão|Revisões e histórico/ });
 }
 
 describe("CableDesignEditor nativo", () => {
@@ -191,35 +195,75 @@ describe("CableDesignEditor nativo", () => {
     expect(fakeEngine.newState).toHaveBeenCalled();
   });
 
-  it("passa revisão e aprovação oficiais às views e exportações sem marcar o estudo dirty", async () => {
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  it.each([
+    ["aprovado", "rascunho", true],
+    ["aprovado", "aprovada", false],
+    ["aprovada", "rascunho", true],
+    ["rascunho", "aprovado", true],
+    ["rascunho", "aprovada", true],
+  ])("mostra apenas o resultado histórico aprovado para status %s / %s", async (designStatus, revisionStatus, viewCosts) => {
+    const historicalDesign = {
+      ...currentDesign,
+      status: designStatus,
+      revision: {
+        ...revision,
+        status: revisionStatus,
+        rev: "B",
+        engine_version: "cabos-historico@12",
+        approved_by_person_id: "person-1",
+        approved_at: "2026-10-19T10:00:00Z",
+        result_json: {
+          format: 1,
+          engine_version: "cabos-historico@12",
+          circuits: [{ code: "OLD-01", name: "Circuito aprovado histórico", review: true, note: "ΔU anterior" }],
+          totals: { circuits: 1, review: 1, inverters: 1, kw_ac: 18.5 },
+        },
+      },
+    };
+    currentDesign = historicalDesign;
+    api.getCableDesign.mockResolvedValue(currentDesign);
+    const solve = vi.spyOn(fakeEngine, "solve");
+    solve.mockClear();
+    const before = JSON.stringify(historicalDesign);
+    await renderEditor(["cable_design.view", "cable_design.edit", ...(viewCosts ? ["cable_design.view_costs"] : [])], false);
+
+    expect(await screen.findByText("Resultado histórico aprovado · Rev. B")).toBeInTheDocument();
+    expect(screen.getByText("cabos-historico@12")).toBeInTheDocument();
+    expect(screen.getByText("Circuito aprovado histórico")).toBeInTheDocument();
+    expect(screen.getByText("OLD-01")).toBeInTheDocument();
+    expect(screen.getByText("Circuitos a rever")).toBeInTheDocument();
+    expect(screen.getByText(/18,5/)).toBeInTheDocument();
+    expect(screen.getByText(/Nova revisão recalcula com o motor atual/)).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Cabos AC" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Nome do projeto")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Nova revisão" })).toBeInTheDocument();
+    expect(screen.queryByText("Alterações por guardar")).not.toBeInTheDocument();
+    expect(solve).not.toHaveBeenCalled();
+    expect(JSON.stringify(historicalDesign)).toBe(before);
+    expect(api.saveCableRevision).not.toHaveBeenCalled();
+    expect(fakeEngine.views.circuitRows).not.toHaveBeenCalled();
+    expect(engineMock.useCableEngine).toHaveBeenLastCalledWith(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "⋯ Mais" }));
+    expect(screen.queryByRole("menuitem", { name: "Relatório de cálculo (PDF)" })).not.toBeInTheDocument();
+  });
+
+  it("não substitui um resultado histórico ausente ou ilegível por cálculo atual", async () => {
     currentDesign = {
       ...currentDesign,
       status: "aprovado",
-      current_revision: "B",
-      revision: {
-        ...revision,
-        rev: "B",
-        status: "aprovada",
-        approved_by_person_id: "person-1",
-        approved_at: "2026-10-19T10:00:00Z",
-      },
+      revision: { ...revision, status: "aprovada", result_json: { format: 1, circuits: "inválido", totals: {} } },
     };
     api.getCableDesign.mockResolvedValue(currentDesign);
-    await renderEditor();
+    const solve = vi.spyOn(fakeEngine, "solve");
+    solve.mockClear();
+    await renderEditor(["cable_design.view", "cable_design.edit", "cable_design.view_costs"], false);
 
-    await waitFor(() => expect(fakeEngine.views.circuitRows).toHaveBeenCalled());
-    const viewState = (fakeEngine.views.circuitRows as ReturnType<typeof vi.fn>).mock.calls[(fakeEngine.views.circuitRows as ReturnType<typeof vi.fn>).mock.calls.length - 1]?.[0] as State;
-    expect(viewState.obra.rev).toBe("B");
-    expect(viewState.obra.aprov).toEqual({ id: "person-1", nome: "Pessoa Um", em: "2026-10-19T10:00:00Z" });
-    expect(screen.queryByText("Alterações por guardar")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "⋯ Mais" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Relatório de cálculo (PDF)" }));
-    await waitFor(() => expect(fakeEngine.exports.reportPdf).toHaveBeenCalled());
-    const exportState = (fakeEngine.exports.reportPdf as ReturnType<typeof vi.fn>).mock.calls[(fakeEngine.exports.reportPdf as ReturnType<typeof vi.fn>).mock.calls.length - 1]?.[0] as State;
-    expect(exportState.obra.rev).toBe("B");
-    expect(exportState.obra.aprov).toEqual(viewState.obra.aprov);
+    expect(await screen.findByText("Resultado histórico indisponível")).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Cabos AC" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Circuito aprovado histórico")).not.toBeInTheDocument();
+    expect(solve).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Nova revisão" })).toBeInTheDocument();
   });
 
   it("marca dirty e guarda com expected_version e resultado persistido", async () => {
@@ -237,6 +281,37 @@ describe("CableDesignEditor nativo", () => {
       engine_version: "cabos-fake@1",
     }));
     expect(fakeEngine.persistedResult).toHaveBeenCalled();
+  });
+
+  it("confirma saída imediata durante debounce e cancelar mantém a edição sem guardar", async () => {
+    await renderEditor();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    vi.useFakeTimers();
+    try {
+      fireEvent.change(screen.getByLabelText("Nome do projeto"), { target: { value: "Pendente imediato" } });
+      fireEvent.click(screen.getByRole("button", { name: "← Voltar" }));
+      expect(confirm).toHaveBeenCalledWith("Tem alterações por guardar. Sair sem guardar?");
+      expect(screen.getByLabelText("Nome do projeto")).toHaveValue("Pendente imediato");
+      expect(api.saveCableRevision).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); confirm.mockRestore(); }
+  });
+
+  it("descarrega edições pendentes antes de unload e antes da gravação explícita", async () => {
+    await renderEditor();
+    vi.useFakeTimers();
+    try {
+      fireEvent.change(screen.getByLabelText("Nome do projeto"), { target: { value: "Unload pendente" } });
+      const unload = new Event("beforeunload", { cancelable: true });
+      fireEvent(window, unload);
+      expect(unload.defaultPrevented).toBe(true);
+      expect(screen.getByLabelText("Nome do projeto")).toHaveValue("Unload pendente");
+      expect(api.saveCableRevision).not.toHaveBeenCalled();
+      fireEvent.change(screen.getByLabelText("Nome do projeto"), { target: { value: "Guardar pendente" } });
+      fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+      expect(api.saveCableRevision).toHaveBeenCalledWith("design-1", expect.objectContaining({
+        input: expect.objectContaining({ state: expect.objectContaining({ proj: "Guardar pendente" }) }),
+      }));
+    } finally { vi.useRealTimers(); }
   });
 
   it("bloqueia todos os campos e ações de mutação durante um PUT pendente", async () => {
@@ -271,12 +346,41 @@ describe("CableDesignEditor nativo", () => {
     expect(api.saveCableRevision).toHaveBeenCalledWith("design-1", expect.objectContaining({ expected_version: 1 }));
   });
 
-  it("cria uma nova revisão a partir de uma revisão aprovada", async () => {
-    currentDesign = { ...currentDesign, status: "aprovado", revision: { ...revision, status: "aprovada" } };
+  it("cria uma nova revisão e só então volta a calcular e editar o input aprovado", async () => {
+    const approvedInput = { ...state, proj: "Estado persistido" };
+    currentDesign = {
+      ...currentDesign,
+      status: "aprovado",
+      revision: { ...revision, status: "aprovada", input_json: { format: 1, state: approvedInput } },
+    };
     api.getCableDesign.mockResolvedValue(currentDesign);
-    await renderEditor();
+    api.newCableRevision.mockResolvedValue({
+      ...currentDesign,
+      status: "rascunho",
+      current_revision: "B",
+      version: 2,
+      revision: {
+        ...currentDesign.revision,
+        id: "revision-2",
+        rev: "B",
+        status: "rascunho",
+        input_json: { format: 1, state: approvedInput },
+        result_json: { format: 1, circuits: [], totals: { circuits: 0, review: 0, inverters: 0 } },
+      },
+    });
+    const solve = vi.spyOn(fakeEngine, "solve");
+    solve.mockClear();
+    await renderEditor(["cable_design.view", "cable_design.edit", "cable_design.view_costs"], false);
+    expect(await screen.findByText("Resultado histórico indisponível")).toBeInTheDocument();
+    expect(solve).not.toHaveBeenCalled();
+
     fireEvent.click(screen.getByRole("button", { name: "Nova revisão" }));
+
     await waitFor(() => expect(api.newCableRevision).toHaveBeenCalledWith("design-1", 1));
+    expect(await screen.findByRole("tab", { name: "Cabos AC" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Nome do projeto")).toHaveValue("Estado persistido");
+    expect(screen.getByLabelText("Nome do projeto")).not.toBeDisabled();
+    await waitFor(() => expect(solve).toHaveBeenCalledTimes(1));
   });
 
   it("abre o diálogo de conflito quando a versão ficou obsoleta", async () => {
@@ -317,11 +421,13 @@ describe("CableDesignEditor nativo", () => {
     expect(screen.getByText("Sem inversores para desenhar")).toBeInTheDocument();
   });
 
-  it("torna os campos só de leitura quando a revisão está aprovada", async () => {
+  it("não mostra controlos dependentes do motor na revisão aprovada", async () => {
     currentDesign = { ...currentDesign, status: "aprovado", revision: { ...revision, status: "aprovada" } };
     api.getCableDesign.mockResolvedValue(currentDesign);
-    await renderEditor();
-    expect(screen.getByLabelText("Nome do projeto")).toBeDisabled();
+    await renderEditor(["cable_design.view", "cable_design.edit", "cable_design.view_costs"], false);
+    expect(await screen.findByText("Resultado histórico indisponível")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Nome do projeto")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Cabos AC" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Nova revisão" })).toBeInTheDocument();
   });
 
@@ -335,6 +441,7 @@ describe("CableDesignEditor nativo", () => {
       ["Relatório (Word)", fakeEngine.exports.reportDocx],
       ["Orçamento (PDF)", fakeEngine.exports.bomPdf],
       ["Esquema unifilar (SVG)", fakeEngine.exports.sldSvg],
+      ["Esquema unifilar (PDF)", fakeEngine.exports.sldPdf],
       ["Esquema unifilar (PNG)", fakeEngine.exports.sldPng],
       ["Esquema unifilar (DXF)", fakeEngine.exports.sldDxf],
     ] as const;
@@ -362,15 +469,25 @@ describe("CableDesignEditor nativo", () => {
     expect(await screen.findByText(/Não foi possível copiar a tabela/)).toBeInTheDocument();
   });
 
-  it("mantém os três diálogos desativados em só leitura mas deixa as exportações disponíveis", async () => {
-    currentDesign = { ...currentDesign, status: "aprovado", revision: { ...revision, status: "aprovada" } };
+  it("esconde a exportação de cálculo no histórico aprovado", async () => {
+    currentDesign = {
+      ...currentDesign,
+      status: "aprovado",
+      revision: {
+        ...revision,
+        status: "aprovada",
+        result_json: {
+          format: 1,
+          engine_version: "cabos-fake@1",
+          circuits: [],
+          totals: { circuits: 0, review: 0, inverters: 0 },
+        },
+      },
+    };
     api.getCableDesign.mockResolvedValue(currentDesign);
-    await renderEditor();
-    fireEvent.click(screen.getByRole("tab", { name: "Cabos AC" }));
-    expect(screen.getByRole("button", { name: "Comparar alternativas" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Modelos" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Adicionar quadro" })).toBeDisabled();
+    await renderEditor(["cable_design.view", "cable_design.edit", "cable_design.view_costs"], false);
+    expect(await screen.findByText("Resultado histórico aprovado · Rev. A")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "⋯ Mais" }));
-    expect(screen.getByRole("menuitem", { name: "Relatório de cálculo (PDF)" })).not.toBeDisabled();
+    expect(screen.queryByRole("menuitem", { name: "Relatório de cálculo (PDF)" })).not.toBeInTheDocument();
   });
 });

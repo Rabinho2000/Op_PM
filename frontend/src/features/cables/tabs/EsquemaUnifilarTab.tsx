@@ -35,6 +35,7 @@ export default function EsquemaUnifilarTab({ state, result, engine }: CableTabPr
         icon="activity"
         actions={hasInverters ? (
           <div className="cable-tab__actions">
+            {exportButton("Descarregar PDF", () => engine.exports.sldPdf(state, result))}
             {exportButton("Descarregar SVG", () => engine.exports.sldSvg(state, result))}
             {exportButton("Descarregar PNG", () => engine.exports.sldPng(state, result))}
             {exportButton("Descarregar DXF", () => engine.exports.sldDxf(state, result))}

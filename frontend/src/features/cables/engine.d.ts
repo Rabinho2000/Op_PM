@@ -4,8 +4,10 @@ declare global {
   const CabosEngine: CabosEngine;
 }
 
-type Material = string;
-type Constitution = string;
+type Material = 'auto' | 'Cu' | 'Al';
+type Constitution = 'mono' | 'multi' | 'rota';
+type RouteConstitution = 'mono' | 'multi';
+type RouteDisposition = 'trevo' | 'esteira' | 'afh' | 'afv';
 type BoardTypeId = string;
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -37,6 +39,8 @@ export interface State {
   dc: DcState;
   invs: InverterState[];
   rInv: Route;
+  rts: RouteGroup[];
+  rtV: 2;
   percs: PercState[];
   gws: GatewayState[];
   obra: WorkData;
@@ -70,10 +74,15 @@ export interface DcState {
 
 export interface Route {
   ref: string;
-  cons: Constitution;
-  disp: string;
+  cons: RouteConstitution;
+  disp: RouteDisposition;
   trays: number;
   sol: boolean;
+}
+
+export interface RouteGroup extends Route {
+  id: number;
+  nome: string;
 }
 
 export interface InverterState {
@@ -84,6 +93,7 @@ export interface InverterState {
   L: number;
   S: string;
   est?: string;
+  rtId?: number;
   cos?: number | null;
   cons?: Constitution;
 }
@@ -215,7 +225,7 @@ export interface CableOption {
   n: number;
   s: number;
   mat: Material;
-  cons: Constitution;
+  cons: RouteConstitution;
 }
 
 export interface CalculatedCable extends CableOption {
@@ -505,6 +515,26 @@ export interface CircuitCable {
   text: string;
 }
 
+export interface ManualCableOption {
+  value: string;
+  conductorsPerPhase: 1 | 2 | 3;
+  sectionMm2: number;
+  material: 'Cu' | 'Al';
+  constitution: 'mono' | 'multi';
+  meetsRequirements: boolean;
+  label: string;
+}
+export interface ManualCableCircuitOptions {
+  kind: 'inv' | 'perc';
+  id: number | string;
+  code: string | null;
+  selected: string;
+  options: ManualCableOption[];
+}
+export interface ManualCableOptions {
+  circuits: ManualCableCircuitOptions[];
+}
+
 export interface RowBreaker {
   name: string | null;
   ref: string | null;
@@ -534,6 +564,21 @@ export interface InverterPatch {
   field?: string;
   value?: JsonValue;
   patch?: { [field: string]: JsonValue };
+}
+export interface RouteGroupPatch {
+  name?: string; nome?: string; ref?: string; cons?: RouteConstitution;
+  disp?: RouteDisposition; trays?: number; sol?: boolean;
+}
+export interface AddRouteArgs extends RouteGroupPatch {}
+export interface RouteGroupActionArgs extends RouteGroupPatch {
+  id: number; field?: 'name' | 'nome' | 'ref' | 'cons' | 'disp' | 'trays' | 'sol';
+  value?: JsonValue; patch?: RouteGroupPatch; fields?: RouteGroupPatch;
+}
+export type AssignInverterRouteArgs =
+  | { id: number; routeId: number | null; rtId?: number | null }
+  | { id: number; rtId: number | null; routeId?: number | null };
+export interface ManualCableSelectionArgs {
+  kind: 'inv' | 'perc'; id: number | string; value: string;
 }
 export interface PercPatch {
   id: number | string;
@@ -581,6 +626,15 @@ export interface Actions {
   setInverterLength(state: State, args: InverterPatch): State;
   setInverterSection(state: State, args: InverterPatch): State;
   setInverterRoute(state: State, args: JsonObject): State;
+  addRoute(state: State, args?: AddRouteArgs): State;
+  updateRoute(state: State, args: RouteGroupActionArgs): State;
+  setRouteField(state: State, args: RouteGroupActionArgs): State;
+  removeRoute(state: State, args: { id: number }): State;
+  assignInverterRoute(state: State, args: AssignInverterRouteArgs): State;
+  addInverterRoute(state: State, args?: AddRouteArgs): State;
+  removeInverterRoute(state: State, args: { id: number }): State;
+  setInverterRouteAssignment(state: State, args: AssignInverterRouteArgs): State;
+  setManualCable(state: State, args: ManualCableSelectionArgs): State;
   addPerc(state: State, args?: JsonObject): State;
   removePerc(state: State, args: { id: number }): State;
   setPercField(state: State, args: PercPatch): State;
@@ -616,6 +670,7 @@ export interface Exports {
   reportDocx(state: State, result: Result): Promise<ExportFile>;
   bomPdf(state: State, result: Result): Promise<ExportFile>;
   sldSvg(state: State, result: Result): Promise<ExportFile>;
+  sldPdf(state: State, result: Result): Promise<ExportFile>;
   sldPng(state: State, result: Result): Promise<ExportFile>;
   sldDxf(state: State, result: Result): Promise<ExportFile>;
   copyTable(state: State, result: Result): string;
@@ -635,7 +690,9 @@ export interface CabosEngine {
   readonly views: {
     sld(state: State, result: Result): string;
     boards(state: State, result: Result): BoardsView;
+    boardFront(state: State, result: Result, boardId: string): string | null;
     circuitRows(state: State, result: Result): CircuitRow[];
+    manualCableOptions(state: State, result?: Result): ManualCableOptions;
   };
   readonly actions: Actions;
   readonly persistedResult: (state: State, result: Result) => PersistedResult;

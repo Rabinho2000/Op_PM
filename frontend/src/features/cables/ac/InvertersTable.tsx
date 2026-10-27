@@ -1,9 +1,10 @@
+import { useState } from "react";
 import { Card, EmptyState } from "../../../components/ui";
 import type { CabosEngine, CircuitRow, State } from "../engine";
 import type { CableStudyUpdater } from "../useCableStudy";
 import ModelPicker from "./ModelPicker";
 import NumericField from "./NumericField";
-import RouteCard from "./RouteCard";
+import RouteGroupsDialog from "../dialogs/RouteGroupsDialog";
 import { boardOptions, numberPt, rowForInverter, sectionLabel, sectionOptions } from "./utils";
 
 interface InvertersTableProps {
@@ -18,17 +19,25 @@ export default function InvertersTable({ state, rows, engine, readOnly, apply }:
   const catalogs = engine.catalogs;
   const boards = boardOptions(state);
   const inverterCatalogs = catalogs.inverters ?? [];
+  const routeGroups = state.rts ?? [];
+  const [manageRoutesOpen, setManageRoutesOpen] = useState(false);
 
   function applyAction(updater: CableStudyUpdater, debounce = false) {
     apply(updater, debounce ? { debounce: true } : undefined);
   }
 
   return (
-    <Card
+    <>
+      <Card
       title="Inversores"
       icon="activity"
       flush
-      actions={!readOnly ? <button type="button" className="btn btn--sm btn--primary" onClick={() => applyAction((current) => engine.actions.addInverter(current))}>Adicionar inversor</button> : undefined}
+      actions={!readOnly ? (
+        <div className="cable-tab__actions">
+          <button type="button" className="btn btn--sm" onClick={() => setManageRoutesOpen(true)}>Gerir passagens</button>
+          <button type="button" className="btn btn--sm btn--primary" onClick={() => applyAction((current) => engine.actions.addInverter(current))}>Adicionar inversor</button>
+        </div>
+      ) : undefined}
     >
       {state.invs.length === 0 ? (
         <EmptyState
@@ -50,9 +59,8 @@ export default function InvertersTable({ state, rows, engine, readOnly, apply }:
                   <th scope="col">Pnom (kW)</th>
                   <th scope="col">Iac máx. (A)</th>
                   <th scope="col">Cabo</th>
+                  <th scope="col">Passagem</th>
                   <th scope="col">Quadro</th>
-                  <th scope="col">Esteira</th>
-                  <th scope="col">cos φ</th>
                   <th scope="col">Distância (m)</th>
                   <th scope="col">Secção</th>
                   {!readOnly && <th scope="col">Ações</th>}
@@ -64,6 +72,8 @@ export default function InvertersTable({ state, rows, engine, readOnly, apply }:
                   const circuit = rowForInverter(rows, index);
                   const catalog = inverterCatalogs.find((item) => item.modelo === inverter.modelo);
                   const currentBoards = boards.includes(inverter.q) ? boards : [...boards, inverter.q];
+                  const assignedRoute = routeGroups.find((route) => route.id === inverter.rtId);
+                  const routeValue = assignedRoute ? String(assignedRoute.id) : "";
                   const key = id ?? `inverter-${index}`;
                   return (
                     <tr key={key}>
@@ -111,29 +121,27 @@ export default function InvertersTable({ state, rows, engine, readOnly, apply }:
                           </select>
                         )}
                       </td>
+                      <td data-label="Passagem">
+                        {id === undefined || readOnly ? <span>{assignedRoute?.nome ?? "Sem passagem"}</span> : (
+                          <select
+                            className="select select--compact"
+                            aria-label={`Passagem do inversor ${id}`}
+                            value={routeValue}
+                            onChange={(event) => applyAction((current) => engine.actions.assignInverterRoute(current, {
+                              id,
+                              routeId: event.target.value ? Number(event.target.value) : null,
+                            }))}
+                          >
+                            <option value="">Sem passagem</option>
+                            {routeGroups.map((route) => <option key={route.id} value={route.id}>{route.nome}</option>)}
+                          </select>
+                        )}
+                      </td>
                       <td data-label="Quadro">
                         {id === undefined || readOnly ? <span>{inverter.q}</span> : (
                           <select className="select select--compact" aria-label={`Quadro do inversor ${id}`} value={inverter.q} onChange={(event) => applyAction((current) => engine.actions.setInverterBoard(current, { id, value: event.target.value }))}>
                             {currentBoards.map((board) => <option key={board} value={board}>{board}</option>)}
                           </select>
-                        )}
-                      </td>
-                      <td data-label="Esteira">
-                        {id === undefined || readOnly ? <span>{inverter.est || "—"}</span> : (
-                          <input className="input" aria-label={`Esteira do inversor ${id}`} value={inverter.est ?? ""} maxLength={3} placeholder="—" onChange={(event) => applyAction((current) => engine.actions.setInverterField(current, { id, field: "est", value: event.target.value }), true)} />
-                        )}
-                      </td>
-                      <td data-label="cos φ">
-                        {id === undefined || readOnly ? <span>{numberPt(inverter.cos, "")}</span> : (
-                          <NumericField
-                            label={`cos φ do inversor ${id}`}
-                            value={inverter.cos}
-                            min={0.5}
-                            max={1}
-                            step={0.01}
-                            allowEmpty
-                            onValid={(value) => applyAction((current) => engine.actions.setInverterField(current, { id, field: "cos", value }), true)}
-                          />
                         )}
                       </td>
                       <td data-label="Distância (m)">
@@ -171,18 +179,18 @@ export default function InvertersTable({ state, rows, engine, readOnly, apply }:
               </tbody>
             </table>
           </div>
-          <div className="card__body">
-            <h3>Passagem dos cabos dos inversores</h3>
-            <RouteCard
-              route={state.rInv}
-              catalogs={catalogs}
-              label="Passagem dos inversores"
-              disabled={readOnly}
-              onChange={(patch) => applyAction((current) => engine.actions.setInverterRoute(current, patch))}
-            />
-          </div>
         </>
       )}
     </Card>
+    {manageRoutesOpen && (
+      <RouteGroupsDialog
+        engine={engine}
+        state={state}
+        readOnly={readOnly}
+        apply={(updater) => apply(updater)}
+        onClose={() => setManageRoutesOpen(false)}
+      />
+    )}
+    </>
   );
 }

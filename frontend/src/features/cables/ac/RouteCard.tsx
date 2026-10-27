@@ -87,7 +87,7 @@ export default function RouteCard({ route, catalogs, label, disabled = false, on
         <div className="field">
           <label htmlFor={`route-cons-${label}`}>{label}: constituição</label>
           {disabled ? <span>{constitutions.find((item) => item.id === route.cons)?.label ?? route.cons}</span> : (
-            <select id={`route-cons-${label}`} className="select" value={route.cons} onChange={(event) => onChange({ cons: event.target.value })}>
+            <select id={`route-cons-${label}`} className="select" value={route.cons} onChange={(event) => onChange({ cons: event.target.value as Route["cons"] })}>
               {constitutions.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select>
           )}
@@ -96,7 +96,7 @@ export default function RouteCard({ route, catalogs, label, disabled = false, on
           <div className="field">
             <label htmlFor={`route-disp-${label}`}>{label}: disposição</label>
             {disabled ? <span>{dispositions.find((item) => item.id === route.disp)?.label ?? route.disp}</span> : (
-              <select id={`route-disp-${label}`} className="select" value={route.disp} onChange={(event) => onChange({ disp: event.target.value })}>
+              <select id={`route-disp-${label}`} className="select" value={route.disp} onChange={(event) => onChange({ disp: event.target.value as Route["disp"] })}>
                 {dispositions.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
               </select>
             )}

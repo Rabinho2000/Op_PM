@@ -24,7 +24,8 @@ function engineFor(overrides: Record<string, unknown> = {}) {
     },
     exports: {
       sldSvg: vi.fn(async () => ({ blob: new Blob(["svg"]), filename: "estudo.svg" })),
-      sldPng: vi.fn(async () => ({ blob: new Blob(["png"]), filename: "estudo.png" })),
+      sldPdf: vi.fn(async () => ({ blob: new Blob(["pdf"]), filename: "unifilar.pdf" })),
+    sldPng: vi.fn(async () => ({ blob: new Blob(["png"]), filename: "estudo.png" })),
       sldDxf: vi.fn(async () => ({ blob: new Blob(["dxf"]), filename: "estudo.dxf" })),
       bomPdf: vi.fn(async () => ({ blob: new Blob(["pdf"]), filename: "orcamento.pdf" })),
     },
@@ -67,16 +68,18 @@ describe("separador Esquema unifilar", () => {
     expect(zoom).toHaveAttribute("data-pan", "20,15");
   });
 
-  it("chama os três exports e mostra o resultado", async () => {
+  it("chama os quatro exports e mostra o resultado", async () => {
     const engine = engineFor();
     vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:sld");
     vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
     render(<ToastProvider><EsquemaUnifilarTab {...props(engine)} /></ToastProvider>);
 
+    fireEvent.click(screen.getByRole("button", { name: "Descarregar PDF" }));
+    await waitFor(() => expect(engine.exports.sldPdf).toHaveBeenCalledWith(state, result));
     fireEvent.click(screen.getByRole("button", { name: "Descarregar SVG" }));
     await waitFor(() => expect(engine.exports.sldSvg).toHaveBeenCalledWith(state, result));
-    expect(await screen.findByText("Ficheiro descarregado.")).toBeInTheDocument();
+    expect((await screen.findAllByText("Ficheiro descarregado.")).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Descarregar PNG" }));
     await waitFor(() => expect(engine.exports.sldPng).toHaveBeenCalledWith(state, result));
     fireEvent.click(screen.getByRole("button", { name: "Descarregar DXF" }));
@@ -87,6 +90,8 @@ describe("separador Esquema unifilar", () => {
     const engine = engineFor();
     engine.exports.sldSvg = vi.fn(async () => { throw new Error("falha"); });
     render(<ToastProvider><EsquemaUnifilarTab {...props(engine)} /></ToastProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Descarregar PDF" }));
+    await waitFor(() => expect(engine.exports.sldPdf).toHaveBeenCalledWith(state, result));
     fireEvent.click(screen.getByRole("button", { name: "Descarregar SVG" }));
     expect(await screen.findByText("Não foi possível gerar o ficheiro.")).toBeInTheDocument();
   });

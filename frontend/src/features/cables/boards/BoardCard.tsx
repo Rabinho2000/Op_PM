@@ -1,5 +1,6 @@
 import { Alert } from "../../../components/ui";
 import type { BoardCable, BoardDevice, BoardView, Enclosure } from "../engine";
+import { SldViewer } from "../sld/SldViewer";
 import { BoardSpaceSvg } from "./BoardSpaceSvg";
 
 function number(value: number | null | undefined, digits = 1): string {
@@ -77,9 +78,10 @@ function componentSubtotal(value: unknown, items: ComponentItem[]): number | nul
 
 export interface BoardCardProps {
   board: BoardView;
+  frontSvg?: string | null;
 }
 
-export function BoardCard({ board }: BoardCardProps) {
+export function BoardCard({ board, frontSvg }: BoardCardProps) {
   const devices = board.aparelhagem?.length ? board.aparelhagem : board.devices ?? [];
   const cables = board.cabos?.length ? board.cabos : board.cables ?? [];
   const enclosure: Enclosure | null = board.envolventeMinima ?? board.minimumEnclosure ?? null;
@@ -100,7 +102,15 @@ export function BoardCard({ board }: BoardCardProps) {
 
       <div className="cable-board__grid">
         <div className="cable-board__space">
-          {enclosure ? (
+          {frontSvg ? (
+            <>
+              <section className="cable-board__front" aria-label={`Frente Hager do quadro ${board.node}`}>
+                <h4>Frente do quadro · Hager</h4>
+                <SldViewer rawSvg={frontSvg} />
+              </section>
+              {enclosure && <p className="muted small"><strong>{number(enclosure.heightMm, 0)} × {number(enclosure.widthMm, 0)} × {number(enclosure.depthMm, 0)} mm</strong> · {enclosure.ref}<br />Envolvente mínima · {board.isEnd ? "quadro existente" : "tipo mural"}</p>}
+            </>
+          ) : enclosure ? (
             <>
               <BoardSpaceSvg enclosure={enclosure} freeCableZoneMm={board.freeCableZoneMm} maxRadiusMm={maxRadius} />
               <p className="muted small"><strong>{number(enclosure.heightMm, 0)} × {number(enclosure.widthMm, 0)} × {number(enclosure.depthMm, 0)} mm</strong> · {enclosure.ref}<br />Envolvente mínima · {board.isEnd ? "quadro existente" : "tipo mural"}</p>

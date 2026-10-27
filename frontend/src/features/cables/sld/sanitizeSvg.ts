@@ -6,6 +6,8 @@ const EMPTY_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" 
  */
 const ELEMENT_ATTRIBUTES: Readonly<Record<string, ReadonlySet<string>>> = {
   svg: new Set(["xmlns", "width", "height", "viewbox", "font-family", "role", "aria-label"]),
+  title: new Set(),
+  g: new Set(["transform"]),
   line: new Set(["x1", "y1", "x2", "y2", "stroke", "stroke-width", "stroke-dasharray"]),
   path: new Set(["d", "stroke", "stroke-width", "fill"]),
   rect: new Set(["x", "y", "width", "height", "rx", "fill", "stroke", "stroke-width", "stroke-dasharray"]),
