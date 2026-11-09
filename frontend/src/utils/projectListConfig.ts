@@ -3,6 +3,7 @@ import type {
   ProjectListColumn,
   ProjectListConfig,
   ProjectListFilters,
+  ProjectListRowOptions,
   ProjectListSortBy,
   ProjectListSortDirection,
 } from "../api/projectListViews";
@@ -31,6 +32,10 @@ export const PROJECT_LIST_COLUMN_LABELS: Record<ProjectListColumn, string> = {
   installer: "Instalador",
   start_date: "Início",
   power_kwp: "Potência (kWp)",
+  client: "Cliente",
+  address: "Morada",
+  contact: "Contacto e email",
+  notes: "Notas",
 };
 
 export const PROJECT_LIST_SORT_LABELS: Record<ProjectListSortBy, string> = {
@@ -52,6 +57,10 @@ export const PROJECT_LIST_COLUMN_ORDER: ProjectListColumn[] = [
   "installer",
   "start_date",
   "power_kwp",
+  "client",
+  "address",
+  "contact",
+  "notes",
 ];
 const ALL_PROJECT_LIST_COLUMNS = PROJECT_LIST_COLUMN_ORDER;
 const SORT_KEYS = Object.keys(PROJECT_LIST_SORT_LABELS) as ProjectListSortBy[];
@@ -71,6 +80,13 @@ export const defaultProjectListConfig = (): ProjectListConfig => ({
   sort_by: "name",
   sort_direction: "asc",
   filters: defaultProjectListFilters(),
+  row_options: defaultProjectListRowOptions(),
+});
+
+export const defaultProjectListRowOptions = (): ProjectListRowOptions => ({
+  show_row_actions: true,
+  show_warning_tags: true,
+  inline_controls: true,
 });
 
 function isProjectListColumn(value: unknown): value is ProjectListColumn {
@@ -88,8 +104,7 @@ function isProjectListSortDirection(value: unknown): value is ProjectListSortDir
 function normalizeColumns(columns: unknown): ProjectListColumn[] {
   if (!Array.isArray(columns)) return [...DEFAULT_PROJECT_LIST_COLUMNS];
   const seen = new Set<ProjectListColumn>();
-  const normalized: ProjectListColumn[] = ["project"];
-  seen.add("project");
+  const normalized: ProjectListColumn[] = [];
   if (Array.isArray(columns)) {
     for (const value of columns) {
       if (!isProjectListColumn(value) || seen.has(value)) continue;
@@ -103,8 +118,10 @@ function normalizeColumns(columns: unknown): ProjectListColumn[] {
 export function normalizeProjectListConfig(input: Partial<ProjectListConfig> | null | undefined): ProjectListConfig {
   const fallback = defaultProjectListConfig();
   const filters: Partial<ProjectListFilters> = input?.filters ?? {};
+  const rowOptions: Partial<ProjectListRowOptions> = input?.row_options ?? {};
+  const columns = normalizeColumns(input?.columns);
   return {
-    columns: normalizeColumns(input?.columns),
+    columns: columns.length > 0 ? columns : [...fallback.columns],
     sort_by: isProjectListSortBy(input?.sort_by) ? input.sort_by : fallback.sort_by,
     sort_direction: isProjectListSortDirection(input?.sort_direction) ? input.sort_direction : fallback.sort_direction,
     filters: {
@@ -115,6 +132,11 @@ export function normalizeProjectListConfig(input: Partial<ProjectListConfig> | n
       active: filters.active === "inactive" || filters.active === "all" || filters.active === "active" ? filters.active : fallback.filters.active,
       startFrom: typeof filters.startFrom === "string" ? filters.startFrom : fallback.filters.startFrom,
       startTo: typeof filters.startTo === "string" ? filters.startTo : fallback.filters.startTo,
+    },
+    row_options: {
+      show_row_actions: typeof rowOptions.show_row_actions === "boolean" ? rowOptions.show_row_actions : fallback.row_options.show_row_actions,
+      show_warning_tags: typeof rowOptions.show_warning_tags === "boolean" ? rowOptions.show_warning_tags : fallback.row_options.show_warning_tags,
+      inline_controls: typeof rowOptions.inline_controls === "boolean" ? rowOptions.inline_controls : fallback.row_options.inline_controls,
     },
   };
 }

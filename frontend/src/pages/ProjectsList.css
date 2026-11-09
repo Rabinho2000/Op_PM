@@ -170,6 +170,10 @@
   flex: 0 0 auto;
 }
 
+.projects-list__column-menu > .btn {
+  min-height: 40px;
+}
+
 .projects-list__column-dialog {
   position: absolute;
   z-index: 20;
@@ -217,6 +221,29 @@
   gap: 4px;
 }
 
+.projects-list__row-options {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.projects-list__row-options legend {
+  padding: 0 4px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.projects-list__notes {
+  display: block;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 760px) {
   .projects-list__settings {
     align-items: stretch;
@@ -225,6 +252,27 @@
   .projects-list__settings > .field,
   .projects-list__saved-view-field {
     flex: 1 1 180px !important;
+  }
+
+  .projects-list__column-menu > .btn,
+  .projects-list__column-dialog .btn,
+  .projects-list__column-order .btn {
+    min-height: 44px;
+  }
+
+  .projects-list__column-option {
+    min-height: 44px;
+  }
+
+  .projects-list__column-dialog {
+    position: fixed;
+    z-index: 40;
+    top: 16px;
+    right: 16px;
+    left: 16px;
+    width: auto;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
   }
 
   .projects-list__view-actions {
@@ -252,12 +300,8 @@
     flex-basis: 100%;
   }
 
-  .projects-list__column-dialog {
-    position: fixed;
-    top: 16px;
-    right: 16px;
-    left: 16px;
-    width: auto;
+  .projects-list__column-order .btn {
+    min-width: 44px;
   }
 }
 

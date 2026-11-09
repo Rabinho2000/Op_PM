@@ -18,6 +18,7 @@ import {
   ProjectListColumn,
   ProjectListConfig,
   ProjectListFilters,
+  ProjectListRowOptions,
   ProjectListView,
   updateProjectListPreferences,
   updateProjectListView,
@@ -38,6 +39,7 @@ import {
   DEFAULT_PROJECT_LIST_COLUMNS,
   defaultProjectListConfig,
   defaultProjectListFilters,
+  defaultProjectListRowOptions,
   normalizeProjectListConfig,
   PROJECT_LIST_COLUMN_LABELS,
   PROJECT_LIST_SORT_LABELS,
@@ -135,12 +137,16 @@ function paramsForConfig(params: URLSearchParams, config: ProjectListConfig): UR
 function ColumnConfigurator({
   columns,
   availableColumns,
+  rowOptions,
   onChange,
+  onRowOptionsChange,
   onRestore,
 }: {
   columns: ProjectListColumn[];
   availableColumns: ProjectListColumn[];
+  rowOptions: ProjectListRowOptions;
   onChange: (columns: ProjectListColumn[]) => void;
+  onRowOptionsChange: (options: ProjectListRowOptions) => void;
   onRestore: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -172,9 +178,8 @@ function ColumnConfigurator({
   }, [open]);
 
   const toggleColumn = (column: ProjectListColumn, checked: boolean) => {
-    if (column === "project") return;
     if (checked) onChange(columns.includes(column) ? columns : [...columns, column]);
-    else onChange(columns.filter((current) => current !== column));
+    else if (columns.length > 1) onChange(columns.filter((current) => current !== column));
   };
 
   const moveColumn = (column: ProjectListColumn, offset: -1 | 1) => {
@@ -183,7 +188,6 @@ function ColumnConfigurator({
     if (index < 0 || target < 0 || target >= columns.length) return;
     const next = [...columns];
     [next[index], next[target]] = [next[target], next[index]];
-    if (next[0] !== "project") return;
     onChange(next);
   };
 
@@ -197,14 +201,14 @@ function ColumnConfigurator({
         aria-controls="project-list-column-dialog"
         onClick={() => setOpen((current) => !current)}
       >
-        Colunas
+        Personalizar lista
       </button>
       {open && (
-        <div id="project-list-column-dialog" className="projects-list__column-dialog" role="dialog" aria-label="Configurar colunas">
+        <div id="project-list-column-dialog" className="projects-list__column-dialog" role="dialog" aria-label="Personalizar lista">
           <div className="projects-list__column-dialog-header">
             <strong>Colunas visíveis</strong>
             <button type="button" className="btn btn--sm btn--ghost" onClick={close}>
-              Fechar configuração de colunas
+              Fechar personalização da lista
             </button>
           </div>
           <div className="projects-list__column-options">
@@ -219,11 +223,11 @@ function ColumnConfigurator({
                       type="checkbox"
                       aria-label={`Mostrar ${label}`}
                       checked={visible}
-                      disabled={column === "project"}
+                      disabled={visible && columns.length === 1}
                       onChange={(event) => toggleColumn(column, event.target.checked)}
                     />
                     {label}
-                    {column === "project" && <span className="small muted">obrigatória</span>}
+                    {visible && columns.length === 1 && <span className="small muted">mínimo 1</span>}
                   </label>
                   {visible && (
                     <span className="projects-list__column-order">
@@ -254,6 +258,43 @@ function ColumnConfigurator({
           <button type="button" className="btn btn--sm btn--ghost" onClick={onRestore}>
             Restaurar colunas padrão
           </button>
+          <fieldset className="projects-list__row-options">
+            <legend>Opções da linha</legend>
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                aria-label="Mostrar ações na linha"
+                checked={rowOptions.show_row_actions}
+                onChange={(event) => onRowOptionsChange({ ...rowOptions, show_row_actions: event.target.checked })}
+              />
+              Mostrar ações na linha
+            </label>
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                aria-label="Mostrar etiquetas de aviso"
+                checked={rowOptions.show_warning_tags}
+                onChange={(event) => onRowOptionsChange({ ...rowOptions, show_warning_tags: event.target.checked })}
+              />
+              Mostrar etiquetas de aviso
+            </label>
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                aria-label="Controlos editáveis inline"
+                checked={rowOptions.inline_controls}
+                onChange={(event) => onRowOptionsChange({ ...rowOptions, inline_controls: event.target.checked })}
+              />
+              Controlos editáveis inline (PM e estado)
+            </label>
+          </fieldset>
+          <button
+            type="button"
+            className="btn btn--sm btn--ghost"
+            onClick={() => onRowOptionsChange(defaultProjectListRowOptions())}
+          >
+            Restaurar opções da linha padrão
+          </button>
         </div>
       )}
     </div>
@@ -270,6 +311,7 @@ function renderProjectCell(
   onChanged: (updated: Project) => void,
   onDelete: (project: Project) => void,
   origin: { pathname: string; search: string; hash: string },
+  rowOptions: ProjectListRowOptions,
 ) {
   const missing = missingLabels(project);
   const dueOverdue = project.next_task_due_date !== null && project.next_task_due_date < today;
@@ -289,7 +331,7 @@ function renderProjectCell(
             {project.start_date && ` · início ${formatDatePt(project.start_date)}`}
             {project.installer_name && ` · ${project.installer_name}${project.installer_team_name ? ` / ${project.installer_team_name}` : ""}`}
           </span>
-          {project.can_delete === true && (
+          {rowOptions.show_row_actions && project.can_delete === true && (
             <div style={{ marginTop: 6 }}>
               <button type="button" className="btn btn--sm btn--danger" onClick={() => onDelete(project)}>
                 Apagar projeto
@@ -299,11 +341,11 @@ function renderProjectCell(
         </>
       );
     case "pm":
-      return (
+      return rowOptions.inline_controls ? (
         <PmInlineSelect project={project} people={people} onChanged={onChanged} />
-      );
+      ) : <span>{project.pm_display_name ?? "Sem PM"}</span>;
     case "lifecycle":
-      return (
+      return rowOptions.inline_controls ? (
         <>
           <LifecycleStatusControl project={project} statuses={statuses} onChanged={onChanged} />
           {!project.is_active && (
@@ -311,6 +353,11 @@ function renderProjectCell(
               <Badge>Inativo</Badge>
             </div>
           )}
+        </>
+      ) : (
+        <>
+          <span>{project.lifecycle_status ? statuses.find((status) => status.code === project.lifecycle_status)?.label ?? project.lifecycle_status : "Sem estado"}</span>
+          {!project.is_active && <span className="cell-sub">Inativo</span>}
         </>
       );
     case "progress":
@@ -338,6 +385,7 @@ function renderProjectCell(
     case "overdue":
       return project.overdue_tasks_count > 0 ? <Badge tone="danger">{project.overdue_tasks_count}</Badge> : <span className="muted">0</span>;
     case "warnings":
+      if (!rowOptions.show_warning_tags) return <span className="muted">—</span>;
       return (
         <div className="badges">
           {project.photos_pending_warning && (
@@ -387,6 +435,27 @@ function renderProjectCell(
       return project.start_date ? formatDatePt(project.start_date) : <span className="muted">—</span>;
     case "power_kwp":
       return project.power_kwp === null ? <span className="muted">—</span> : `${project.power_kwp} kWp`;
+    case "client":
+      return project.client_name?.trim() ? project.client_name : <span className="muted">—</span>;
+    case "address":
+      return project.address?.trim() ? project.address : <span className="muted">—</span>;
+    case "contact": {
+      const contact = project.client_contact?.trim();
+      const email = project.client_email?.trim();
+      if (!contact && !email) return <span className="muted">—</span>;
+      return (
+        <>
+          {contact && <span>{contact}</span>}
+          {email && <span className="cell-sub">{email}</span>}
+        </>
+      );
+    }
+    case "notes":
+      return project.notes?.trim() ? (
+        <span className="projects-list__notes" title={project.notes} aria-label={project.notes} tabIndex={0}>
+          {project.notes}
+        </span>
+      ) : <span className="muted">—</span>;
   }
 }
 
@@ -551,7 +620,8 @@ export default function ProjectsList() {
     commitConfig((current) => ({ ...current, filters: { ...current.filters, ...patch } }));
 
   const lifecycleViewState = lifecycleView(lifecycle);
-  const visibleColumns = config.columns.filter((column) => column !== "payments" || canViewPayments);
+  const filteredColumns = config.columns.filter((column) => column !== "payments" || canViewPayments);
+  const visibleColumns = filteredColumns.length > 0 ? filteredColumns : ["project" as const];
   const availableColumns = PROJECT_LIST_COLUMN_ORDER.filter((column) => column !== "payments" || canViewPayments);
   const defaultFilters = defaultProjectListFilters();
   const hasFilters =
@@ -787,7 +857,9 @@ export default function ProjectsList() {
         <ColumnConfigurator
           columns={config.columns}
           availableColumns={availableColumns}
+          rowOptions={config.row_options}
           onChange={(columns) => commitConfig((current) => ({ ...current, columns }))}
+          onRowOptionsChange={(row_options) => commitConfig((current) => ({ ...current, row_options }))}
           onRestore={() => commitConfig((current) => ({ ...current, columns: [...DEFAULT_PROJECT_LIST_COLUMNS] }))}
         />
         <div className="field">
@@ -976,6 +1048,7 @@ export default function ProjectsList() {
                                   (updated) => setProjects((current) => current && current.map((row) => (row.id === updated.id ? updated : row))),
                                   setDeletingProject,
                                   location,
+                                  config.row_options,
                                 )}
                               </td>
                             ))}

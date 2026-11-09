@@ -3878,3 +3878,29 @@ agregada por página e só inclui os valores quando o utilizador tem
 - `python -m compileall -q app tests` passou.
 - No frontend, Vitest passou com 93 ficheiros e 804 testes, `npm run lint` passou e `npm run build -- --configLoader runner` terminou com sucesso (com aviso de bundle grande).
 - Os testes HTTP desta feature foram tentados com TestClient, mas a primeira chamada GET ficou bloqueada no sandbox; não estão contados como verificados e devem ser executados pelo coordenador.
+
+## D-115 — Preferência pessoal para a apresentação da lista de projetos
+
+Cada utilizador pode guardar a sua própria ordem e seleção de colunas, além de
+três opções de linha: ações, etiquetas de aviso e controlos inline. O projeto
+continua a usar a API de preferências e vistas pessoais existente, cujo JSON
+fica associado à conta; não há predefinição por papel nem migração. Configs
+anteriores sem `row_options` recebem `true` nas três opções, preservando o
+comportamento atual.
+
+As novas colunas Cliente, Morada, Contacto e email e Notas ficam desligadas por
+omissão. A lista usa apenas os campos já presentes no read model do projeto;
+campos anulados por esse read model continuam a aparecer vazios. As opções de
+linha controlam apenas o que o cliente mostra: apagar, editar o PM e alterar o
+estado continuam sujeitos às capacidades calculadas pelo servidor para cada
+projeto.
+
+**Verificado:**
+
+- `npm run lint` passou (`tsc --noEmit`).
+- `npx vitest run --configLoader runner` passou com 93 ficheiros e 808 testes.
+- `npm run build -- --configLoader runner` terminou com sucesso; o Vite assinalou o bundle principal acima de 500 kB.
+- `python -m compileall -q app tests` passou.
+- Validação final pelo coordenador: backend completo **1468 passed, 12 skipped**; frontend **93 ficheiros, 809 testes**; lint e build aprovados.
+- Revisão independente aprovada após corrigir o fallback para Projeto quando a filtragem de permissões remove todas as colunas.
+- Browser em staging sintético: reordenação por teclado, ocultação de ações/controlos, coluna Cliente, persistência após reload, mobile 390 px sem overflow horizontal e sem erros JavaScript.

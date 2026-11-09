@@ -11,7 +11,17 @@ export type ProjectListColumn =
   | "payments"
   | "installer"
   | "start_date"
-  | "power_kwp";
+  | "power_kwp"
+  | "client"
+  | "address"
+  | "contact"
+  | "notes";
+
+export interface ProjectListRowOptions {
+  show_row_actions: boolean;
+  show_warning_tags: boolean;
+  inline_controls: boolean;
+}
 
 export type ProjectListSortBy = "name" | "start_date" | "power_kwp" | "created_at";
 export type ProjectListSortDirection = "asc" | "desc";
@@ -32,6 +42,7 @@ export interface ProjectListConfig {
   sort_by: ProjectListSortBy;
   sort_direction: ProjectListSortDirection;
   filters: ProjectListFilters;
+  row_options: ProjectListRowOptions;
 }
 
 export interface ProjectListPreferences {

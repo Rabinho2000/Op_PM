@@ -81,6 +81,11 @@ const DEFAULT_CONFIG: ProjectListConfig = {
   columns: ["project", "pm", "lifecycle", "progress", "next_task", "overdue", "warnings"],
   sort_by: "name",
   sort_direction: "asc",
+  row_options: {
+    show_row_actions: true,
+    show_warning_tags: true,
+    inline_controls: true,
+  },
   filters: {
     search: "",
     status: "",
@@ -451,8 +456,12 @@ describe("ProjectsList (filtros)", () => {
     const headings = () => [...table.querySelectorAll("thead th")].map((cell) => cell.textContent);
 
     expect(headings()).toEqual(["Projeto", "PM", "Estado", "Tarefas e progresso", "Próxima tarefa", "Atrasadas", "Avisos"]);
-    fireEvent.click(screen.getByRole("button", { name: "Colunas" }));
-    expect(screen.getByRole("dialog", { name: "Configurar colunas" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Personalizar lista" }));
+    expect(screen.getByRole("dialog", { name: "Personalizar lista" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Descer coluna Projeto" }));
+    expect(headings()).toEqual(["PM", "Projeto", "Estado", "Tarefas e progresso", "Próxima tarefa", "Atrasadas", "Avisos"]);
+    fireEvent.click(screen.getByRole("button", { name: "Subir coluna Projeto" }));
+    expect(headings()).toEqual(["Projeto", "PM", "Estado", "Tarefas e progresso", "Próxima tarefa", "Atrasadas", "Avisos"]);
     fireEvent.click(screen.getByRole("checkbox", { name: "Mostrar PM" }));
     expect(headings()).toEqual(["Projeto", "Estado", "Tarefas e progresso", "Próxima tarefa", "Atrasadas", "Avisos"]);
     fireEvent.click(screen.getByRole("button", { name: "Subir coluna Tarefas e progresso" }));
@@ -460,7 +469,67 @@ describe("ProjectsList (filtros)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Restaurar colunas padrão" }));
     expect(headings()).toEqual(["Projeto", "PM", "Estado", "Tarefas e progresso", "Próxima tarefa", "Atrasadas", "Avisos"]);
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "Configurar colunas" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Personalizar lista" })).not.toBeInTheDocument();
+  });
+
+  it("renderiza as colunas pela ordem da preferência guardada", async () => {
+    getProjectListPreferences.mockResolvedValue({
+      config: { ...DEFAULT_CONFIG, columns: ["notes", "client", "project", "contact"] },
+    });
+    renderWithProviders(<ProjectsList />, { me: makeMe() });
+
+    await screen.findByRole("columnheader", { name: "Notas" });
+    const headings = [...screen.getByRole("table").querySelectorAll("thead th")].map((cell) => cell.textContent);
+    expect(headings).toEqual(["Notas", "Cliente", "Projeto", "Contacto e email"]);
+  });
+
+  it("aplica opções de linha sem ultrapassar as permissões devolvidas pela API", async () => {
+    const project = makeProject({
+      can_delete: true,
+      can_change_status: true,
+      editable_fields: ["pm_person_id"],
+      has_email: false,
+      has_contact: false,
+      has_coordinates: false,
+    });
+    listProjects.mockResolvedValue([project]);
+    renderWithProviders(<ProjectsList />, { me: makeMe(), route: "/projects?estado=todos" });
+
+    await screen.findByRole("button", { name: "Apagar projeto" });
+    expect(screen.getByText("sem email")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: `PM do projeto ${project.name}` })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Estado do projeto" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Personalizar lista" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Mostrar ações na linha" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Mostrar etiquetas de aviso" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Controlos editáveis inline" }));
+
+    expect(screen.queryByRole("button", { name: "Apagar projeto" })).not.toBeInTheDocument();
+    expect(screen.queryByText("sem email")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: `PM do projeto ${project.name}` })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Estado do projeto" })).not.toBeInTheDocument();
+    expect(screen.getByText("PM Sintético Um", { selector: "span" })).toBeInTheDocument();
+    expect(screen.getAllByText("Construção").length).toBeGreaterThan(1);
+  });
+
+  it("mostra um traço para campos nulos nas novas colunas", async () => {
+    const project = makeProject({
+      client_name: null,
+      address: null,
+      client_contact: null,
+      client_email: null,
+      notes: null as never,
+    });
+    getProjectListPreferences.mockResolvedValue({
+      config: { ...DEFAULT_CONFIG, columns: ["client", "address", "contact", "notes"] },
+    });
+    listProjects.mockResolvedValue([project]);
+    renderWithProviders(<ProjectsList />, { me: makeMe() });
+
+    await screen.findByRole("columnheader", { name: "Notas" });
+    const row = screen.getByRole("table").querySelector("tbody.projects-list__group-body tr");
+    expect([...row!.querySelectorAll("td")].map((cell) => cell.textContent?.trim())).toEqual(["—", "—", "—", "—"]);
   });
 
   it("aplica uma vista pessoal e só confirma atualizar, renomear e remover após a API responder", async () => {
@@ -500,9 +569,9 @@ describe("ProjectsList (filtros)", () => {
     renderWithProviders(<ProjectsList />, { me: makeMe() });
     await screen.findByText("Projeto Sintético Sem PM");
     fireEvent.change(screen.getByLabelText("Tarefas"), { target: { value: "concluido" } });
-    fireEvent.click(screen.getByRole("button", { name: "Colunas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Personalizar lista" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Mostrar PM" }));
-    fireEvent.click(screen.getByRole("button", { name: "Fechar configuração de colunas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fechar personalização da lista" }));
     fireEvent.click(screen.getByRole("button", { name: "Guardar preferência de abertura" }));
 
     await waitFor(() =>
@@ -657,7 +726,33 @@ describe("ProjectsList (filtros)", () => {
 
     await screen.findByText(makeProject().name);
     expect(screen.queryByRole("columnheader", { name: "Pagamentos" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Colunas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Personalizar lista" }));
     expect(screen.queryByLabelText("Mostrar Pagamentos")).not.toBeInTheDocument();
+  });
+
+  it("usa Projeto como fallback visual quando a preferência só tem Pagamentos sem permissão", async () => {
+    const project = makeProject({
+      payments: {
+        adjudicacao: true,
+        entrada_obra: true,
+        fim_obra: false,
+        certificado_final: true,
+      },
+    });
+    getProjectListPreferences.mockResolvedValue({
+      config: { ...DEFAULT_CONFIG, columns: ["payments"] },
+    });
+    listProjects.mockResolvedValue([project]);
+
+    renderWithProviders(<ProjectsList />, {
+      me: makeMe({ permissions: ["project.view_all"] }),
+      route: "/projects?estado=todos",
+    });
+
+    expect(await screen.findByRole("columnheader", { name: "Projeto" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: project.name })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Pagamentos" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Adjudicação|Entrada de Obra|Fim de Obra|Certificado final/)).not.toBeInTheDocument();
+    expect(updateProjectListPreferences).not.toHaveBeenCalled();
   });
 });
