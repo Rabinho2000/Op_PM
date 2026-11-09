@@ -127,10 +127,10 @@ def set_project_payment_milestone(
     # outside the project scope can never block authorised writers.
     _visible_project(db, ctx, project_id)
     ctx.require("payment.edit")
+    ctx.require("payment.view")
     project = db.query(Project).filter(Project.id == project_id).with_for_update().one_or_none()
     if project is None or not can_view_project(ctx, project):
         raise ProjectPaymentsNotFound
-    ctx.require("payment.view")
     if not can_edit_project_payments(ctx, project):
         raise PermissionDenied("payment.edit")
     if milestone not in PAYMENT_MILESTONES:
