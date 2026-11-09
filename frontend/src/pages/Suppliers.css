@@ -1,0 +1,40 @@
+.suppliers-company-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: end;
+}
+
+.suppliers-company-tabs [aria-pressed="true"] {
+  background: var(--surface-selected, var(--surface-2));
+  border-color: var(--brand-fill, currentColor);
+}
+
+.supplier-company-field {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  align-items: center;
+}
+
+.supplier-company-field label {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.supplier-company-field input {
+  width: 18px;
+  height: 18px;
+}
+
+@media (max-width: 600px) {
+  .suppliers-company-tabs {
+    width: 100%;
+  }
+
+  .suppliers-company-tabs .btn {
+    flex: 1 1 calc(50% - 8px);
+  }
+}

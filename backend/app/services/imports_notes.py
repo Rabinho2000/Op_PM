@@ -24,7 +24,7 @@ import uuid
 from html.parser import HTMLParser
 from urllib.parse import unquote, unquote_to_bytes
 
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -1738,18 +1738,24 @@ def map_payload_to_fields(payload: dict, *, already_sanitized: bool = False) -> 
     }
 
 
-def find_matching_projects(db: Session, mapped: dict) -> tuple[list[Project], str]:
-    """Procura projeto existente por email, depois telefone, depois
-    morada normalizada — nunca por nome (D-004). Devolve os candidatos e
-    a estratégia usada."""
+def find_matching_projects(db: Session, mapped: dict) -> tuple[list[Project], str, bool]:
+    """Find active candidates by email, phone, then normalized address.
+
+    The third result reports any identity collision with a soft-deleted
+    project. Deleted projects are never candidates, but their existence must
+    prevent the import from treating the row as new (or choosing an active
+    candidate arbitrarily when both kinds match).
+    """
+    matches_by_strategy: list[tuple[str, list[Project]]] = []
+
     email = mapped["project"].get("client_email")
     if email:
         matches = [
-            project for project in db.query(Project).filter(Project.client_email.isnot(None)).all()
+            project
+            for project in db.query(Project).filter(Project.client_email.isnot(None)).all()
             if _normalize_email(project.client_email) == _normalize_email(email)
         ]
-        if matches:
-            return matches, "email"
+        matches_by_strategy.append(("email", matches))
 
     phone = mapped["installation"].get("contact_phone")
     if phone:
@@ -1760,18 +1766,27 @@ def find_matching_projects(db: Session, mapped: dict) -> tuple[list[Project], st
             .all()
             if _normalize_phone(installation.contact_phone) == _normalize_phone(phone)
         ]
-        if matches:
-            return matches, "phone"
+        matches_by_strategy.append(("phone", matches))
 
     address = mapped["project"].get("address")
     normalized_address = _normalize(address)
     if normalized_address:
         candidates = db.query(Project).filter(Project.address.isnot(None)).all()
         matches = [p for p in candidates if _normalize(p.address) == normalized_address]
-        if matches:
-            return matches, "address"
+        matches_by_strategy.append(("address", matches))
 
-    return [], "none"
+    active_candidates: list[Project] = []
+    strategy = "none"
+    deleted_match = False
+    for candidate_strategy, matches in matches_by_strategy:
+        active = [project for project in matches if project.deleted_at is None]
+        if len(active) != len(matches):
+            deleted_match = True
+        if not active_candidates and active:
+            active_candidates = active
+            strategy = candidate_strategy
+
+    return active_candidates, strategy, deleted_match
 
 
 def preview_notes_import(
@@ -1814,7 +1829,7 @@ def preview_notes_import(
         raise
     except (ValueError, OverflowError, RecursionError, TypeError) as exc:
         raise NotesImportError("Dados importados inválidos ou demasiado complexos.") from exc
-    candidates, strategy = find_matching_projects(db, mapped)
+    candidates, strategy, deleted_match = find_matching_projects(db, mapped)
 
     source_type = SOURCE_TYPE_NOTES_JSON if lower_name.endswith(".json") else SOURCE_TYPE_NOTES_HTML
     batch = FieldImportBatch(
@@ -1832,14 +1847,15 @@ def preview_notes_import(
             db.add(batch)
             db.flush()
 
-        is_new = len(candidates) == 0
-        target_project = candidates[0] if len(candidates) == 1 else None
+        is_blocked = deleted_match
+        is_new = not candidates and not is_blocked
+        target_project = candidates[0] if len(candidates) == 1 and not is_blocked else None
         record = FieldImportRecord(
             batch_id=batch.id,
             target_project_id=target_project.id if target_project else None,
             is_new_project=is_new,
-            match_strategy="ambiguous" if len(candidates) > 1 else strategy,
-            candidate_project_ids_json=json.dumps([str(p.id) for p in candidates]),
+            match_strategy="unavailable" if is_blocked else "ambiguous" if len(candidates) > 1 else strategy,
+            candidate_project_ids_json=json.dumps([] if is_blocked else [str(p.id) for p in candidates]),
             mapped_fields_json=_serialize_safe_payload(mapped, already_sanitized=True),
         )
         db.add(record)
@@ -1925,6 +1941,39 @@ def _values_equal(left: object, right: object) -> bool:
 
 class BatchNotFoundError(NotesImportError):
     pass
+
+
+# Fixed two-key PostgreSQL advisory-lock namespace: ASCII-ish "NOTE" / "IMPT".
+# Keep these stable; they serialize project creation performed by this importer.
+_NOTES_PROJECT_LOCK_CLASS = 0x4E4F5445
+_NOTES_PROJECT_LOCK_OBJECT = 0x494D5054
+
+
+def _lock_notes_project_creation(db: Session) -> None:
+    """Serialize new-project resolution across notes-import batches on PostgreSQL.
+
+    The lock is transaction-scoped and must be acquired before the identity
+    recheck. READ COMMITTED is required so a waiter gets a fresh snapshot after
+    the prior importer commits; fail closed rather than use an older snapshot.
+    SQLite keeps its existing write-transaction serialization in
+    ``_lock_pending_batch`` / the configured ``BEGIN IMMEDIATE`` path.
+
+    This protects competing notes imports, not project creation by unrelated
+    application writers.
+    """
+    if db.get_bind().dialect.name != "postgresql":
+        return
+
+    isolation_level = db.execute(text("SHOW transaction_isolation")).scalar_one()
+    if str(isolation_level).lower() != "read committed":
+        raise NotesImportError(
+            "A criação de projetos por importação requer isolamento READ COMMITTED."
+        )
+
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(:lock_class, :lock_object)"),
+        {"lock_class": _NOTES_PROJECT_LOCK_CLASS, "lock_object": _NOTES_PROJECT_LOCK_OBJECT},
+    )
 
 
 def _lock_pending_batch(db: Session, batch_id: uuid.UUID) -> FieldImportBatch:
@@ -2059,6 +2108,8 @@ def apply_notes_import(
         raise NotesImportError("Dados de staging inválidos — o lote não pode ser aplicado.") from exc
     if not isinstance(mapped, dict):
         raise NotesImportError("Dados de staging inválidos — o mapeamento não é um objeto.")
+    if record.match_strategy == "unavailable":
+        raise NotesImportError("Correspondência indisponível — faça novo preview.")
 
     if target_project_id is not None and target_project_id not in candidate_ids:
         db.flush()
@@ -2079,10 +2130,14 @@ def apply_notes_import(
             db.flush()
             raise NotesImportError("O alvo desta importação ambígua já foi selecionado explicitamente.")
         if record.target_project_id is None:
-            record.target_project_id = selected_target
-            target_project = db.query(Project).filter(Project.id == selected_target).one_or_none()
+            target_project = (
+                db.query(Project)
+                .filter(Project.id == selected_target, Project.deleted_at.is_(None))
+                .one_or_none()
+            )
             if target_project is None:
                 raise NotesImportError("Projeto alvo não encontrado.")
+            record.target_project_id = selected_target
             _create_conflicts_for_record(db, record=record, target_project=target_project, mapped=mapped)
             db.flush()
             db.flush()
@@ -2092,6 +2147,11 @@ def apply_notes_import(
             )
 
     if record.is_new_project and selected_target is None:
+        _lock_notes_project_creation(db)
+        current_candidates, _, deleted_match = find_matching_projects(db, mapped)
+        if current_candidates or deleted_match:
+            db.flush()
+            raise NotesImportError("A correspondência mudou desde o preview — faça novo preview antes de aplicar.")
         project = Project(name=mapped["project"].get("client_name") or "Projeto sem nome (importação)")
         for field_name, value in mapped["project"].items():
             setattr(project, field_name, value)
@@ -2101,7 +2161,11 @@ def apply_notes_import(
         if selected_target is None:
             db.flush()
             raise NotesImportError("Projeto alvo não encontrado.")
-        project_query = db.query(Project).populate_existing().filter(Project.id == selected_target)
+        project_query = (
+            db.query(Project)
+            .populate_existing()
+            .filter(Project.id == selected_target, Project.deleted_at.is_(None))
+        )
         if db.get_bind().dialect.name == "postgresql":
             project_query = project_query.with_for_update()
         project = project_query.one_or_none()

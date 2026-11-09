@@ -13,12 +13,6 @@ import {
   Project,
   Task,
 } from "../api/client";
-import {
-  formatSignedTimeBankDuration,
-  getTimeBankSummary,
-  listTimeBankAdjustments,
-  listTimeBankEntries,
-} from "../api/timeBank";
 import { useSession } from "../session/SessionContext";
 import { hasInstallerCapability, INSTALLER_ACCESS_PERMISSIONS } from "../session/installerAccess";
 import { formatQuantity } from "../utils/quantities";
@@ -233,33 +227,6 @@ export function InstallerInventoryPage() {
       {!error && !value && <div className="card"><LoadingState label="A carregar inventário…" /></div>}
       {!error && value && value.items.length === 0 && <div className="card"><EmptyState title="Sem inventário associado" /></div>}
       {!error && value && value.items.length > 0 && <Card title={`${value.total} artigo(s) no âmbito`} icon="database" className="installer-inventory-card"><div style={{ overflowX: "auto", maxWidth: "100%" }}><table><thead><tr><th>Projeto</th><th>Artigo</th><th>Unidade</th><th>Necessário</th><th>Reservado</th><th>Consumido</th><th>Entregue</th><th>Localização</th></tr></thead><tbody>{value.items.map((item, index) => <tr key={`${item.project_id}-${item.article_name}-${index}`}><td>{item.project_name ?? item.project_id}</td><td>{item.article_name}</td><td>{item.unit}</td><td>{formatQuantity(item.required_quantity, item.unit)}</td><td>{formatQuantity(item.reserved_quantity, item.unit)}</td><td>{formatQuantity(item.consumed_quantity, item.unit)}</td><td>{formatQuantity(item.delivered_quantity, item.unit)}</td><td>{item.locations.length ? item.locations.map((location) => location.label).join(", ") : "—"}</td></tr>)}</tbody></table></div><div className="cluster cluster--between" style={{ marginTop: 16 }}><span className="small muted">{offset + 1}–{Math.min(offset + limit, value.total)} de {value.total}</span><span className="cluster"><button type="button" className="btn btn--ghost" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}>Anterior</button><button type="button" className="btn btn--ghost" disabled={!next} onClick={() => setOffset(offset + limit)}>Seguinte</button></span></div></Card>}
-    </>
-  );
-}
-
-export function InstallerTimeBankPage() {
-  const loader = useMemo(() => () => getTimeBankSummary({ year: Number(todayIsoLisbon().slice(0, 4)) }), []);
-  const { value: summary, error: summaryError, reload } = useReloadable(loader, "Não foi possível carregar o seu Banco de Horas.");
-  const [entries, setEntries] = useState<Awaited<ReturnType<typeof listTimeBankEntries>> | null>(null);
-  const [adjustments, setAdjustments] = useState<Awaited<ReturnType<typeof listTimeBankAdjustments>> | null>(null);
-  const [ledgerError, setLedgerError] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    setEntries(null); setAdjustments(null); setLedgerError(null);
-    listTimeBankEntries({ limit: 100 }).then((value) => !cancelled && setEntries(value)).catch((reason) => !cancelled && setLedgerError(apiErrorMessage(reason)));
-    listTimeBankAdjustments({ limit: 100 }).then((value) => !cancelled && setAdjustments(value)).catch((reason) => !cancelled && setLedgerError(apiErrorMessage(reason)));
-    return () => { cancelled = true; };
-  }, []);
-  const person = summary?.people[0];
-  return (
-    <>
-      <PageHeader title="Banco de Horas" subtitle="O seu saldo e histórico. Esta vista não permite criar, ajustar, importar ou anular movimentos." />
-      {(summaryError || ledgerError) && <div className="card"><ErrorState message={summaryError ?? ledgerError ?? "Não foi possível carregar o Banco de Horas."} onRetry={reload} /></div>}
-      {!summaryError && !summary && <div className="card"><LoadingState label="A carregar o seu Banco de Horas…" /></div>}
-      {summary && <>
-        <div className="grid grid--stats"><Card title="Saldo" icon="clock"><strong>{formatSignedTimeBankDuration(person?.balance_seconds)}</strong></Card><Card title="Período" icon="calendar"><strong>{formatSignedTimeBankDuration(person?.period_seconds)}</strong></Card><Card title="A rever" icon="alert"><strong>{person?.needs_review_count ?? 0}</strong></Card></div>
-        <Card title="Histórico" icon="clock">{entries === null || adjustments === null ? <LoadingState label="A carregar histórico…" rows={2} /> : entries.items.length === 0 && adjustments.items.length === 0 ? <EmptyState compact title="Sem movimentos registados." /> : <div className="stack stack--sm">{entries.items.map((entry) => <div key={entry.id} className="card__row"><span>{entry.work_date}</span><strong>{formatSignedTimeBankDuration(entry.balance_seconds)}</strong><span className="small muted">{entry.calculation_mode}</span></div>)}{adjustments.items.map((adjustment) => <div key={adjustment.id} className="card__row"><span>{adjustment.effective_date}</span><strong>{formatSignedTimeBankDuration(adjustment.delta_seconds)}</strong><span className="small muted">{adjustment.kind}</span></div>)}</div>}</Card>
-      </>}
     </>
   );
 }

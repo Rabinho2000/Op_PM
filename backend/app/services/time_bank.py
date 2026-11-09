@@ -12,6 +12,9 @@ class TimeBankValidationError(ValueError):
     """Erro de contrato de negócio, seguro para devolver como 422."""
 
 
+DAILY_LIMIT_SECONDS = 2 * 3600
+
+
 def _validate_minutes(value: int | None, *, name: str, allow_none: bool = False) -> None:
     if value is None and allow_none:
         return

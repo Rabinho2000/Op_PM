@@ -79,16 +79,21 @@ def find_team_by_name(
 
 
 def project_counts_by_installer(db: Session) -> tuple[dict[uuid.UUID, int], dict[uuid.UUID, int]]:
-    """(obras por instalador, obras por equipa) — uma query cada, nunca por linha."""
+    """(obras por instalador, obras por equipa) — uma query cada, nunca por linha.
+
+    A sessão da aplicação desativa autoflush; materializa alterações pendentes
+    para que a contagem represente o estado efetivo desta unidade de trabalho.
+    """
+    db.flush()
     by_installer = dict(
         db.query(Project.installer_id, func.count(Project.id))
-        .filter(Project.installer_id.is_not(None), Project.is_active.is_(True))
+        .filter(Project.installer_id.is_not(None), Project.is_active.is_(True), Project.deleted_at.is_(None))
         .group_by(Project.installer_id)
         .all()
     )
     by_team = dict(
         db.query(Project.installer_team_id, func.count(Project.id))
-        .filter(Project.installer_team_id.is_not(None), Project.is_active.is_(True))
+        .filter(Project.installer_team_id.is_not(None), Project.is_active.is_(True), Project.deleted_at.is_(None))
         .group_by(Project.installer_team_id)
         .all()
     )

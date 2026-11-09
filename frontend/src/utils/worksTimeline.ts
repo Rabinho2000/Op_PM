@@ -185,8 +185,14 @@ function laneRow(
 /** Agrupa as obras por instalador e equipa. Um instalador com equipas tem uma linha
  * de cabeçalho e uma linha por equipa (mais "Sem equipa" quando há obras sem equipa);
  * sem equipas, uma só linha. As obras sem instalador ficam no fim. Por omissão só
- * há linhas com obras; `showIdle` acrescenta as equipas ativas sem obras. */
-export function buildRows(works: WorkItem[], installers: Installer[], showIdle = false): TimelineRow[] {
+ * há linhas com obras; `showIdle` acrescenta as equipas ativas sem obras,
+ * opcionalmente limitadas aos instaladores selecionados. */
+export function buildRows(
+  works: WorkItem[],
+  installers: Installer[],
+  showIdle = false,
+  selectedInstallerIds: string[] = [],
+): TimelineRow[] {
   const rows: TimelineRow[] = [];
   const byInstaller = new Map<string | null, WorkItem[]>();
   for (const work of works) {
@@ -197,16 +203,17 @@ export function buildRows(works: WorkItem[], installers: Installer[], showIdle =
 
   for (const installer of installers) {
     const own = byInstaller.get(installer.id) ?? [];
+    const includeIdle = showIdle && (selectedInstallerIds.length === 0 || selectedInstallerIds.includes(installer.id));
     const teamRows: TimelineRow[] = [];
     for (const team of installer.teams) {
       const teamWorks = own.filter((w) => (w.installer_team_id ?? w.team_id) === team.id);
-      if (teamWorks.length > 0 || (showIdle && team.is_active)) {
+      if (teamWorks.length > 0 || (includeIdle && team.is_active)) {
         teamRows.push(laneRow(`${installer.id}:${team.id}`, team.name, true, teamWorks, installer.id, team.id, teamWorks.length === 0));
       }
     }
     const noTeam = own.filter((w) => (w.installer_team_id ?? w.team_id ?? null) === null);
     if (installer.teams.length === 0) {
-      if (own.length > 0 || (showIdle && installer.is_active)) {
+      if (own.length > 0 || (includeIdle && installer.is_active)) {
         rows.push(laneRow(installer.id, installer.name, false, own, installer.id, null, own.length === 0));
       }
       continue;

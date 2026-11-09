@@ -185,7 +185,11 @@
 }
 
 .time-bank-import {
-  margin-top: 22px;
+  margin-top: 0;
+}
+
+.time-bank-import__upload {
+  margin-bottom: 18px;
 }
 
 .time-bank-file-input {
@@ -280,7 +284,7 @@
 
 .btn--danger {
   background: var(--danger);
-  color: var(--on-brand);
+  color: var(--on-status-fill);
   border-color: var(--danger);
 }
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class ProjectRead(BaseModel):
@@ -44,6 +44,8 @@ class ProjectRead(BaseModel):
     upac_connection_date_raw: str | None
     award_year_raw: str | None
     is_active: bool
+    deleted_at: dt.datetime | None = None
+    deleted_by_person_id: uuid.UUID | None = None
     notes: str
     created_at: dt.datetime
     updated_at: dt.datetime
@@ -65,6 +67,8 @@ class ProjectRead(BaseModel):
     overdue_tasks_count: int = 0
     workflow_progress_percent: int = 0
     photos_pending_warning: bool = False
+    can_delete: bool = False
+    can_restore: bool = False
 
     # Permissões efetivas do utilizador atual sobre ESTE projeto (D-051) —
     # só para a UI decidir o que mostrar; o servidor continua a validar
@@ -73,6 +77,15 @@ class ProjectRead(BaseModel):
     can_manage_tasks: bool = False
     can_change_status: bool = False
     can_plan_work: bool = False
+    has_project_photo: bool = False
+    can_edit_project_photo: bool = False
+    # Licenciamento (D-105): permissões efetivas — permissão + âmbito do projeto, calculadas
+    # no servidor. O frontend não deduz estas flags de /api/me nem de editable_fields.
+    can_edit_credentials: bool = False
+    can_reveal_credentials: bool = False
+    can_edit_sim_cards: bool = False
+    can_reveal_sim_secrets: bool = False
+    can_edit_surplus_contracts: bool = False
     installer_name: str | None = None
     installer_team_name: str | None = None
     installer_team_leader_name: str | None = None
@@ -124,6 +137,20 @@ class ProjectHistoryRead(BaseModel):
     note: str
     related_staging_record_id: uuid.UUID | None
     changed_at: dt.datetime
+
+
+class ProjectDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def require_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Indique o motivo da remoção.")
+        return normalized
 
 
 class LifecycleStatusRead(BaseModel):

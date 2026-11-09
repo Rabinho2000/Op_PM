@@ -4,7 +4,7 @@ import datetime as dt
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator
 
 
 CalculationMode = Literal["standard", "saturday", "manual"]
@@ -30,6 +30,15 @@ class EntryCreate(BaseModel):
     calculation_mode: CalculationMode
     manual_balance_seconds: StrictInt | None = None
     reason: str | None = Field(default=None, max_length=2000)
+
+
+class MyEntryCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    work_date: dt.date
+    start_minute: StrictInt = Field(ge=0, le=1439)
+    end_minute: StrictInt = Field(ge=1, le=1440)
+    lunch_taken: StrictBool
 
 
 class EntryReverse(BaseModel):
@@ -58,6 +67,7 @@ class EntryRead(BaseModel):
     created_by_user_id: uuid.UUID
     occurred_at: dt.datetime
     reversal_of_id: uuid.UUID | None
+    is_reversed: bool = False
 
 
 class EntryPage(BaseModel):
@@ -95,6 +105,7 @@ class AdjustmentRead(BaseModel):
     created_by_user_id: uuid.UUID
     occurred_at: dt.datetime
     reversal_of_id: uuid.UUID | None
+    is_reversed: bool = False
 
 
 class AdjustmentPage(BaseModel):
@@ -102,9 +113,43 @@ class AdjustmentPage(BaseModel):
     total: int
 
 
+class TimeBankNoteCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    person_id: uuid.UUID
+    body: StrictStr = Field(min_length=1, max_length=2000)
+
+
+class TimeBankNoteRead(BaseModel):
+    id: uuid.UUID
+    person_id: uuid.UUID
+    body: str
+    created_at: dt.datetime
+    author_display_name: str
+
+    @field_validator("created_at")
+    @classmethod
+    def normalize_created_at(cls, value: dt.datetime) -> dt.datetime:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=dt.timezone.utc)
+        return value.astimezone(dt.timezone.utc)
+
+
+class TimeBankNotePage(BaseModel):
+    items: list[TimeBankNoteRead]
+    total: int
+
+
 class SummaryWarning(BaseModel):
     code: str
     message: str
+
+
+class MyEntryPreview(BaseModel):
+    work_date: dt.date
+    calculation_mode: Literal["standard", "saturday"]
+    balance_seconds: int
+    warnings: list[SummaryWarning]
+    duplicate: bool
 
 
 class TimeBankSummaryPerson(BaseModel):

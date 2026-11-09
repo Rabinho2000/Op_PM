@@ -6,6 +6,7 @@ import datetime as dt
 
 from app.models.absence import Absence
 from app.models.people import Person
+from app.models.project import Project
 
 
 def _headers(email: str) -> dict:
@@ -117,6 +118,49 @@ def test_chefe_sees_all_absences(db_session, api_client):
     resp = api_client.get("/api/absences", headers=_headers("chefe.sintetico@example.invalid"))
     assert resp.status_code == 200
     assert len(resp.json()) >= 4  # ver app/migration/seed_dev.py:seed_absences
+
+
+def test_absence_work_warning_ignores_deleted_project_and_returns_after_restore(db_session, api_client):
+    pm = _person(db_session, "PM Sintético Um")
+    start = dt.date(2048, 5, 10)
+    absence = Absence(person_id=pm.id, start_date=start, end_date=start + dt.timedelta(days=2))
+    project = Project(
+        name="Projeto Sintético para aviso de ausência",
+        pm_person_id=pm.id,
+        lifecycle_status="construcao",
+        is_active=True,
+        work_start_date=start,
+        work_end_date=start + dt.timedelta(days=1),
+    )
+    db_session.add_all([absence, project])
+    db_session.flush()
+
+    def project_warnings() -> list[dict]:
+        response = api_client.get(
+            "/api/absences",
+            params={"person_id": str(pm.id)},
+            headers=_headers("admin.sintetico@example.invalid"),
+        )
+        assert response.status_code == 200, response.text
+        row = next(item for item in response.json() if item["id"] == str(absence.id))
+        return row["overlapping_projects"]
+
+    assert [row["name"] for row in project_warnings()] == [project.name]
+
+    deleted = api_client.request(
+        "DELETE",
+        f"/api/projects/{project.id}",
+        json={"reason": "Teste de aviso de ausência"},
+        headers=_headers("admin.sintetico@example.invalid"),
+    )
+    assert deleted.status_code == 204, deleted.text
+    assert project_warnings() == []
+
+    restored = api_client.post(
+        f"/api/projects/{project.id}/restore", headers=_headers("admin.sintetico@example.invalid")
+    )
+    assert restored.status_code == 200, restored.text
+    assert [row["name"] for row in project_warnings()] == [project.name]
 
 
 def test_pm_can_cancel_own_absence(db_session, api_client):

@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 BASE_REVISION = "a9d4f6c2e8b1"
+TARGET_REVISION = "b7e8f9a0c1d2"
 TABLE = "works_calendar_saved_views"
 
 
@@ -42,7 +43,7 @@ def _table_exists(connection: sqlite3.Connection, name: str) -> bool:
 def test_saved_views_migration_up_down_up_on_fresh_sqlite(tmp_path: Path):
     database_path = tmp_path / "works-saved-views-migration.db"
 
-    first = _run_alembic(database_path, "upgrade", "head")
+    first = _run_alembic(database_path, "upgrade", TARGET_REVISION)
     assert first.returncode == 0, first.stdout + first.stderr
     with sqlite3.connect(database_path) as connection:
         assert _table_exists(connection, TABLE)
@@ -72,7 +73,7 @@ def test_saved_views_migration_up_down_up_on_fresh_sqlite(tmp_path: Path):
         assert not _table_exists(connection, TABLE)
         assert _table_exists(connection, "works_calendar_preferences")
 
-    second = _run_alembic(database_path, "upgrade", "head")
+    second = _run_alembic(database_path, "upgrade", TARGET_REVISION)
     assert second.returncode == 0, second.stdout + second.stderr
     with sqlite3.connect(database_path) as connection:
         assert _table_exists(connection, TABLE)

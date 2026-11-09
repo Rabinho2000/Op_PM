@@ -1,7 +1,6 @@
 """Backend contract for project-linked cable dimensioning studies."""
 from __future__ import annotations
 
-import copy
 import json
 import threading
 import uuid
@@ -40,6 +39,30 @@ def _project(db_session, person_id, label: str = "Project A") -> Project:
 
 def _input() -> dict[str, object]:
     return {"format": 1, "circuits": [{"code": "C1", "length_m": 10}]}
+
+
+def _native_input(*, inverter_count: int = 1) -> dict[str, object]:
+    return {
+        "format": 1,
+        "state": {
+            "invs": [{"modelo": f"INV-{index + 1}"} for index in range(inverter_count)],
+            "percs": [],
+        },
+    }
+
+
+def _valid_result(
+    *,
+    engine_version: str = "engine-test-1",
+    review: bool = False,
+    inverters: int = 1,
+) -> dict[str, object]:
+    return {
+        "format": 1,
+        "engine_version": engine_version,
+        "circuits": [{"code": "C1", "name": "Circuito 1", "review": review}],
+        "totals": {"circuits": 1, "review": int(review), "inverters": inverters},
+    }
 
 
 def _create(api_client, project: Project, email: str, *, input_payload: object = ...):
@@ -112,7 +135,7 @@ def test_cable_design_approval_immutability_and_new_revision(api_client, db_sess
         json={
             "expected_version": 1,
             "input": _input(),
-            "result": {"format": 1, "circuits": [{"review": True}]},
+            "result": _valid_result(review=True),
             "engine_version": "engine-test-1",
         },
         headers=_headers(user.email),
@@ -130,7 +153,7 @@ def test_cable_design_approval_immutability_and_new_revision(api_client, db_sess
         json={
             "expected_version": 2,
             "input": _input(),
-            "result": {"format": 1, "circuits": [{"review": False}]},
+            "result": _valid_result(review=False),
             "engine_version": "engine-test-1",
         },
         headers=_headers(user.email),
@@ -323,7 +346,9 @@ def test_cable_design_concurrent_same_version_has_one_success_and_one_conflict(
     SessionFactory = sessionmaker(bind=local_engine, autoflush=False, future=True)
 
     try:
-        from app import models as _models  # noqa: F401 - register every mapped table before create_all
+        from app import (
+            models as _models,  # noqa: F401 - register every mapped table before create_all
+        )
 
         Base.metadata.create_all(bind=local_engine)
         setup_session = SessionFactory()
@@ -548,7 +573,7 @@ def test_cable_design_approve_with_unresolved_circuits_conflicts_without_change(
         json={
             "expected_version": 1,
             "input": _input(),
-            "result": {"format": 1, "circuits": [{"code": "C1", "review": True}]},
+            "result": _valid_result(engine_version="engine-review", review=True),
             "engine_version": "engine-review",
         },
         headers=_headers(user.email),
@@ -639,6 +664,320 @@ def test_cable_design_delete_stale_conflicts_then_deactivates_and_keeps_history(
     ).scalars().all()
     assert len(history_rows) == 3
     assert history_rows.count("deactivated") == 1
+
+
+def test_cable_design_approval_rejects_initial_empty_result_without_mutation(
+    api_client, db_session
+):
+    user = _user_for_role(db_session, "project_manager", "PM Empty")
+    project = _project(db_session, user.person_id, "Empty Result Project")
+    created = _create(api_client, project, user.email)
+    assert created.status_code == 201, created.text
+    design_id = created.json()["id"]
+
+    blocked = api_client.post(
+        f"/api/cable-designs/{design_id}/approve",
+        json={"expected_version": 1},
+        headers=_headers(user.email),
+    )
+    assert blocked.status_code == 409, blocked.text
+
+    replay = api_client.get(
+        f"/api/cable-designs/{design_id}", headers=_headers(user.email)
+    )
+    assert replay.status_code == 200, replay.text
+    body = replay.json()
+    assert body["version"] == 1
+    assert body["status"] == "rascunho"
+    assert body["revision"]["status"] == "rascunho"
+    assert body["revision"]["result_json"] == {}
+    history = api_client.get(
+        f"/api/cable-designs/{design_id}/history", headers=_headers(user.email)
+    )
+    assert history.status_code == 200, history.text
+    assert [entry["action"] for entry in history.json()] == ["created"]
+
+
+def test_cable_design_approval_rejects_empty_and_malformed_result_payloads(
+    api_client, db_session
+):
+    user = _user_for_role(db_session, "project_manager", "PM Guard")
+    project = _project(db_session, user.person_id, "Guard Project")
+
+    missing_result = _create(api_client, project, user.email)
+    assert missing_result.status_code == 201, missing_result.text
+    missing_body = {
+        "expected_version": 1,
+        "input": _input(),
+        "engine_version": "engine-test-1",
+    }
+    missing = api_client.put(
+        f"/api/cable-designs/{missing_result.json()['id']}/revisions/current",
+        json=missing_body,
+        headers=_headers(user.email),
+    )
+    assert missing.status_code == 422, missing.text
+
+    malformed_results = [
+        {},
+        {"format": 1},
+        {
+            "format": 1,
+            "engine_version": "engine-test-1",
+            "circuits": [],
+            "totals": {"circuits": 0, "review": 0, "inverters": 0},
+        },
+        {
+            "format": 1,
+            "engine_version": "engine-test-1",
+            "circuits": [{"code": "C1", "name": "Circuito 1", "review": "false"}],
+            "totals": {"circuits": 1, "review": 0, "inverters": 1},
+        },
+        {
+            "format": 1,
+            "engine_version": "engine-test-1",
+            "circuits": [{"code": "C1", "name": "Circuito 1", "review": False}],
+            "totals": {"circuits": 2, "review": 0, "inverters": 1},
+        },
+        {
+            "format": 1,
+            "engine_version": "engine-test-1",
+            "circuits": [{"code": "C1", "name": "Circuito 1", "review": False}],
+            "totals": {"circuits": 1, "review": 0, "inverters": 2},
+        },
+        {
+            "format": 1,
+            "engine_version": "engine-test-1",
+            "circuits": [{"code": "x" * 257, "name": "Circuito 1", "review": False}],
+            "totals": {"circuits": 1, "review": 0, "inverters": 1},
+        },
+        {
+            "format": 1,
+            "engine_version": "engine-test-1",
+            "circuits": [{"code": "C1", "name": "Circuito 1", "review": False}],
+            "totals": {"circuits": 1, "review": 0, "inverters": 1, "kw_ac": 1_000_001},
+        },
+    ]
+    for index, result in enumerate(malformed_results):
+        created = _create(api_client, project, user.email)
+        assert created.status_code == 201, created.text
+        design_id = created.json()["id"]
+        saved = api_client.put(
+            f"/api/cable-designs/{design_id}/revisions/current",
+            json={
+                "expected_version": 1,
+                "input": _input(),
+                "result": result,
+                "engine_version": "engine-test-1",
+            },
+            headers=_headers(user.email),
+        )
+        assert saved.status_code == 200, (index, saved.text)
+        before = api_client.get(
+            f"/api/cable-designs/{design_id}", headers=_headers(user.email)
+        )
+        assert before.status_code == 200, before.text
+        before_body = before.json()
+
+        blocked = api_client.post(
+            f"/api/cable-designs/{design_id}/approve",
+            json={"expected_version": 2},
+            headers=_headers(user.email),
+        )
+        assert blocked.status_code == 409, (index, blocked.text)
+
+        after = api_client.get(
+            f"/api/cable-designs/{design_id}", headers=_headers(user.email)
+        )
+        assert after.status_code == 200, after.text
+        after_body = after.json()
+        assert after_body["version"] == before_body["version"] == 2
+        assert after_body["status"] == before_body["status"] == "rascunho"
+        assert after_body["revision"]["status"] == before_body["revision"]["status"] == "rascunho"
+        assert after_body["revision"]["result_json"] == before_body["revision"]["result_json"]
+
+    invalid_shapes = [[], None, 123]
+    created = _create(api_client, project, user.email)
+    assert created.status_code == 201, created.text
+    for value in invalid_shapes:
+        response = api_client.put(
+            f"/api/cable-designs/{created.json()['id']}/revisions/current",
+            json={
+                "expected_version": 1,
+                "input": _input(),
+                "result": value,
+                "engine_version": "engine-test-1",
+            },
+            headers=_headers(user.email),
+        )
+        assert response.status_code == 422, (value, response.text)
+
+
+def test_cable_design_approval_rejects_huge_kw_ac_without_mutation(
+    api_client, db_session
+):
+    user = _user_for_role(db_session, "project_manager", "PM Huge KW")
+    project = _project(db_session, user.person_id, "Huge KW Project")
+    created = _create(api_client, project, user.email)
+    assert created.status_code == 201, created.text
+    design_id = created.json()["id"]
+
+    result: dict[str, object] = _valid_result()
+    totals = result["totals"]
+    assert isinstance(totals, dict)
+    totals["kw_ac"] = 10**999
+    saved = api_client.put(
+        f"/api/cable-designs/{design_id}/revisions/current",
+        json={
+            "expected_version": 1,
+            "input": _input(),
+            "result": result,
+            "engine_version": "engine-test-1",
+        },
+        headers=_headers(user.email),
+    )
+    assert saved.status_code == 200, saved.text
+
+    before = api_client.get(
+        f"/api/cable-designs/{design_id}", headers=_headers(user.email)
+    )
+    assert before.status_code == 200, before.text
+    before_body = before.json()
+    history_before = api_client.get(
+        f"/api/cable-designs/{design_id}/history", headers=_headers(user.email)
+    )
+    assert history_before.status_code == 200, history_before.text
+    history_before_body = history_before.json()
+
+    blocked = api_client.post(
+        f"/api/cable-designs/{design_id}/approve",
+        json={"expected_version": 2},
+        headers=_headers(user.email),
+    )
+    assert blocked.status_code == 409, blocked.text
+
+    after = api_client.get(
+        f"/api/cable-designs/{design_id}", headers=_headers(user.email)
+    )
+    assert after.status_code == 200, after.text
+    assert after.json() == before_body
+    history_after = api_client.get(
+        f"/api/cable-designs/{design_id}/history", headers=_headers(user.email)
+    )
+    assert history_after.status_code == 200, history_after.text
+    assert history_after.json() == history_before_body
+
+
+def test_cable_design_approval_accepts_native_persisted_result_and_state(
+    api_client, db_session
+):
+    user = _user_for_role(db_session, "project_manager", "PM Native")
+    project = _project(db_session, user.person_id, "Native Project")
+    created = _create(api_client, project, user.email)
+    assert created.status_code == 201, created.text
+    design_id = created.json()["id"]
+
+    saved = api_client.put(
+        f"/api/cable-designs/{design_id}/revisions/current",
+        json={
+            "expected_version": 1,
+            "input": _native_input(inverter_count=1),
+            "result": _valid_result(),
+            "engine_version": "engine-test-1",
+        },
+        headers=_headers(user.email),
+    )
+    assert saved.status_code == 200, saved.text
+
+    approved = api_client.post(
+        f"/api/cable-designs/{design_id}/approve",
+        json={"expected_version": 2},
+        headers=_headers(user.email),
+    )
+    assert approved.status_code == 200, approved.text
+    body = approved.json()
+    assert body["status"] == "aprovado"
+    assert body["revision"]["status"] == "aprovada"
+
+
+def test_cable_design_approval_rechecks_persisted_counter_and_content(
+    api_client, db_session
+):
+    from app.models.cable_designs import CableDesignRevision
+
+    user = _user_for_role(db_session, "project_manager", "PM Recheck")
+    project = _project(db_session, user.person_id, "Recheck Project")
+    created = _create(api_client, project, user.email)
+    assert created.status_code == 201, created.text
+    design_id = created.json()["id"]
+    saved = api_client.put(
+        f"/api/cable-designs/{design_id}/revisions/current",
+        json={
+            "expected_version": 1,
+            "input": _native_input(),
+            "result": _valid_result(),
+            "engine_version": "engine-test-1",
+        },
+        headers=_headers(user.email),
+    )
+    assert saved.status_code == 200, saved.text
+
+    revision = db_session.query(CableDesignRevision).filter_by(design_id=design_id).one()
+    revision.unresolved_circuits = 1
+    db_session.flush()
+    blocked_counter = api_client.post(
+        f"/api/cable-designs/{design_id}/approve",
+        json={"expected_version": 2},
+        headers=_headers(user.email),
+    )
+    assert blocked_counter.status_code == 409, blocked_counter.text
+
+    revision.unresolved_circuits = 0
+    revision.result_json = json.dumps({"format": 1}, separators=(",", ":"))
+    db_session.flush()
+    blocked_content = api_client.post(
+        f"/api/cable-designs/{design_id}/approve",
+        json={"expected_version": 2},
+        headers=_headers(user.email),
+    )
+    assert blocked_content.status_code == 409, blocked_content.text
+
+    replay = api_client.get(
+        f"/api/cable-designs/{design_id}", headers=_headers(user.email)
+    )
+    assert replay.status_code == 200, replay.text
+    body = replay.json()
+    assert body["version"] == 2
+    assert body["status"] == "rascunho"
+    assert body["revision"]["status"] == "rascunho"
+
+
+def test_cable_design_approval_rejects_canonical_result_without_corresponding_state(
+    api_client, db_session
+):
+    user = _user_for_role(db_session, "project_manager", "PM No State")
+    project = _project(db_session, user.person_id, "No State Project")
+    created = _create(api_client, project, user.email)
+    assert created.status_code == 201, created.text
+    design_id = created.json()["id"]
+
+    saved = api_client.put(
+        f"/api/cable-designs/{design_id}/revisions/current",
+        json={
+            "expected_version": 1,
+            "input": {"format": 1},
+            "result": _valid_result(),
+            "engine_version": "engine-test-1",
+        },
+        headers=_headers(user.email),
+    )
+    assert saved.status_code == 200, saved.text
+    blocked = api_client.post(
+        f"/api/cable-designs/{design_id}/approve",
+        json={"expected_version": 2},
+        headers=_headers(user.email),
+    )
+    assert blocked.status_code == 409, blocked.text
 
 
 def test_cable_design_without_session_returns_401(api_client):

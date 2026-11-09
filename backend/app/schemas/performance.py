@@ -77,3 +77,27 @@ class PerformanceSummary(BaseModel):
     goals: list[GoalPeriodRead]
     portfolio: PortfolioBreakdownRead
     yearly: list[YearlyIndicator]
+
+
+class CompletedTaskRead(BaseModel):
+    id: uuid.UUID
+    title: str
+    project_id: uuid.UUID
+    project_name: str
+    completed_at: dt.datetime
+
+
+class CompletedTasksWeeklyPmRead(BaseModel):
+    pm_person_id: uuid.UUID | None
+    pm_display_name: str | None
+    task_count: int
+    subtask_count: int
+    tasks: list[CompletedTaskRead]
+
+
+class CompletedTasksWeeklyRead(BaseModel):
+    iso_year: int
+    iso_week: int
+    week_start: dt.date
+    week_end: dt.date
+    pms: list[CompletedTasksWeeklyPmRead]

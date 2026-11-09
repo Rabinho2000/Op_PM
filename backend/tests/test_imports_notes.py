@@ -6,15 +6,17 @@ importados. Ver app/services/imports_notes.py e app/api/routes_imports.py.
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import json
 import threading
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import app.services.imports_notes as imports_notes_service
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import Base
@@ -2118,3 +2120,530 @@ def test_explicit_top_level_contact_fields_win_over_contactos_list():
     }
     mapped = map_payload_to_fields(payload)
     assert mapped["project"]["client_contact"] == "Explícito"
+
+
+def test_preview_excludes_deleted_project_as_target_and_restore_makes_it_matchable(db_session, api_client):
+    existing = Project(
+        name="Projeto Sintético Apagado Notas",
+        client_email="cliente.notas.sintetico@example.invalid",
+        power_kwp=1.0,
+        deleted_at=dt.datetime.now(dt.timezone.utc),
+    )
+    db_session.add(existing)
+    db_session.commit()
+    headers = _headers("comercial.sintetico@example.invalid")
+
+    preview = api_client.post(
+        "/api/imports/notes/preview",
+        files={"file": ("notas-apagado.json", _json_fixture_bytes(), "application/json")},
+        headers=headers,
+    )
+
+    assert preview.status_code == 201, preview.text
+    record = preview.json()["records"][0]
+    assert record["target_project_id"] is None
+    assert record["is_new_project"] is False
+    assert record["match_strategy"] == "unavailable"
+    assert record["candidate_projects"] == []
+    assert record["conflicts"] == []
+    assert existing.name not in preview.text
+
+    existing.deleted_at = None
+    db_session.commit()
+    payload = json.loads(_json_fixture_bytes())
+    payload["observacoes"] = "Conteúdo sintético diferente depois do restauro"
+    restored_preview = api_client.post(
+        "/api/imports/notes/preview",
+        files={
+            "file": (
+                "notas-restaurado.json",
+                json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                "application/json",
+            )
+        },
+        headers=headers,
+    )
+
+    assert restored_preview.status_code == 201, restored_preview.text
+    restored_record = restored_preview.json()["records"][0]
+    assert restored_record["target_project_id"] == str(existing.id)
+    assert restored_record["is_new_project"] is False
+
+
+@pytest.mark.parametrize("identity", ["email", "phone", "address"])
+def test_deleted_project_identity_blocks_preview_and_apply_without_mutation(db_session, api_client, identity):
+    email = "cliente.notas.sintetico@example.invalid" if identity == "email" else None
+    address = "Rua Sintética das Notas Iniciais, 45" if identity == "address" else None
+    deleted_at = dt.datetime.now(dt.timezone.utc)
+    existing = Project(
+        name=f"Projeto Apagado Sintético por {identity}",
+        client_email=email,
+        address=address,
+        power_kwp=1.0,
+        deleted_at=deleted_at,
+    )
+    db_session.add(existing)
+    db_session.flush()
+    if identity == "phone":
+        db_session.add(ProjectInstallationData(project_id=existing.id, contact_phone="912000111"))
+        db_session.flush()
+    original_project_count = db_session.query(Project).count()
+    headers = _headers("comercial.sintetico@example.invalid")
+
+    preview = api_client.post(
+        "/api/imports/notes/preview",
+        files={"file": (f"notas-apagado-{identity}.json", _json_fixture_bytes(), "application/json")},
+        headers=headers,
+    )
+
+    assert preview.status_code == 201, preview.text
+    record = preview.json()["records"][0]
+    assert record["is_new_project"] is False
+    assert record["match_strategy"] == "unavailable"
+    assert record["target_project_id"] is None
+    assert record["candidate_projects"] == []
+    assert record["conflicts"] == []
+
+    applied = api_client.post(
+        "/api/imports/notes/apply",
+        json={"batch_id": preview.json()["id"], "confirm": True},
+        headers=headers,
+    )
+
+    assert applied.status_code == 400, applied.text
+    assert "correspondência indisponível" in applied.json()["detail"].lower()
+    db_session.refresh(existing)
+    assert existing.name == f"Projeto Apagado Sintético por {identity}"
+    assert existing.client_email == email
+    assert existing.address == address
+    assert existing.power_kwp == 1.0
+    assert existing.deleted_at is not None
+    assert existing.deleted_at.replace(tzinfo=dt.timezone.utc) == deleted_at
+    if identity == "phone":
+        installation = db_session.query(ProjectInstallationData).filter_by(project_id=existing.id).one()
+        assert installation.contact_phone == "912000111"
+    assert db_session.query(Project).count() == original_project_count
+    assert db_session.get(FieldImportBatch, preview.json()["id"]).status == BATCH_STATUS_PENDING_CONFIRMATION
+
+
+def test_preview_blocks_active_and_deleted_projects_matching_same_identity(db_session, api_client):
+    email = "cliente.notas.sintetico@example.invalid"
+    active = Project(name="Projeto Ativo Sintético", client_email=email)
+    deleted = Project(
+        name="Projeto Apagado Sintético",
+        client_email=email,
+        deleted_at=dt.datetime.now(dt.timezone.utc),
+    )
+    db_session.add_all([active, deleted])
+    db_session.flush()
+
+    preview = api_client.post(
+        "/api/imports/notes/preview",
+        files={"file": ("notas-colisao-dupla.json", _json_fixture_bytes(), "application/json")},
+        headers=_headers("comercial.sintetico@example.invalid"),
+    )
+
+    assert preview.status_code == 201, preview.text
+    record = preview.json()["records"][0]
+    assert record["is_new_project"] is False
+    assert record["match_strategy"] == "unavailable"
+    assert record["target_project_id"] is None
+    assert record["candidate_projects"] == []
+
+
+def test_legacy_new_plan_refuses_creation_if_original_is_deleted_after_preview(db_session, api_client):
+    headers = _headers("comercial.sintetico@example.invalid")
+    preview = api_client.post(
+        "/api/imports/notes/preview",
+        files={"file": ("notas-original-apagado-depois.json", _json_fixture_bytes(), "application/json")},
+        headers=headers,
+    )
+    assert preview.status_code == 201, preview.text
+    assert preview.json()["records"][0]["is_new_project"] is True
+
+    existing = Project(
+        name="Projeto Original Sintético Apagado Após Preview",
+        client_email="cliente.notas.sintetico@example.invalid",
+        power_kwp=1.0,
+    )
+    db_session.add(existing)
+    db_session.flush()
+    deleted_at = dt.datetime.now(dt.timezone.utc)
+    existing.deleted_at = deleted_at
+    db_session.flush()
+    original_project_count = db_session.query(Project).count()
+
+    applied = api_client.post(
+        "/api/imports/notes/apply",
+        json={"batch_id": preview.json()["id"], "confirm": True},
+        headers=headers,
+    )
+
+    assert applied.status_code == 400, applied.text
+    assert "novo preview" in applied.json()["detail"].lower()
+    db_session.refresh(existing)
+    persisted_deleted_at = existing.deleted_at
+    assert persisted_deleted_at is not None
+    assert persisted_deleted_at.replace(tzinfo=dt.timezone.utc) == deleted_at
+    assert existing.name == "Projeto Original Sintético Apagado Após Preview"
+    assert existing.power_kwp == 1.0
+    assert db_session.query(Project).count() == original_project_count
+    assert db_session.get(FieldImportBatch, preview.json()["id"]).status == BATCH_STATUS_PENDING_CONFIRMATION
+
+
+def test_legacy_new_plan_refuses_creation_if_deleted_project_is_restored_after_preview(db_session, api_client):
+    headers = _headers("comercial.sintetico@example.invalid")
+    existing = Project(
+        name="Projeto Original Sintético Restaurado",
+        client_email="cliente.notas.sintetico@example.invalid",
+        power_kwp=1.0,
+        deleted_at=dt.datetime.now(dt.timezone.utc),
+    )
+    db_session.add(existing)
+    db_session.flush()
+
+    preview = api_client.post(
+        "/api/imports/notes/preview",
+        files={"file": ("notas-restauro-entre-etapas.json", _json_fixture_bytes(), "application/json")},
+        headers=headers,
+    )
+    assert preview.status_code == 201, preview.text
+    record = db_session.query(FieldImportRecord).filter_by(batch_id=preview.json()["id"]).one()
+    # Simulate an is_new/none staging row created by the old preview logic.
+    record.is_new_project = True
+    record.match_strategy = "none"
+    db_session.flush()
+    existing.deleted_at = None
+    db_session.flush()
+    original_project_count = db_session.query(Project).count()
+
+    applied = api_client.post(
+        "/api/imports/notes/apply",
+        json={"batch_id": preview.json()["id"], "confirm": True},
+        headers=headers,
+    )
+
+    assert applied.status_code == 400, applied.text
+    assert "novo preview" in applied.json()["detail"].lower()
+    db_session.refresh(existing)
+    assert existing.deleted_at is None
+    assert existing.name == "Projeto Original Sintético Restaurado"
+    assert existing.power_kwp == 1.0
+    assert db_session.query(Project).count() == original_project_count
+    assert db_session.get(FieldImportBatch, preview.json()["id"]).status == BATCH_STATUS_PENDING_CONFIRMATION
+
+
+def test_new_plan_refuses_creation_if_active_project_is_added_after_preview(db_session, api_client):
+    headers = _headers("comercial.sintetico@example.invalid")
+    preview = api_client.post(
+        "/api/imports/notes/preview",
+        files={"file": ("notas-projeto-ativo-entretanto.json", _json_fixture_bytes(), "application/json")},
+        headers=headers,
+    )
+    assert preview.status_code == 201, preview.text
+    assert preview.json()["records"][0]["is_new_project"] is True
+
+    existing = Project(
+        name="Projeto Ativo Sintético Introduzido",
+        client_email="cliente.notas.sintetico@example.invalid",
+        power_kwp=1.0,
+    )
+    db_session.add(existing)
+    db_session.flush()
+    original_project_count = db_session.query(Project).count()
+
+    applied = api_client.post(
+        "/api/imports/notes/apply",
+        json={"batch_id": preview.json()["id"], "confirm": True},
+        headers=headers,
+    )
+
+    assert applied.status_code == 400, applied.text
+    assert "novo preview" in applied.json()["detail"].lower()
+    db_session.refresh(existing)
+    assert existing.deleted_at is None
+    assert existing.name == "Projeto Ativo Sintético Introduzido"
+    assert existing.power_kwp == 1.0
+    assert db_session.query(Project).count() == original_project_count
+    assert db_session.get(FieldImportBatch, preview.json()["id"]).status == BATCH_STATUS_PENDING_CONFIRMATION
+
+
+def test_apply_refuses_notes_target_deleted_after_preview_without_project_changes(db_session, api_client):
+    headers = _headers("comercial.sintetico@example.invalid")
+    existing = Project(
+        name="Projeto Sintético Apagado Depois do Preview",
+        client_email="cliente.notas.sintetico@example.invalid",
+        power_kwp=1.0,
+    )
+    db_session.add(existing)
+    db_session.commit()
+
+    preview = api_client.post(
+        "/api/imports/notes/preview",
+        files={"file": ("notas-apaga-depois.json", _json_fixture_bytes(), "application/json")},
+        headers=headers,
+    )
+    assert preview.status_code == 201, preview.text
+    body = preview.json()
+    for conflict in body["records"][0]["conflicts"]:
+        resolved = api_client.post(
+            f"/api/imports/conflicts/{conflict['id']}/resolve",
+            json={"resolution": "use_new"},
+            headers=headers,
+        )
+        assert resolved.status_code == 200, resolved.text
+
+    existing.deleted_at = dt.datetime.now(dt.timezone.utc)
+    db_session.commit()
+    applied = api_client.post(
+        "/api/imports/notes/apply",
+        json={"batch_id": body["id"], "confirm": True},
+        headers=headers,
+    )
+
+    assert applied.status_code == 400, applied.text
+    db_session.refresh(existing)
+    assert existing.deleted_at is not None
+    assert existing.power_kwp == 1.0
+    assert db_session.query(ProjectInstallationData).filter_by(project_id=existing.id).count() == 0
+    assert db_session.query(ProjectDataHistory).filter_by(project_id=existing.id, source="import_notes").count() == 0
+    assert db_session.get(FieldImportBatch, body["id"]).status == BATCH_STATUS_PENDING_CONFIRMATION
+
+
+def _run_notes_apply_race(tmp_path, monkeypatch, *, same_identity):
+    engine = create_engine(
+        f"sqlite:///{(tmp_path / f'notes-race-{same_identity}.db').as_posix()}",
+        connect_args={"check_same_thread": False, "timeout": 10},
+    )
+
+    @event.listens_for(engine, "connect")
+    def _configure_sqlite(dbapi_connection, _connection_record):
+        dbapi_connection.isolation_level = None
+        dbapi_connection.execute("PRAGMA busy_timeout = 10000")
+
+    @event.listens_for(engine, "begin")
+    def _begin_immediate(connection):
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+
+    Base.metadata.create_all(bind=engine)
+    factory = sessionmaker(bind=engine, future=True)
+    setup = factory()
+    batch_ids = []
+    for index in range(2):
+        payload = json.loads(_json_fixture_bytes())
+        payload["observacoes"] = f"Observação de corrida {index}"
+        if not same_identity:
+            payload["email"] = f"cliente-corrida-{index}@example.invalid"
+            payload["telefone"] = f"91200020{index}"
+            payload["morada"] = f"Rua Sintética Corrida, {index + 1}"
+        batch = preview_notes_import(
+            setup,
+            filename=f"notas-corrida-{same_identity}-{index}.json",
+            content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            uploaded_by_person_id=None,
+        )
+        setup.commit()
+        batch_ids.append(batch.id)
+    setup.close()
+
+    first_check_reached = threading.Event()
+    release_first = threading.Event()
+    second_begin_attempted = threading.Event()
+    second_done = threading.Event()
+    original_find = imports_notes_service.find_matching_projects
+
+    def _pause_first_matching_check(db, mapped):
+        if threading.current_thread().name == "notes-race-first":
+            first_check_reached.set()
+            assert release_first.wait(timeout=10)
+        return original_find(db, mapped)
+
+    monkeypatch.setattr(imports_notes_service, "find_matching_projects", _pause_first_matching_check)
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _signal_second_waiting(connection, cursor, statement, parameters, context, executemany):
+        if (
+            threading.current_thread().name == "notes-race-second"
+            and statement.upper().startswith("BEGIN IMMEDIATE")
+        ):
+            second_begin_attempted.set()
+
+    outcomes = {}
+
+    def _apply_worker(index, thread_name):
+        db = factory()
+        try:
+            batch = db.get(FieldImportBatch, batch_ids[index])
+            assert batch is not None
+            project = apply_notes_import(
+                db,
+                batch=batch,
+                target_project_id=None,
+                applied_by_person_id=None,
+            )
+            db.commit()
+            outcomes[str(batch_ids[index])] = ("applied", project.id)
+        except Exception as exc:
+            db.rollback()
+            outcomes[str(batch_ids[index])] = ("error", exc)
+        finally:
+            db.close()
+            if thread_name == "notes-race-second":
+                second_done.set()
+
+    first = threading.Thread(target=_apply_worker, args=(0, "notes-race-first"), name="notes-race-first")
+    second = threading.Thread(target=_apply_worker, args=(1, "notes-race-second"), name="notes-race-second")
+    first.start()
+    assert first_check_reached.wait(timeout=10), "primeiro apply não chegou à revalidação"
+    second.start()
+    assert second_begin_attempted.wait(timeout=10), "segundo apply não tentou iniciar a transação de escrita"
+    assert not second_done.is_set(), "segundo apply não ficou bloqueado enquanto o primeiro revalidava"
+    release_first.set()
+    first.join(timeout=15)
+    second.join(timeout=15)
+    assert not first.is_alive() and not second.is_alive(), "threads de apply não terminaram"
+
+    with Session(engine) as observer:
+        project_count = observer.query(Project).count()
+        installation_count = observer.query(ProjectInstallationData).count()
+        batches = {
+            str(batch.id): batch.status
+            for batch in observer.query(FieldImportBatch).filter(FieldImportBatch.id.in_(batch_ids)).all()
+        }
+        records = {
+            str(record.batch_id): (record.status, record.promoted_project_id)
+            for record in observer.query(FieldImportRecord).filter(FieldImportRecord.batch_id.in_(batch_ids)).all()
+        }
+    engine.dispose()
+    return outcomes, project_count, installation_count, batches, records
+
+
+def test_concurrent_distinct_notes_batches_share_identity_and_only_one_creates_project(tmp_path, monkeypatch):
+    outcomes, project_count, installation_count, batches, records = _run_notes_apply_race(
+        tmp_path, monkeypatch, same_identity=True
+    )
+
+    assert len(outcomes) == 2
+    successes = [(batch_id, value) for batch_id, value in outcomes.items() if value[0] == "applied"]
+    failures = [(batch_id, value[1]) for batch_id, value in outcomes.items() if value[0] == "error"]
+    assert len(successes) == 1
+    assert len(failures) == 1
+    failed_batch_id, error = failures[0]
+    assert isinstance(error, NotesImportError)
+    assert "correspondência mudou" in str(error).lower()
+    assert project_count == 1
+    assert installation_count == 1
+    assert batches[failed_batch_id] == BATCH_STATUS_PENDING_CONFIRMATION
+    assert records[failed_batch_id] == ("pending", None)
+    assert sum(status == BATCH_STATUS_APPLIED for status in batches.values()) == 1
+
+
+def test_concurrent_distinct_notes_batches_with_different_contacts_both_create(tmp_path, monkeypatch):
+    outcomes, project_count, installation_count, batches, records = _run_notes_apply_race(
+        tmp_path, monkeypatch, same_identity=False
+    )
+
+    assert len(outcomes) == 2
+    assert all(result[0] == "applied" for result in outcomes.values()), outcomes
+    assert len({result[1] for result in outcomes.values()}) == 2
+    assert project_count == 2
+    assert installation_count == 2
+    assert all(status == BATCH_STATUS_APPLIED for status in batches.values())
+    assert all(status == "applied" and project_id is not None for status, project_id in records.values())
+
+
+def test_postgresql_new_project_path_acquires_transactional_lock_before_identity_check(monkeypatch):
+    from types import SimpleNamespace
+
+    calls = []
+    batch = SimpleNamespace(id=uuid.uuid4())
+    record = SimpleNamespace(
+        candidate_project_ids_json="[]",
+        mapped_fields_json=json.dumps({"project": {}, "installation": {}, "licensing": {}}),
+        match_strategy="none",
+        is_new_project=True,
+        target_project_id=None,
+    )
+
+    class _Result:
+        def scalar_one(self):
+            return "read committed"
+
+    class _Query:
+        def populate_existing(self):
+            return self
+
+        def filter(self, *_args):
+            return self
+
+        def one_or_none(self):
+            return record
+
+    class _Session:
+        new = dirty = deleted = ()
+
+        def get_bind(self):
+            return SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+        def query(self, model):
+            assert model is FieldImportRecord
+            calls.append("record-query")
+            return _Query()
+
+        def execute(self, statement, *_args, **_kwargs):
+            sql = str(statement).lower()
+            if "show transaction_isolation" in sql:
+                calls.append("isolation-check")
+            elif "pg_advisory_xact_lock" in sql:
+                calls.append("transaction-lock")
+            else:
+                pytest.fail(f"unexpected SQL in lock contract test: {statement}")
+            return _Result()
+
+    def _locked_batch(_db, _batch_id):
+        calls.append("batch-lock")
+        return batch
+
+    class _IdentityCheckReached(Exception):
+        pass
+
+    def _find_matches(_db, _mapped):
+        calls.append("identity-check")
+        raise _IdentityCheckReached
+
+    monkeypatch.setattr(imports_notes_service, "_lock_pending_batch", _locked_batch)
+    monkeypatch.setattr(imports_notes_service, "find_matching_projects", _find_matches)
+
+    with pytest.raises(_IdentityCheckReached):
+        apply_notes_import(
+            cast(Session, _Session()),
+            batch=cast(FieldImportBatch, batch),
+            target_project_id=None,
+            applied_by_person_id=None,
+        )
+
+    assert calls.index("transaction-lock") < calls.index("identity-check")
+    assert calls.index("record-query") < calls.index("transaction-lock")
+
+
+def test_postgresql_creation_lock_rejects_repeatable_read_before_lock():
+    calls = []
+
+    class _Result:
+        def scalar_one(self):
+            return "repeatable read"
+
+    class _Session:
+        def get_bind(self):
+            return SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+        def execute(self, statement, *_args, **_kwargs):
+            calls.append(str(statement).lower())
+            return _Result()
+
+    with pytest.raises(NotesImportError, match="READ COMMITTED"):
+        imports_notes_service._lock_notes_project_creation(cast(Session, _Session()))
+
+    assert len(calls) == 1
+    assert "show transaction_isolation" in calls[0]
+    assert "pg_advisory_xact_lock" not in calls[0]

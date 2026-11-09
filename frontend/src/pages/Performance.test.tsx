@@ -3,13 +3,14 @@
 // quem tem performance.manage_goals.
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { GoalPeriod, PerformanceSummary } from "../api/client";
+import type { CompletedTasksWeekly, GoalPeriod, PerformanceSummary } from "../api/client";
 import { makeMe } from "../test/fixtures";
 import { renderWithProviders } from "../test/render";
 import Performance from "./Performance";
 
 const api = vi.hoisted(() => ({
   getPerformanceSummary: vi.fn(),
+  getCompletedTasksWeekly: vi.fn(),
   createGoal: vi.fn(),
   updateGoal: vi.fn(),
   listPeople: vi.fn(),
@@ -62,9 +63,35 @@ function summary(overrides: Partial<PerformanceSummary> = {}): PerformanceSummar
   };
 }
 
+function weekly(overrides: Partial<CompletedTasksWeekly> = {}): CompletedTasksWeekly[] {
+  return [
+    {
+      iso_year: 2026,
+      iso_week: 23,
+      week_start: "2026-06-01",
+      week_end: "2026-06-07",
+      pms: [
+        {
+          pm_person_id: "pm-1",
+          pm_display_name: "PM Sintético Um",
+          task_count: 2,
+          subtask_count: 1,
+          tasks: [
+            { id: "task-1", title: "Tarefa concluída", project_id: "project-1", project_name: "Projeto Sintético", completed_at: "2026-06-02T10:00:00Z" },
+            { id: "task-2", title: "Outra tarefa", project_id: "project-1", project_name: "Projeto Sintético", completed_at: "2026-06-03T10:00:00Z" },
+          ],
+        },
+      ],
+    },
+    ...([] as CompletedTasksWeekly[]),
+  ].map((row, index) => (index === 0 ? { ...row, ...overrides } : row));
+}
+
+
 beforeEach(() => {
   Object.values(api).forEach((fn) => fn.mockReset());
   api.getPerformanceSummary.mockResolvedValue(summary());
+  api.getCompletedTasksWeekly.mockResolvedValue(weekly());
   api.listPeople.mockResolvedValue([]);
 });
 
@@ -72,8 +99,33 @@ describe("Metas e indicadores", () => {
   it("mostra o progresso da meta calculado pelo servidor", async () => {
     renderWithProviders(<Performance />, { me: makeMe({ permissions: ["performance.view_all"] }) });
     expect((await screen.findAllByText(/Instalações concluídas/)).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Abaixo do ritmo esperado/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Abaixo do ritmo esperado/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Realizado: 10 de 40.000/)).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /donut.*10.*40\.000.*25%/i })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /barras.*10.*40\.000.*20\.000/i })).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Legenda do ritmo das metas" })).toBeInTheDocument();
+  });
+
+  it("não gera valores inválidos quando o objetivo é zero", async () => {
+    api.getPerformanceSummary.mockResolvedValueOnce(summary({
+      goals: [goal({ target_value: "0", realized: "5", percent: 0, missing: "0", expected_pace: "0" })],
+    }));
+    const { container } = renderWithProviders(<Performance />, { me: makeMe({ permissions: ["performance.view_all"] }) });
+
+    const donut = await screen.findByRole("img", { name: /donut.*5.*0.*0%/i });
+    expect(donut.getAttribute("aria-label")).toMatch(/5.*0/);
+    expect(container.innerHTML).not.toMatch(/NaN|Infinity/);
+  });
+
+  it("limita o donut a um círculo, mantendo o valor real acima de 100% no texto", async () => {
+    api.getPerformanceSummary.mockResolvedValueOnce(summary({
+      goals: [goal({ target_value: "40.000", realized: "60", percent: 150, missing: "0", expected_pace: "20.000" })],
+    }));
+    renderWithProviders(<Performance />, { me: makeMe({ permissions: ["performance.view_all"] }) });
+
+    const donut = await screen.findByRole("img", { name: /donut.*60.*40\.000.*150%/i });
+    expect(donut.getAttribute("aria-label")).toContain("150%");
+    expect(donut.querySelector("circle[stroke-dashoffset='0']")).toBeInTheDocument();
   });
 
   it("mostra o portefólio por estado e o histórico anual", async () => {
@@ -81,6 +133,29 @@ describe("Metas e indicadores", () => {
     await screen.findAllByText(/Instalações concluídas/);
     expect(screen.getByText("Em preparação (não iniciado)")).toBeInTheDocument();
     expect(screen.getAllByText("2026").length).toBeGreaterThan(0);
+  });
+
+  it("mostra tarefas concluídas por semana e expande o detalhe", async () => {
+    renderWithProviders(<Performance />, { me: makeMe({ permissions: ["performance.view_all"] }) });
+    expect(await screen.findByText("Tarefas concluídas por semana e PM")).toBeInTheDocument();
+    expect(screen.getByText("PM Sintético Um")).toBeInTheDocument();
+    expect(screen.getByText("2 tarefas")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /ver tarefas de PM Sintético Um/i }));
+    expect(screen.getByText("Tarefa concluída")).toBeInTheDocument();
+    expect(screen.getByText(/Projeto Sintético · 02\/06\/2026/)).toBeInTheDocument();
+  });
+
+  it("envia o intervalo escolhido para a vista semanal", async () => {
+    renderWithProviders(<Performance />, { me: makeMe({ permissions: ["performance.view_all"] }) });
+    await screen.findByText("Tarefas concluídas por semana e PM");
+    api.getCompletedTasksWeekly.mockClear();
+
+    fireEvent.change(screen.getByLabelText("De"), { target: { value: "2026-01-01" } });
+    fireEvent.change(screen.getByLabelText("Até"), { target: { value: "2026-01-31" } });
+    fireEvent.click(screen.getByRole("button", { name: "Atualizar tarefas concluídas" }));
+
+    await waitFor(() => expect(api.getCompletedTasksWeekly).toHaveBeenLastCalledWith({ from: "2026-01-01", to: "2026-01-31" }));
   });
 
   it("esconde 'Nova meta' sem performance.manage_goals", async () => {

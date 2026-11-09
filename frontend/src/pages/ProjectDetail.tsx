@@ -1,5 +1,5 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ApiError,
   collectProjectMaterial,
@@ -14,6 +14,9 @@ import {
   getProjectLicensingData,
   InventoryItem,
   InventoryMovement,
+  InventoryOwner,
+  getStoredInventoryOwner,
+  INVENTORY_OWNER_STORAGE_KEY,
   listInventoryItems,
   listPeople,
   listTasks,
@@ -40,10 +43,15 @@ import {
   updateTask,
 } from "../api/client";
 import Icon from "../components/Icon";
+import ProjectDeletionModal from "../components/ProjectDeletionModal";
+import ProjectPrimaryPhoto from "../components/ProjectPrimaryPhoto";
 import { LifecycleStatusControl, useLifecycleStatuses } from "../components/LifecycleStatus";
 import PmInlineSelect from "../components/PmInlineSelect";
 import ProjectProcess from "../components/ProjectProcess";
 import ClientReport from "../components/ClientReport";
+import ProjectCableDesigns from "../components/ProjectCableDesigns";
+import ProjectLicensingPanel from "../components/ProjectLicensingPanel";
+import ProjectSafetySheet from "../components/ProjectSafetySheet";
 import WorkPlanCard from "../components/WorkPlan";
 import TaskFormModal from "../components/TaskForm";
 import TaskStatusControl, { useTaskStatusChange } from "../components/TaskStatusControl";
@@ -58,12 +66,15 @@ import {
   TASK_PRIORITY_TONES,
   TASK_TYPE_ICONS,
 } from "../utils/labels";
+import "./ProjectDetail.css";
 
 type TabKey =
   | "resumo"
   | "processo"
+  | "cabos"
   | "instalacao"
   | "licenciamento"
+  | "seguranca"
   | "tarefas"
   | "inventario"
   | "historico"
@@ -409,30 +420,6 @@ const INSTALLATION_FIELDS: DataFieldConfig<ProjectInstallationData>[] = [
   { key: "notes", label: "Notas", multiline: true },
 ];
 
-const LICENSING_FIELDS: DataFieldConfig<ProjectLicensingData>[] = [
-  { key: "upac_number", label: "Nº UPAC" },
-  { key: "dgeg_number", label: "Nº DGEG" },
-  { key: "cadastro_number", label: "Nº de cadastro" },
-  { key: "licensing_status", label: "Estado do licenciamento" },
-  { key: "registration_date", label: "Data de registo", type: "date" },
-  { key: "certification_request_date", label: "Data de pedido de certificação", type: "date" },
-  { key: "inspecting_entity", label: "Entidade inspetora" },
-  { key: "inspection_date", label: "Data de inspeção", type: "date" },
-  { key: "certificate_date", label: "Data de certificado", type: "date" },
-  { key: "installer", label: "Instalador" },
-  { key: "commercializer", label: "Comercializador" },
-  { key: "annual_production_kwh", label: "Produção anual (kWh)", type: "number" },
-  { key: "comments", label: "Comentários", multiline: true },
-];
-
-const COMMUNICATION_FIELDS: DataFieldConfig<ProjectCommunicationData>[] = [
-  { key: "operator", label: "Operador" },
-  { key: "gsm_m2m_number", label: "Número GSM/M2M" },
-  { key: "card_identifier", label: "Identificador do cartão" },
-  { key: "communication_status", label: "Estado da comunicação" },
-  { key: "notes", label: "Notas", multiline: true },
-];
-
 type InventoryAction = "reserve" | "consume" | "release" | "return" | "deliver" | "collect";
 
 const INVENTORY_ACTION_LABELS: Record<InventoryAction, string> = {
@@ -447,28 +434,50 @@ const INVENTORY_ACTION_LABELS: Record<InventoryAction, string> = {
 function ProjectInventoryOperationModal({
   projectId,
   items,
+  owner,
   onClose,
   onDone,
+  prefill,
 }: {
   projectId: string;
   items: InventoryItem[];
+  owner: InventoryOwner;
   onClose: () => void;
   onDone: () => void;
+  prefill?: { action: InventoryAction; allowedActions: InventoryAction[]; item_id: string; quantity: string; reference: string; project_id: string; owner: InventoryOwner };
 }) {
-  const [form, setForm] = useState({ action: "reserve" as InventoryAction, item_id: "", quantity: "", reference: "" });
+  const [form, setForm] = useState(() => prefill
+    ? { action: prefill.action, item_id: prefill.item_id, quantity: prefill.quantity, reference: prefill.reference }
+    : { action: "reserve" as InventoryAction, item_id: "", quantity: "", reference: "" });
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [requestKeys] = useState(() => new Map<string, string>());
+  const active = useRef(true);
+  const submitting = useRef(false);
+  useLayoutEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
+  useLayoutEffect(() => {
+    if (prefill && (prefill.project_id !== projectId || prefill.owner !== owner)) active.current = false;
+  }, [projectId, owner, prefill]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (submitting.current || (prefill && (prefill.project_id !== projectId || prefill.owner !== owner))) return;
     setError(null);
     if (!form.item_id || !form.quantity) {
       setError("Escolha o item e indique a quantidade.");
       return;
     }
+    submitting.current = true;
     setSaving(true);
     try {
-      const payload = { item_id: form.item_id, quantity: form.quantity, reference: form.reference || undefined };
+      const itemId = prefill?.item_id ?? form.item_id;
+      const payloadKey = JSON.stringify([projectId, owner, form.action, itemId, form.quantity, form.reference || ""]);
+      if (prefill && !requestKeys.has(payloadKey)) requestKeys.set(payloadKey, crypto.randomUUID());
+      const payload = { item_id: itemId, quantity: form.quantity, reference: form.reference || undefined, owner,
+        ...(prefill ? { idempotency_key: requestKeys.get(payloadKey) } : {}) };
       const operation = {
         reserve: reserveProjectMaterial,
         consume: consumeProjectMaterial,
@@ -478,11 +487,14 @@ function ProjectInventoryOperationModal({
         collect: collectProjectMaterial,
       }[form.action];
       await operation(projectId, payload);
+      if (!active.current || (prefill && (prefill.project_id !== projectId || prefill.owner !== owner))) return;
       onDone();
     } catch (err) {
+      if (!active.current) return;
       setError(err instanceof ApiError ? err.detail : "Não foi possível registar o movimento.");
     } finally {
-      setSaving(false);
+      submitting.current = false;
+      if (active.current) setSaving(false);
     }
   }
 
@@ -502,6 +514,7 @@ function ProjectInventoryOperationModal({
       }
     >
       {error && <Alert tone="danger">{error}</Alert>}
+      {prefill && <p className="muted">Cria um novo movimento; o original mantém-se no histórico.</p>}
       <form id="project-inventory-form" className="form-grid" onSubmit={handleSubmit}>
         <div className="field">
           <label htmlFor="inv-action">Ação</label>
@@ -511,7 +524,7 @@ function ProjectInventoryOperationModal({
             value={form.action}
             onChange={(e) => setForm({ ...form, action: e.target.value as InventoryAction })}
           >
-            {Object.entries(INVENTORY_ACTION_LABELS).map(([value, label]) => (
+            {Object.entries(INVENTORY_ACTION_LABELS).filter(([value]) => !prefill || prefill.allowedActions.includes(value as InventoryAction)).map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
               </option>
@@ -520,7 +533,7 @@ function ProjectInventoryOperationModal({
         </div>
         <div className="field">
           <label htmlFor="inv-item">Item *</label>
-          <select id="inv-item" className="select" value={form.item_id} onChange={(e) => setForm({ ...form, item_id: e.target.value })}>
+          <select id="inv-item" className="select" value={form.item_id} disabled={!!prefill} onChange={(e) => setForm({ ...form, item_id: e.target.value })}>
             <option value="">— escolha —</option>
             {items.map((i) => (
               <option key={i.id} value={i.id}>
@@ -536,7 +549,7 @@ function ProjectInventoryOperationModal({
             className="input"
             type="number"
             step="0.001"
-            min="0"
+            min={prefill ? "0.001" : "0"}
             value={form.quantity}
             onChange={(e) => setForm({ ...form, quantity: e.target.value })}
           />
@@ -624,14 +637,37 @@ function ReverseMovementModal({
 }
 
 function isProjectTab(value: string | null): value is TabKey {
-  return ["resumo", "processo", "instalacao", "licenciamento", "tarefas", "inventario", "historico", "cliente", "relatorio"].includes(value ?? "");
+  return ["resumo", "processo", "cabos", "instalacao", "licenciamento", "seguranca", "tarefas", "inventario", "historico", "cliente", "relatorio"].includes(value ?? "");
+}
+
+function isSafeRouteSuffix(value: unknown, prefix: "?" | "#"): value is string {
+  if (typeof value !== "string") return false;
+  if (value === "") return true;
+  if (!value.startsWith(prefix) || /[\u0000-\u001f\u007f]/.test(value)) return false;
+  return prefix !== "?" || !value.includes("#");
+}
+
+function projectListReturnPath(state: unknown): string {
+  if (state === null || typeof state !== "object" || Array.isArray(state)) return "/projects";
+  const from = (state as { from?: unknown }).from;
+  if (from === null || typeof from !== "object" || Array.isArray(from)) return "/projects";
+  const origin = from as { pathname?: unknown; search?: unknown; hash?: unknown };
+  if (
+    origin.pathname !== "/projects" ||
+    !isSafeRouteSuffix(origin.search, "?") ||
+    !isSafeRouteSuffix(origin.hash, "#")
+  ) return "/projects";
+  return `/projects${origin.search}${origin.hash}`;
 }
 
 export default function ProjectDetail() {
   const { projectId } = useParams<{ projectId: string }>();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const { notify } = useToast();
   const { can } = useSession();
+  const navigate = useNavigate();
+  const projectsReturnTo = projectListReturnPath(location.state);
   const [project, setProject] = useState<Project | null>(null);
   const lifecycleStatuses = useLifecycleStatuses();
   const [history, setHistory] = useState<ProjectHistoryEntry[] | null>(null);
@@ -641,6 +677,7 @@ export default function ProjectDetail() {
   const [licensingData, setLicensingData] = useState<ProjectLicensingData | null>(null);
   const [communicationData, setCommunicationData] = useState<ProjectCommunicationData | null>(null);
   const [inventory, setInventory] = useState<ProjectInventorySummary | null>(null);
+  const [inventoryOwner, setInventoryOwner] = useState<InventoryOwner>(getStoredInventoryOwner);
   const [inventoryCatalog, setInventoryCatalog] = useState<InventoryItem[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [inventoryRefresh, setInventoryRefresh] = useState<InventoryRefreshState>({ status: "loading", error: null });
@@ -649,15 +686,33 @@ export default function ProjectDetail() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("resumo");
   const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
   const [justDone, setJustDone] = useState<string | null>(null);
   const [operatingInventory, setOperatingInventory] = useState(false);
+  const [inventoryPrefill, setInventoryPrefill] = useState<{ action: InventoryAction; allowedActions: InventoryAction[]; item_id: string; quantity: string; reference: string; project_id: string; owner: InventoryOwner } | undefined>();
   const [reversingMovement, setReversingMovement] = useState<InventoryMovement | null>(null);
 
   useEffect(() => {
     const requestedTab = searchParams.get("tab");
-    if (isProjectTab(requestedTab)) setTab(requestedTab);
+    setTab(isProjectTab(requestedTab) ? requestedTab : "resumo");
   }, [searchParams]);
+
+  const chooseTab = (nextTab: TabKey) => {
+    setTab(nextTab);
+    const nextParams = new URLSearchParams(searchParams);
+    if (nextTab === "resumo") nextParams.delete("tab");
+    else nextParams.set("tab", nextTab);
+    const query = nextParams.toString();
+    navigate(
+      {
+        pathname: location.pathname,
+        search: query ? `?${query}` : "",
+        hash: location.hash,
+      },
+      { replace: true, state: location.state }
+    );
+  };
 
   const canViewInstallation = can("project.view_installation_data");
   const canEditInstallation = can("project.edit_installation_data");
@@ -665,6 +720,14 @@ export default function ProjectDetail() {
   const canEditLicensing = can("project.edit_licensing_data");
   const canViewCommunication = can("project.view_communication_data");
   const canEditCommunication = can("project.edit_communication_data");
+  // Credenciais, SIM e excedente: só as flags `can_*` do ProjectRead (permissão + âmbito, calculadas
+  // no servidor). Não se deduzem de /api/me nem de editable_fields. O servidor valida cada escrita.
+  const canEditCredentials = project?.can_edit_credentials === true;
+  const canRevealCredentials = project?.can_reveal_credentials === true;
+  const canEditSimCards = project?.can_edit_sim_cards === true;
+  const canRevealSimSecrets = project?.can_reveal_sim_secrets === true;
+  const canEditSurplusContracts = project?.can_edit_surplus_contracts === true;
+  const canViewCableDesigns = can("cable_design.view");
   const canViewInventory = can("inventory.view");
   const canOperateInventory =
     can("inventory.allocate_project") ||
@@ -674,11 +737,18 @@ export default function ProjectDetail() {
     can("inventory.collect_project");
   const canReverseInventory = can("inventory.reverse_project");
 
+  useEffect(() => {
+    if (inventoryPrefill && (inventoryPrefill.project_id !== projectId || inventoryPrefill.owner !== inventoryOwner)) {
+      setInventoryPrefill(undefined);
+      setOperatingInventory(false);
+    }
+  }, [projectId, inventoryOwner, inventoryPrefill]);
+
   const refreshInventoryItems = useCallback(async (): Promise<boolean> => {
     if (!canViewInventory) return true;
     setInventoryCatalogRefresh({ status: "loading", error: null });
     try {
-      const items = await listInventoryItems();
+      const items = await listInventoryItems(inventoryOwner);
       setInventoryCatalog(items);
       setInventoryItems(items.filter((item) => item.is_active));
       setInventoryCatalogRefresh({ status: "ready", error: null });
@@ -690,13 +760,13 @@ export default function ProjectDetail() {
       });
       return false;
     }
-  }, [canViewInventory]);
+  }, [canViewInventory, inventoryOwner]);
 
   const refreshProjectInventory = useCallback(async (): Promise<boolean> => {
     if (!projectId || !canViewInventory) return true;
     setInventoryRefresh({ status: "loading", error: null });
     try {
-      setInventory(await getProjectInventory(projectId));
+      setInventory(await getProjectInventory(projectId, inventoryOwner));
       setInventoryRefresh({ status: "ready", error: null });
       return true;
     } catch (err) {
@@ -706,7 +776,7 @@ export default function ProjectDetail() {
       });
       return false;
     }
-  }, [projectId, canViewInventory]);
+  }, [projectId, canViewInventory, inventoryOwner]);
 
   const load = useCallback(async (): Promise<boolean> => {
     if (!projectId) return true;
@@ -748,6 +818,14 @@ export default function ProjectDetail() {
     refreshProjectInventory,
     refreshInventoryItems,
   ]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(INVENTORY_OWNER_STORAGE_KEY, inventoryOwner);
+    } catch {
+      // LocalStorage pode estar indisponível em modo privado.
+    }
+  }, [inventoryOwner]);
 
   useEffect(() => {
     setReversedMovementIds(new Set());
@@ -800,7 +878,7 @@ export default function ProjectDetail() {
   if (error) {
     return (
       <>
-        <Link to="/projects" className="back-link">
+        <Link to={projectsReturnTo} className="back-link">
           <Icon name="arrowLeft" size={16} /> Projetos
         </Link>
         <div className="card">
@@ -813,7 +891,7 @@ export default function ProjectDetail() {
   if (!project) {
     return (
       <>
-        <Link to="/projects" className="back-link">
+        <Link to={projectsReturnTo} className="back-link">
           <Icon name="arrowLeft" size={16} /> Projetos
         </Link>
         <div className="card">
@@ -827,6 +905,9 @@ export default function ProjectDetail() {
   const byType = new Map((tasks ?? []).map((t) => [t.task_type, t]));
   const photosTask = byType.get("fotos_drive");
   const canEdit = project.editable_fields.length > 0;
+  // O SafetySheetRead não traz `can_edit`; reutiliza-se o âmbito de edição do
+  // ProjectRead e respeita-se também a permissão dedicada aceite pelo PUT.
+  const canEditSafetySheet = canEdit || can("project.safety_sheet.edit");
   const openTasks = (tasks ?? []).filter((t) => t.status !== "done" && t.status !== "cancelled");
   const inventoryRefreshFailed = inventoryRefresh.status === "error" || inventoryCatalogRefresh.status === "error";
   const inventoryRefreshBusy = inventoryRefresh.status === "loading" || inventoryCatalogRefresh.status === "loading";
@@ -834,8 +915,10 @@ export default function ProjectDetail() {
   const tabs: { key: TabKey; label: string; count?: number }[] = [
     { key: "resumo", label: "Resumo" },
     { key: "processo", label: "Processo" },
+    ...(canViewCableDesigns ? [{ key: "cabos" as TabKey, label: "Cabos" }] : []),
     ...(canViewInstallation ? [{ key: "instalacao" as TabKey, label: "Dados da instalação" }] : []),
-    ...(canViewLicensing || canViewCommunication ? [{ key: "licenciamento" as TabKey, label: "Licenciamento" }] : []),
+    ...(canViewLicensing || canViewCommunication ? [{ key: "licenciamento" as TabKey, label: "Licenciamento e comunicações" }] : []),
+    { key: "seguranca", label: "Segurança" },
     { key: "tarefas", label: "Tarefas", count: tasks?.length },
     ...(canViewInventory ? [{ key: "inventario" as TabKey, label: "Inventário", count: inventory?.reservations.length }] : []),
     { key: "historico", label: "Histórico", count: history?.length },
@@ -844,14 +927,22 @@ export default function ProjectDetail() {
   ];
 
   return (
-    <>
-      <Link to="/projects" className="back-link">
+    <div className="project-detail-page">
+      <Link to={projectsReturnTo} className="back-link">
         <Icon name="arrowLeft" size={16} /> Projetos
       </Link>
 
-      <section className="card hero" aria-labelledby="project-title">
-        <div className="hero__main">
-          <div className="badges">
+      <ProjectPrimaryPhoto
+        key={project.id}
+        projectId={project.id}
+        hasPhoto={project.has_project_photo}
+        canEdit={project.can_edit_project_photo}
+        onPhotoChanged={(hasPhoto) => setProject((current) => (
+          current?.id === project.id ? { ...current, has_project_photo: hasPhoto } : current
+        ))}
+      >
+        <div className="hero__main project-detail-page__summary">
+          <div className="badges project-detail-page__status">
             <Badge tone={PROJECT_STATUS_TONES[project.status]} dot>
               {PROJECT_STATUS_LABELS[project.status]}
             </Badge>
@@ -869,34 +960,43 @@ export default function ProjectDetail() {
             )}
           </div>
           <h1 id="project-title">{project.name}</h1>
-          <div className="muted small" style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
-            <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+          <div className="muted small project-detail-page__metadata">
+            <span className="project-detail-page__meta project-detail-page__meta--pm">
+              <span className="project-detail-page__meta-label">PM</span>
               <PmInlineSelect project={project} people={people} onChanged={setProject} />
             </span>
-            <span>Cliente: {project.client_name ?? "por identificar"}</span>
-            <span>Início: {formatDatePt(project.start_date)}</span>
-            {project.power_kwp !== null && <span>{project.power_kwp.toLocaleString("pt-PT")} kWp</span>}
-          </div>
-          <div className="steps" style={{ marginTop: 14 }} aria-label="Checklist padrão">
-            {STANDARD_ORDER.map((type) => {
-              const task = byType.get(type);
-              return (
-                <span key={type} className={stepClass(task)}>
-                  <Icon name={task?.status === "done" ? "check" : TASK_TYPE_ICONS[type]} size={13} />
-                  {DEFAULT_TASK_TYPE_LABELS[type]}
-                </span>
-              );
-            })}
+            <span className="project-detail-page__meta">Cliente: {project.client_name ?? "por identificar"}</span>
+            <span className="project-detail-page__meta">Início: {formatDatePt(project.start_date)}</span>
+            {project.power_kwp !== null && <span className="project-detail-page__meta">{project.power_kwp.toLocaleString("pt-PT")} kWp</span>}
           </div>
         </div>
-        <div className="hero__progress">
-          <div className="small muted" style={{ marginBottom: 6 }}>
+      </ProjectPrimaryPhoto>
+
+      <section className="project-detail-page__workflow" aria-label="Progresso e ações do projeto">
+        <div className="steps project-detail-page__steps" aria-label="Checklist padrão">
+          {STANDARD_ORDER.map((type) => {
+            const task = byType.get(type);
+            return (
+              <span key={type} className={stepClass(task)}>
+                <Icon name={task?.status === "done" ? "check" : TASK_TYPE_ICONS[type]} size={13} />
+                {DEFAULT_TASK_TYPE_LABELS[type]}
+              </span>
+            );
+          })}
+        </div>
+        <div className="hero__progress project-detail-page__actions">
+          <div className="small muted project-detail-page__progress-label">
             Progresso do workflow
           </div>
           <ProgressBar value={project.workflow_progress_percent} large label="Progresso do workflow" />
           {canEdit && (
-            <button type="button" className="btn btn--block" style={{ marginTop: 14 }} onClick={() => setEditing(true)}>
+            <button type="button" className="btn btn--primary btn--block project-detail-page__edit" onClick={() => setEditing(true)}>
               <Icon name="wrench" size={16} /> Editar projeto
+            </button>
+          )}
+          {project.can_delete === true && (
+            <button type="button" className="btn btn--danger btn--block project-detail-page__delete" onClick={() => setDeleting(true)}>
+              Apagar projeto
             </button>
           )}
         </div>
@@ -924,7 +1024,7 @@ export default function ProjectDetail() {
         </Alert>
       )}
 
-      <div className="tabs" role="tablist" aria-label="Secções do projeto">
+      <div className="tabs project-detail-page__tabs" role="tablist" aria-label="Secções do projeto">
         {tabs.map((t) => (
           <button
             key={t.key}
@@ -935,12 +1035,12 @@ export default function ProjectDetail() {
             aria-controls={`panel-${t.key}`}
             tabIndex={tab === t.key ? 0 : -1}
             className="tab"
-            onClick={() => setTab(t.key)}
+            onClick={() => chooseTab(t.key)}
             onKeyDown={(e) => {
               if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
               const idx = tabs.findIndex((x) => x.key === tab);
               const next = tabs[(idx + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
-              setTab(next.key);
+              chooseTab(next.key);
               document.getElementById(`tab-${next.key}`)?.focus();
             }}
           >
@@ -952,6 +1052,8 @@ export default function ProjectDetail() {
 
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
         {tab === "processo" && <ProjectProcess projectId={project.id} />}
+
+        {tab === "cabos" && canViewCableDesigns && <ProjectCableDesigns projectId={project.id} />}
 
         {tab === "resumo" && (
           <div className="grid grid--main-side">
@@ -1019,7 +1121,7 @@ export default function ProjectDetail() {
               </Card>
               <Card title="Tarefas em aberto" icon="tasks">
                 <div className="stat__value">{tasks === null ? "…" : openTasks.length}</div>
-                <button type="button" className="btn btn--sm" style={{ marginTop: 8 }} onClick={() => setTab("tarefas")}>
+                <button type="button" className="btn btn--sm" style={{ marginTop: 8 }} onClick={() => chooseTab("tarefas")}>
                   Ver tarefas
                 </button>
               </Card>
@@ -1044,36 +1146,25 @@ export default function ProjectDetail() {
         )}
 
         {tab === "licenciamento" && (
-          <div className="grid grid--main-side">
-            <DataSectionCard
-              title="Licenciamento"
-              icon="checkCircle"
-              fields={LICENSING_FIELDS}
-              data={licensingData}
-              canView={canViewLicensing}
-              canEdit={canEditLicensing}
-              onSave={async (changes) => {
-                const updated = await updateProjectLicensingData(project.id, changes);
-                setLicensingData(updated);
-                return updated;
-              }}
-            />
-            <DataSectionCard
-              title="Comunicação / M2M"
-              icon="lock"
-              tone="violet"
-              fields={COMMUNICATION_FIELDS}
-              data={communicationData}
-              canView={canViewCommunication}
-              canEdit={canEditCommunication}
-              onSave={async (changes) => {
-                const updated = await updateProjectCommunicationData(project.id, changes);
-                setCommunicationData(updated);
-                return updated;
-              }}
-            />
-          </div>
+          <ProjectLicensingPanel
+            projectId={project.id}
+            licensing={licensingData}
+            communication={communicationData}
+            canViewLicensing={canViewLicensing}
+            canEditLicensing={canEditLicensing}
+            canViewCommunication={canViewCommunication}
+            canEditCommunication={canEditCommunication}
+            canEditCredentials={canEditCredentials}
+            canRevealCredentials={canRevealCredentials}
+            canEditSimCards={canEditSimCards}
+            canRevealSimSecrets={canRevealSimSecrets}
+            canEditSurplusContracts={canEditSurplusContracts}
+            onLicensingSaved={setLicensingData}
+            onCommunicationSaved={setCommunicationData}
+          />
         )}
+
+        {tab === "seguranca" && <ProjectSafetySheet projectId={project.id} canEdit={canEditSafetySheet} />}
 
         {tab === "tarefas" && (
           <Card
@@ -1161,6 +1252,14 @@ export default function ProjectDetail() {
 
         {tab === "inventario" && (
           <>
+            <div className="cluster section-gap" role="group" aria-label="Inventário por proprietário">
+              <button type="button" className={`btn btn--sm${inventoryOwner === "solcor" ? " btn--primary" : ""}`} aria-pressed={inventoryOwner === "solcor"} onClick={() => setInventoryOwner("solcor")}>
+                Solcor
+              </button>
+              <button type="button" className={`btn btn--sm${inventoryOwner === "verde_milenar" ? " btn--primary" : ""}`} aria-pressed={inventoryOwner === "verde_milenar"} onClick={() => setInventoryOwner("verde_milenar")}>
+                Verde Milenar
+              </button>
+            </div>
             {inventoryRefreshFailed && (
               <Alert
                 tone="danger"
@@ -1282,6 +1381,11 @@ export default function ProjectDetail() {
                     const hasReversal = inventory.reservations.some((candidate) => candidate.reversal_of_movement_id === m.id);
                     const canReverse =
                       canReverseInventory && !reversedMovementIds.has(m.id) && !m.reversal_of_movement_id && !hasReversal;
+                    const shortcutActions: InventoryAction[] = m.reversal_of_movement_id || hasReversal || reversedMovementIds.has(m.id)
+                      ? []
+                      : m.movement_type === "reserva"
+                        ? [ ...(can("inventory.deliver_project") ? ["deliver" as const] : []), ...(can("inventory.consume_project") ? ["consume" as const] : []) ]
+                        : m.movement_type === "entrega" && can("inventory.consume_project") ? ["consume"] : [];
                     return (
                       <li key={m.id} className="list__item">
                         <div className="list__main">
@@ -1302,6 +1406,12 @@ export default function ProjectDetail() {
                           >
                             Anular
                           </button>
+                        )}
+                        {shortcutActions.length > 0 && (
+                          <button type="button" className="btn btn--sm" aria-label={`Atualizar movimento de ${m.item_name ?? "material"}`} onClick={() => {
+                            setInventoryPrefill({ action: shortcutActions[0], allowedActions: shortcutActions, item_id: m.item_id, quantity: m.quantity, reference: m.reference ?? "", project_id: project.id, owner: inventoryOwner });
+                            setOperatingInventory(true);
+                          }}>Atualizar</button>
                         )}
                       </li>
                     );
@@ -1389,18 +1499,22 @@ export default function ProjectDetail() {
           onCreated={() => {
             setCreatingTask(false);
             notify("Tarefa criada.", "success");
-            setTab("tarefas");
+            chooseTab("tarefas");
             load();
           }}
         />
       )}
-      {operatingInventory && (
+      {operatingInventory && (!inventoryPrefill || (inventoryPrefill.project_id === projectId && inventoryPrefill.project_id === project.id && inventoryPrefill.owner === inventoryOwner)) && (
         <ProjectInventoryOperationModal
+          key={`${project.id}:${inventoryOwner}:${inventoryPrefill ? "shortcut" : "normal"}`}
           projectId={project.id}
           items={inventoryItems}
-          onClose={() => setOperatingInventory(false)}
+          owner={inventoryOwner}
+          prefill={inventoryPrefill}
+          onClose={() => { setOperatingInventory(false); setInventoryPrefill(undefined); }}
           onDone={() => {
             setOperatingInventory(false);
+            setInventoryPrefill(undefined);
             notify("Movimento de inventário registado.", "success");
             load();
           }}
@@ -1413,6 +1527,17 @@ export default function ProjectDetail() {
           onDone={(reason) => handleReverseMovement(reversingMovement.id, reason)}
         />
       )}
-    </>
+      {deleting && (
+        <ProjectDeletionModal
+          project={project}
+          onClose={() => setDeleting(false)}
+          onDeleted={() => {
+            setDeleting(false);
+            notify("Projeto apagado.", "success");
+            navigate("/projects", { replace: true });
+          }}
+        />
+      )}
+    </div>
   );
 }

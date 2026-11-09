@@ -21,6 +21,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -43,6 +44,29 @@ QUANTITY = Numeric(14, 3)
 
 # Preço unitário de material: 4 casas decimais (ver MaterialRequestItem.unit_price).
 UNIT_PRICE = Numeric(14, 4)
+
+# Proprietário do inventário — o catálogo de artigos continua partilhado.
+INVENTORY_OWNER_SOLCOR = "solcor"
+INVENTORY_OWNER_VERDE_MILENAR = "verde_milenar"
+INVENTORY_OWNERS: frozenset[str] = frozenset(
+    {INVENTORY_OWNER_SOLCOR, INVENTORY_OWNER_VERDE_MILENAR}
+)
+
+# Vocabulário canónico do catálogo. A coluna continua nullable e sem enum na
+# BD para não exigir migração nem reescrever categorias legadas.
+INVENTORY_CATEGORIES: tuple[str, ...] = (
+    "Painéis",
+    "Inversores",
+    "Baterias",
+    "Estruturas",
+    "Cabos DC",
+    "Cabos AC",
+    "Proteções/Quadros",
+    "Conectores",
+    "Monitorização/Comunicação",
+    "Consumíveis",
+    "Outros",
+)
 
 # Localização física/lógica de stock (ver InventoryLocation.location_type).
 LOCATION_TYPE_CENTRAL = "central"
@@ -110,8 +134,8 @@ class InventoryLocation(UUIDPk, TimestampMixin, Base):
         # Partial unique indexes are supported by both PostgreSQL and SQLite.
         # The Alembic migration creates the same invariant for existing DBs.
         Index(
-            "uq_inventory_locations_one_active_central",
-            "location_type",
+            "uq_inventory_locations_one_active_central_per_owner",
+            "owner",
             unique=True,
             sqlite_where=text("location_type = 'central' AND is_active = 1"),
             postgresql_where=text("location_type = 'central' AND is_active"),
@@ -121,6 +145,9 @@ class InventoryLocation(UUIDPk, TimestampMixin, Base):
     code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     location_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    owner: Mapped[str] = mapped_column(
+        String(32), default=INVENTORY_OWNER_SOLCOR, server_default=INVENTORY_OWNER_SOLCOR, nullable=False
+    )
     project_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("projects.id"), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
@@ -137,12 +164,60 @@ class InventoryItem(UUIDPk, TimestampMixin, Base):
     # responsável, backlog F1) mas permite adicionar categorias novas sem
     # migração, porque o próprio pedido exige essa extensibilidade.
     category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    manufacturer: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    subcategory: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    power_w: Mapped[Decimal | None] = mapped_column(Numeric(14, 3), nullable=True)
+    cross_section_mm2: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)
+    photo_storage_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    photo_content_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     min_stock: Mapped[Decimal] = mapped_column(QUANTITY, default=0)
     preferred_supplier_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("suppliers.id"), nullable=True
     )
     lead_time_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class InventoryItemDocument(UUIDPk, Base):
+    """Ficheiro associado à ficha técnica de um artigo; remoção lógica."""
+
+    __tablename__ = "inventory_item_documents"
+    __table_args__ = (
+        CheckConstraint("kind IN ('datasheet', 'manual', 'guia', 'outro')", name="ck_inventory_item_document_kind"),
+        Index("ix_inventory_item_documents_item_active", "item_id", "deleted_at", "created_at"),
+    )
+
+    item_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("inventory_items.id"), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    filename: Mapped[str] = mapped_column(String(512), nullable=False)
+    stored_name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    content_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_by_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("people.id"), nullable=True
+    )
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc), nullable=False
+    )
+    deleted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class InventoryCategoryImage(Base):
+    """Imagem de catálogo opcional, indexada pela categoria canónica."""
+
+    __tablename__ = "inventory_category_images"
+
+    category: Mapped[str] = mapped_column(String(64), primary_key=True)
+    stored_name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    content_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    updated_by_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("people.id"), nullable=True
+    )
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc), nullable=False
+    )
 
 
 class InventoryCatalogHistory(UUIDPk, Base):

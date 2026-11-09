@@ -95,6 +95,8 @@ def can_edit_project(ctx: AuthContext, project: Project) -> bool:
     """Um projeto só pode ser editado por quem tem `project.edit_all`, ou por
     quem tem `project.edit_own_progress` e é o PM atribuído a esse projeto —
     nunca por dedução do "papel" selecionado na UI."""
+    if project.deleted_at is not None:
+        return False
     if ctx.has_permission("project.edit_all"):
         return True
     if ctx.has_permission("project.edit_own_progress"):
@@ -220,6 +222,8 @@ def project_matches_installer_scope(ctx: AuthContext, project: Project) -> bool:
 
 
 def can_view_project(ctx: AuthContext, project: Project) -> bool:
+    if project.deleted_at is not None:
+        return False
     if ctx.has_permission("project.view_all"):
         return True
     if ctx.has_permission("project.view_own"):
@@ -236,6 +240,8 @@ def can_view_task(ctx: AuthContext, task: Task) -> bool:
     O âmbito delegado, quando é o único âmbito de projetos, não pode ser
     furado por uma atribuição direta fora dos projetos delegados.
     """
+    if task.project.deleted_at is not None:
+        return False
     if ctx.has_permission("task.view_all"):
         return True
     if has_only_delegated_project_scope(ctx) or is_installer_readonly_scope(ctx):
@@ -251,6 +257,8 @@ def can_edit_task(ctx: AuthContext, task: Task) -> bool:
     """`task.edit_all` edita qualquer tarefa; `task.edit_own` só permite
     tarefas criadas ou atribuídas ao próprio utilizador, dentro do âmbito de
     projeto aplicável quando esse âmbito é exclusivamente delegado."""
+    if task.project.deleted_at is not None:
+        return False
     if ctx.has_permission("task.edit_all"):
         return True
     if not ctx.has_permission("task.edit_own"):
@@ -261,6 +269,8 @@ def can_edit_task(ctx: AuthContext, task: Task) -> bool:
 
 
 def can_create_task(ctx: AuthContext, project: Project) -> bool:
+    if project.deleted_at is not None:
+        return False
     if ctx.has_permission("task.edit_all"):
         return True
     if ctx.has_permission("task.edit_own"):
@@ -333,6 +343,53 @@ def can_edit_project_communication_data(ctx: AuthContext, project: Project) -> b
     return ctx.has_permission("project.edit_communication_data") and can_edit_project(ctx, project)
 
 
+def can_view_project_credentials(ctx: AuthContext, project: Project) -> bool:
+    """Lista de credenciais de portais (sem passwords): mesmo âmbito de
+    comunicação/M2M — exige `project.view_communication_data`."""
+    return ctx.has_permission("project.view_communication_data") and can_view_project(ctx, project)
+
+
+def can_edit_project_credentials(ctx: AuthContext, project: Project) -> bool:
+    """Criar/editar/remover credenciais: `project.credentials.edit` e o âmbito
+    de `can_edit_project` (administrador, chefe, PM do projeto)."""
+    return ctx.has_permission("project.credentials.edit") and can_edit_project(ctx, project)
+
+
+def can_reveal_project_credential(ctx: AuthContext, project: Project) -> bool:
+    """Revelar a password: `project.credentials.reveal` e o mesmo âmbito."""
+    return ctx.has_permission("project.credentials.reveal") and can_edit_project(ctx, project)
+
+
+def can_view_project_sim_cards(ctx: AuthContext, project: Project) -> bool:
+    """Lista de SIMs (sem PIN/PUK): mesmo âmbito da comunicação/M2M."""
+    return ctx.has_permission("project.view_communication_data") and can_view_project(ctx, project)
+
+
+def can_edit_project_sim_cards(ctx: AuthContext, project: Project) -> bool:
+    """Criar/editar/remover SIMs: `project.edit_communication_data` e `can_edit_project`."""
+    return ctx.has_permission("project.edit_communication_data") and can_edit_project(ctx, project)
+
+
+def can_write_project_sim_secrets(ctx: AuthContext, project: Project) -> bool:
+    """Definir/alterar PIN ou PUK: mesma permissão de escrita das passwords de portais."""
+    return can_edit_project_credentials(ctx, project)
+
+
+def can_reveal_project_sim_secrets(ctx: AuthContext, project: Project) -> bool:
+    """Ver PIN/PUK: `project.credentials.reveal` e o mesmo âmbito das passwords."""
+    return can_reveal_project_credential(ctx, project)
+
+
+def can_view_project_surplus_contracts(ctx: AuthContext, project: Project) -> bool:
+    return ctx.has_permission("project.view_licensing_data") and can_view_project(ctx, project)
+
+
+def can_edit_project_surplus_contracts(ctx: AuthContext, project: Project) -> bool:
+    return ctx.has_permission("project.edit_licensing_data") and (
+        can_edit_project(ctx, project) or is_delegated_project(ctx, project)
+    )
+
+
 def can_manage_central_inventory(ctx: AuthContext) -> bool:
     """Entrada/ajuste no stock físico central — nunca por projeto (o stock
     central é um recurso partilhado por toda a operação, não de um
@@ -403,8 +460,14 @@ def can_view_calendar_event(
     assigned_to_person_id: UUID | None = None,
     assigned_to_person_ids: tuple[UUID, ...] | list[UUID] | None = None,
 ) -> bool:
-    if not (ctx.has_permission("calendar.view") or ctx.has_permission("works_calendar.view_assigned_installer")):
+    if not (
+        ctx.has_permission("calendar.view")
+        or ctx.has_permission("calendar.view_all_pm")
+        or ctx.has_permission("works_calendar.view_assigned_installer")
+    ):
         return False
+    if ctx.has_permission("calendar.view_all_pm") and not ctx.has_permission("project.view_all"):
+        return project is None or project.deleted_at is None
     if project is None:
         if has_only_delegated_project_scope(ctx) or is_installer_readonly_scope(ctx):
             participants = set(assigned_to_person_ids or ())
@@ -421,6 +484,8 @@ def can_manage_calendar_event(ctx: AuthContext, project: Project | None) -> bool
     if not ctx.has_permission("calendar.manage"):
         return False
     if project is None:
+        if ctx.has_permission("calendar.view_all_pm") and not ctx.has_permission("project.view_all"):
+            return False
         return True
     return can_edit_project(ctx, project)
 
@@ -453,3 +518,7 @@ def can_view_time_bank_person(ctx: AuthContext, person_id: UUID) -> bool:
 
 def can_manage_time_bank(ctx: AuthContext) -> bool:
     return ctx.has_permission("time_bank.manage_all")
+
+
+def can_log_time_bank_own(ctx: AuthContext) -> bool:
+    return ctx.has_permission("time_bank.log_own")

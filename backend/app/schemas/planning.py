@@ -63,6 +63,7 @@ class CalendarEventRead(BaseModel):
 
     project_name: str | None = None
     project_url: str | None = None
+    project_context_hidden: bool = False
     task_title: str | None = None
     assigned_to_display_name: str | None = None
     assigned_to_display_names: list[str] = Field(default_factory=list)

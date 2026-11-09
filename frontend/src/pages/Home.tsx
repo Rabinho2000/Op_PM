@@ -5,13 +5,18 @@ import {
   AbsenceMini,
   ApiError,
   DashboardSummary,
+  DashboardWorks,
   DEFAULT_TASK_TYPE_LABELS,
   getDashboardSummary,
+  getDashboardWorks,
+  getMapData,
+  MapData,
   ProjectMini,
   TASK_PRIORITY_LABELS,
   TaskMini,
   WeekDaySummary,
 } from "../api/client";
+import DashboardWorksPanel from "../components/DashboardWorksPanel";
 import Icon, { IconName } from "../components/Icon";
 import {
   Alert,
@@ -299,17 +304,34 @@ function buildStats(s: DashboardSummary): StatDef[] {
 }
 
 export default function Home() {
-  const { me } = useSession();
+  const { me, can } = useSession();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [works, setWorks] = useState<DashboardWorks | null>(null);
+  const [mapData, setMapData] = useState<MapData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [worksError, setWorksError] = useState<string | null>(null);
+  const [mapError, setMapError] = useState<string | null>(null);
+  const mapAllowed = can("map.view");
 
   const load = useCallback(() => {
     setError(null);
     setSummary(null);
+    setWorks(null);
+    setWorksError(null);
+    setMapData(null);
+    setMapError(null);
     getDashboardSummary()
       .then(setSummary)
       .catch((e) => setError(e instanceof ApiError ? e.detail : "Não foi possível contactar o servidor."));
-  }, []);
+    getDashboardWorks()
+      .then(setWorks)
+      .catch((e) => setWorksError(e instanceof ApiError ? e.detail : "Não foi possível carregar as obras."));
+    if (mapAllowed) {
+      getMapData()
+        .then(setMapData)
+        .catch((e) => setMapError(e instanceof ApiError ? e.detail : "Não foi possível carregar o mapa."));
+    }
+  }, [mapAllowed]);
 
   useEffect(load, [load]);
 
@@ -387,6 +409,17 @@ export default function Home() {
         }
       />
 
+      <section className="home-dashboard__indicators" aria-labelledby="home-dashboard-indicators-title">
+        <h2 className="home-dashboard__indicators-title" id="home-dashboard-indicators-title">
+          Indicadores principais
+        </h2>
+        <div className="home-dashboard__indicator-grid grid grid--stats" aria-label="Indicadores principais">
+          {buildStats(summary).map((stat) => (
+            <StatCard key={stat.label} {...stat} />
+          ))}
+        </div>
+      </section>
+
       {summary.projects_photos_pending.length > 0 && (
         <Alert
           tone="warning"
@@ -405,10 +438,14 @@ export default function Home() {
         </Alert>
       )}
 
-      <div className="grid grid--stats" aria-label="Indicadores principais">
-        {buildStats(summary).map((stat) => (
-          <StatCard key={stat.label} {...stat} />
-        ))}
+      <div className="home-dashboard__work-overview">
+        <DashboardWorksPanel
+          works={works}
+          mapAllowed={mapAllowed}
+          mapData={mapData}
+          mapError={mapError}
+          worksError={worksError}
+        />
       </div>
 
       <div className="grid grid--main-side section-gap">

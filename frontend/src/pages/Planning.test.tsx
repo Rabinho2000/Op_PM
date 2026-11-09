@@ -354,7 +354,7 @@ describe("Planeamento", () => {
     );
   });
 
-  it("mostra categoria, todos os responsáveis e ligação read-only ao Processo", async () => {
+  it("não projeta tarefas do Processo no calendário manual", async () => {
     const projected = event({
       id: "process-1",
       source: "process",
@@ -377,16 +377,77 @@ describe("Planeamento", () => {
     api.listProcessCalendarEvents.mockResolvedValue([projected]);
     api.listCalendarEvents.mockResolvedValue([]);
     renderPlanning();
-    fireEvent.click(await screen.findByText("Etapa projetada"));
+    await waitFor(() => expect(api.listCalendarEvents).toHaveBeenCalled());
+    expect(api.listProcessCalendarEvents).not.toHaveBeenCalled();
+    expect(screen.queryByText("Etapa projetada")).not.toBeInTheDocument();
+    expect(screen.queryByText(/projeção do Processo/i)).not.toBeInTheDocument();
+  });
+
+  it("mostra eventos estrangeiros em modo somente leitura sem ligação ao projeto", async () => {
+    api.listCalendarEvents.mockResolvedValue([
+      event({
+        id: "evt-foreign",
+        title: "Evento de outro PM",
+        project_id: null,
+        project_name: null,
+        project_url: null,
+        project_context_hidden: true,
+        can_manage: false,
+      }),
+    ]);
+    renderWithProviders(<Planning />, {
+      me: makeMe({ permissions: ["calendar.view", "calendar.view_all_pm"] }),
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Evento de outro PM/ }));
+    const detail = await screen.findByRole("dialog");
+    expect(within(detail).getByText("Projeto fora do seu âmbito")).toBeInTheDocument();
+    expect(within(detail).queryByText("Projeto de outro PM")).not.toBeInTheDocument();
+    expect(within(detail).queryByRole("link")).not.toBeInTheDocument();
+    expect(within(detail).queryByRole("button", { name: /editar|cancelar/i })).not.toBeInTheDocument();
+  });
+
+  it("exige projeto para um PM restrito e não envia uma criação sem projeto", async () => {
+    renderWithProviders(<Planning />, {
+      me: makeMe({ permissions: ["calendar.view", "calendar.view_all_pm"] }),
+    });
+    await screen.findByText("Visita técnica sintética");
+    fireEvent.click(screen.getByRole("button", { name: /^novo evento$/i }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("Comissionamento")).toBeInTheDocument();
-    expect(within(dialog).getByText("PM Sintético Um")).toBeInTheDocument();
-    expect(within(dialog).getByText("Pessoa Dois")).toBeInTheDocument();
-    expect(within(dialog).getByRole("link", { name: /abrir processo/i })).toHaveAttribute(
-      "href",
-      "/projects/proj-1?tab=processo"
-    );
-    expect(within(dialog).queryByRole("button", { name: /reagendar|cancelar evento/i })).not.toBeInTheDocument();
+    const project = within(dialog).getByRole("combobox", { name: "Projeto *" });
+    expect(project).toHaveAttribute("aria-required", "true");
+    expect(project).toHaveAccessibleDescription("Obrigatório para guardar eventos com esta conta.");
+    fireEvent.change(within(dialog).getByLabelText("Título *"), { target: { value: "Evento sem projeto" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^guardar$/i }));
+    expect(await within(dialog).findByText("Selecione um projeto antes de guardar este evento.")).toBeInTheDocument();
+    expect(api.createCalendarEvent).not.toHaveBeenCalled();
+  });
+
+  it("não permite que um PM restrito remova o projeto de um evento ao editar", async () => {
+    renderWithProviders(<Planning />, {
+      me: makeMe({ permissions: ["calendar.view", "calendar.view_all_pm"] }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /Visita técnica sintética/ }));
+    const detail = await screen.findByRole("dialog");
+    fireEvent.click(within(detail).getByRole("button", { name: "Editar" }));
+    const editor = await screen.findByRole("dialog", { name: "Editar evento" });
+    fireEvent.click(within(editor).getByRole("button", { name: "Limpar Projeto" }));
+    fireEvent.click(within(editor).getByRole("button", { name: /^guardar$/i }));
+    expect(await within(editor).findByText("Selecione um projeto antes de guardar este evento.")).toBeInTheDocument();
+    expect(api.updateCalendarEvent).not.toHaveBeenCalled();
+  });
+
+  it("mantém criação sem projeto para contas com acesso total", async () => {
+    renderPlanning();
+    await screen.findByText("Visita técnica sintética");
+    fireEvent.click(screen.getByRole("button", { name: /^novo evento$/i }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Título *"), { target: { value: "Evento interno" } });
+    fireEvent.change(within(dialog).getByLabelText("Início *"), { target: { value: `${TODAY}T14:00` } });
+    fireEvent.change(within(dialog).getByLabelText("Fim *"), { target: { value: `${TODAY}T15:00` } });
+    api.createCalendarEvent.mockResolvedValue(event({ id: "evt-projectless", project_id: null, project_name: null, project_url: null }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /^guardar$/i }));
+    await waitFor(() => expect(api.createCalendarEvent).toHaveBeenCalledWith(expect.objectContaining({ project_id: null })));
   });
 
   it("envia as horas de Lisboa como instantes com offset no verão e no inverno", async () => {
@@ -480,5 +541,15 @@ describe("Planeamento", () => {
     api.cancelCalendarEvent.mockResolvedValue(event({ status: "cancelado" }));
     fireEvent.click(within(detail).getByRole("button", { name: /cancelar evento/i }));
     await waitFor(() => expect(api.cancelCalendarEvent).toHaveBeenCalledWith("evt-1"));
+  });
+
+  it("identifica as ações acionáveis do mês por classe", async () => {
+    renderPlanning();
+    await screen.findByText("Visita técnica sintética");
+
+    const addEvent = screen.getByRole("button", { name: `Novo evento em ${TODAY}` });
+    const eventChip = screen.getByRole("button", { name: /Visita técnica sintética/ });
+    expect(addEvent).toHaveClass("planning-day-add");
+    expect(eventChip).toHaveClass("planning-event-chip");
   });
 });

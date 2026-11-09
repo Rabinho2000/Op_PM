@@ -22,6 +22,7 @@ from app.schemas.installers import (
 from app.schemas.projects import (
     LifecycleStatusRead,
     ProjectHistoryRead,
+    ProjectDelete,
     ProjectRead,
     ProjectStatusChange,
     ProjectStatusChangeResult,
@@ -36,6 +37,11 @@ from app.security.permissions import (
     can_edit_project,
     can_plan_project_work,
     is_installer_readonly_scope,
+    can_edit_project_credentials,
+    can_reveal_project_credential,
+    can_edit_project_sim_cards,
+    can_reveal_project_sim_secrets,
+    can_edit_project_surplus_contracts,
 )
 from app.security.project_fields import PM_EDITABLE_PROJECT_FIELDS
 from app.services.installers import PlanError, update_work_plan
@@ -44,8 +50,10 @@ from app.services.project_lifecycle import LIFECYCLE_FLOW, LIFECYCLE_STATUS_CODE
 from app.services.projects import (
     change_lifecycle_status,
     compute_project_task_summary,
+    delete_project,
     get_visible_project,
     list_projects,
+    restore_project,
 )
 from app.services.projects import update_project as update_project_service
 from app.services.team_assignments import (
@@ -115,6 +123,15 @@ def _to_read(
     data.can_manage_tasks = can_create_task(ctx, project)
     data.can_change_status = can_change_project_status(ctx, project)
     data.can_plan_work = can_plan_project_work(ctx, project)
+    data.has_project_photo = project.primary_photo_storage_name is not None
+    data.can_edit_project_photo = can_edit_project(ctx, project)
+    data.can_delete = ctx.has_permission("project.delete") and project.deleted_at is None
+    data.can_restore = ctx.has_permission("project.restore") and project.deleted_at is not None
+    data.can_edit_credentials = can_edit_project_credentials(ctx, project)
+    data.can_reveal_credentials = can_reveal_project_credential(ctx, project)
+    data.can_edit_sim_cards = can_edit_project_sim_cards(ctx, project)
+    data.can_reveal_sim_secrets = can_reveal_project_sim_secrets(ctx, project)
+    data.can_edit_surplus_contracts = can_edit_project_surplus_contracts(ctx, project)
     data.installer_name = project.installer.name if project.installer else None
     data.installer_team_name = project.installer_team.name if project.installer_team else None
     data.installer_team_leader_name = project.installer_team.leader_name if project.installer_team else None
@@ -143,6 +160,11 @@ def _to_read(
         data.can_manage_tasks = False
         data.can_change_status = False
         data.can_plan_work = False
+        data.can_edit_credentials = False
+        data.can_reveal_credentials = False
+        data.can_edit_sim_cards = False
+        data.can_reveal_sim_secrets = False
+        data.can_edit_surplus_contracts = False
         if project.installer_id not in ctx.active_installer_ids:
             data.installer_id = None
             data.installer_team_id = None
@@ -205,6 +227,17 @@ def list_lifecycle_statuses_endpoint(ctx: AuthContext = Depends(get_auth_context
     ]
 
 
+@router.get("/deleted", response_model=list[ProjectRead])
+def list_deleted_projects_endpoint(
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> list[ProjectRead]:
+    if not ctx.has_permission("project.restore"):
+        raise HTTPException(status_code=403, detail="Sem permissão para ver projetos apagados.")
+    projects = db.query(Project).filter(Project.deleted_at.is_not(None)).order_by(Project.deleted_at.desc()).all()
+    return [_to_read(db, project, ctx) for project in projects]
+
+
 @router.get("/{project_id}", response_model=ProjectRead)
 def get_project_endpoint(
     project_id: uuid.UUID,
@@ -225,7 +258,7 @@ def update_project_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectRead:
     _require_installer_mutation_scope(ctx)
-    project = db.get(Project, project_id)
+    project = db.query(Project).filter(Project.id == project_id, Project.deleted_at.is_(None)).one_or_none()
     if project is None:
         raise HTTPException(status_code=404, detail="Projeto não encontrado.")
     try:
@@ -236,6 +269,44 @@ def update_project_endpoint(
         # informação sensível, o próprio pedido já continha esses campos.
         raise HTTPException(status_code=403, detail=f"Sem permissão para editar este projeto: {exc}")
     return _to_read(db, updated, ctx)
+
+
+@router.delete("/{project_id}", status_code=204)
+def delete_project_endpoint(
+    project_id: uuid.UUID,
+    body: ProjectDelete,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> None:
+    if not ctx.has_permission("project.delete"):
+        raise HTTPException(status_code=403, detail="Sem permissão para apagar projetos.")
+    project = db.query(Project).filter(Project.id == project_id, Project.deleted_at.is_(None)).one_or_none()
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado.")
+    try:
+        delete_project(db, project=project, reason=body.reason, ctx=ctx)
+    except PermissionDenied:
+        raise HTTPException(status_code=403, detail="Sem permissão para apagar projetos.")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@router.post("/{project_id}/restore", response_model=ProjectRead)
+def restore_project_endpoint(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ProjectRead:
+    if not ctx.has_permission("project.restore"):
+        raise HTTPException(status_code=403, detail="Sem permissão para restaurar projetos.")
+    project = db.query(Project).filter(Project.id == project_id, Project.deleted_at.is_not(None)).one_or_none()
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto apagado não encontrado.")
+    try:
+        restored = restore_project(db, project=project, ctx=ctx)
+    except PermissionDenied:
+        raise HTTPException(status_code=403, detail="Sem permissão para restaurar projetos.")
+    return _to_read(db, restored, ctx)
 
 
 @router.patch("/{project_id}/status", response_model=ProjectStatusChangeResult)
@@ -413,6 +484,15 @@ def get_project_history_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[ProjectHistoryRead]:
     project = get_visible_project(db, ctx, project_id)
+    if project is None and ctx.has_permission("project.restore"):
+        # O histórico do projeto apagado é uma superfície de auditoria
+        # restrita: não o tornar visível via get_visible_project, que oculta
+        # deliberadamente todas as linhas apagadas na operação normal.
+        project = (
+            db.query(Project)
+            .filter(Project.id == project_id, Project.deleted_at.is_not(None))
+            .one_or_none()
+        )
     if project is None:
         raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
 
