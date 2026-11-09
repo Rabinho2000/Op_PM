@@ -222,6 +222,7 @@ def test_saved_view_apply_copies_filters_to_active_preference_and_keeps_view(
         "lifecycle_status": ["construcao", "preparacao"],
         "pm_person_id": created["pm_person_id"],
         "installer_id": created["installer_id"],
+        "installer_ids": created["installer_ids"],
         "team_id": created["team_id"],
         "show_idle": True,
     }

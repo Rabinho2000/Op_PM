@@ -6,7 +6,7 @@ import uuid
 from sqlalchemy import text
 
 DEFAULT_CONFIG = {
-    "columns": ["project", "pm", "lifecycle", "progress", "next_task", "overdue", "warnings"],
+    "columns": ["project", "pm", "lifecycle", "payments", "progress", "next_task", "overdue", "warnings"],
     "sort_by": "name",
     "sort_direction": "asc",
     "filters": {

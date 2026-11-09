@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import {
   ApiError,
   listPeople,
@@ -23,14 +23,15 @@ import {
   updateProjectListView,
 } from "../api/projectListViews";
 import Icon from "../components/Icon";
+import ProjectDeletionModal from "../components/ProjectDeletionModal";
 import LifecycleMultiSelect from "../components/LifecycleMultiSelect";
-import { LifecycleBadge, useLifecycleStatuses } from "../components/LifecycleStatus";
+import { LifecycleBadge, LifecycleStatusControl, useLifecycleStatuses } from "../components/LifecycleStatus";
 import PmInlineSelect from "../components/PmInlineSelect";
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, ProgressBar } from "../components/ui";
 import { useToast } from "../components/Toast";
 import { useSession } from "../session/SessionContext";
 import { formatDatePt, relativeDayLabel, todayIsoLisbon } from "../utils/dates";
-import { PROJECT_STATUS_TONES } from "../utils/labels";
+import { PAYMENT_MILESTONE_LABELS, PAYMENT_MILESTONE_ORDER, PROJECT_STATUS_TONES } from "../utils/labels";
 import { lifecycleFromParams, lifecycleToParams, lifecycleView, IN_PROGRESS_LIFECYCLE } from "../utils/projectFilters";
 import { groupProjectsByLifecycle } from "../utils/projectGrouping";
 import {
@@ -133,10 +134,12 @@ function paramsForConfig(params: URLSearchParams, config: ProjectListConfig): UR
 
 function ColumnConfigurator({
   columns,
+  availableColumns,
   onChange,
   onRestore,
 }: {
   columns: ProjectListColumn[];
+  availableColumns: ProjectListColumn[];
   onChange: (columns: ProjectListColumn[]) => void;
   onRestore: () => void;
 }) {
@@ -205,7 +208,7 @@ function ColumnConfigurator({
             </button>
           </div>
           <div className="projects-list__column-options">
-            {PROJECT_LIST_COLUMN_ORDER.map((column) => {
+            {availableColumns.map((column) => {
               const index = columns.indexOf(column);
               const visible = index >= 0;
               const label = PROJECT_LIST_COLUMN_LABELS[column];
@@ -265,6 +268,8 @@ function renderProjectCell(
   statuses: ReturnType<typeof useLifecycleStatuses>,
   today: string,
   onChanged: (updated: Project) => void,
+  onDelete: (project: Project) => void,
+  origin: { pathname: string; search: string; hash: string },
 ) {
   const missing = missingLabels(project);
   const dueOverdue = project.next_task_due_date !== null && project.next_task_due_date < today;
@@ -272,7 +277,11 @@ function renderProjectCell(
     case "project":
       return (
         <>
-          <Link to={`/projects/${project.id}`} className="cell-title">
+          <Link
+            to={`/projects/${project.id}`}
+            state={{ from: { pathname: origin.pathname, search: origin.search, hash: origin.hash } }}
+            className="cell-title"
+          >
             {project.name}
           </Link>
           <span className="cell-sub">
@@ -280,6 +289,13 @@ function renderProjectCell(
             {project.start_date && ` · início ${formatDatePt(project.start_date)}`}
             {project.installer_name && ` · ${project.installer_name}${project.installer_team_name ? ` / ${project.installer_team_name}` : ""}`}
           </span>
+          {project.can_delete === true && (
+            <div style={{ marginTop: 6 }}>
+              <button type="button" className="btn btn--sm btn--danger" onClick={() => onDelete(project)}>
+                Apagar projeto
+              </button>
+            </div>
+          )}
         </>
       );
     case "pm":
@@ -289,7 +305,7 @@ function renderProjectCell(
     case "lifecycle":
       return (
         <>
-          <LifecycleBadge status={groupStatus === null ? null : project.lifecycle_status} statuses={statuses} />
+          <LifecycleStatusControl project={project} statuses={statuses} onChanged={onChanged} />
           {!project.is_active && (
             <div style={{ marginTop: 4 }}>
               <Badge>Inativo</Badge>
@@ -337,6 +353,27 @@ function renderProjectCell(
           {!project.photos_pending_warning && missing.length === 0 && <span className="muted">—</span>}
         </div>
       );
+    case "payments":
+      return (
+        <span className="payment-indicators">
+          {PAYMENT_MILESTONE_ORDER.map((milestone) => {
+            const received = project.payments?.[milestone] ?? false;
+            const label = PAYMENT_MILESTONE_LABELS[milestone];
+            const state = received ? "recebido" : "não recebido";
+            return (
+              <span
+                key={milestone}
+                className={`payment-indicators__item${received ? " payment-indicators__item--received" : ""}`}
+                role="img"
+                title={`${label}: ${state}`}
+                aria-label={`${label}: ${state}`}
+              >
+                {received ? "✓" : "○"}
+              </span>
+            );
+          })}
+        </span>
+      );
     case "installer":
       return project.installer_name ? (
         <>
@@ -355,6 +392,8 @@ function renderProjectCell(
 
 export default function ProjectsList() {
   const { can, me } = useSession();
+  const canViewPayments = can("payment.view");
+  const location = useLocation();
   const [params, setParams] = useSearchParams();
   const paramsRef = useRef(params);
   paramsRef.current = params;
@@ -368,6 +407,7 @@ export default function ProjectsList() {
   const [viewReady, setViewReady] = useState(initialUrlView);
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [projects, setProjects] = useState<Project[] | null>(null);
+  const [deletingProject, setDeletingProject] = useState<Project | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const lifecycleStatuses = useLifecycleStatuses();
   const [error, setError] = useState<string | null>(null);
@@ -511,6 +551,8 @@ export default function ProjectsList() {
     commitConfig((current) => ({ ...current, filters: { ...current.filters, ...patch } }));
 
   const lifecycleViewState = lifecycleView(lifecycle);
+  const visibleColumns = config.columns.filter((column) => column !== "payments" || canViewPayments);
+  const availableColumns = PROJECT_LIST_COLUMN_ORDER.filter((column) => column !== "payments" || canViewPayments);
   const defaultFilters = defaultProjectListFilters();
   const hasFilters =
     JSON.stringify({ ...filters, lifecycle: [] }) !== JSON.stringify({ ...defaultFilters, lifecycle: [] }) || lifecycleViewState !== "in_progress";
@@ -638,16 +680,19 @@ export default function ProjectsList() {
   }
 
   return (
-    <>
+    <div className="projects-page">
       <PageHeader
         title="Projetos"
         subtitle="Estado, progresso e próximos passos de cada instalação."
         actions={
-          can("import.notes") && (
-            <Link to="/projects/import" className="btn btn--primary">
-              <Icon name="database" size={16} /> Novo projeto — importar notas
-            </Link>
-          )
+          <>
+            {can("project.restore") && <Link to="/projects/deleted" className="btn">Projetos apagados</Link>}
+            {can("import.notes") && (
+              <Link to="/projects/import" className="btn btn--primary">
+                <Icon name="database" size={16} /> Novo projeto — importar notas
+              </Link>
+            )}
+          </>
         }
       />
 
@@ -741,6 +786,7 @@ export default function ProjectsList() {
       <div className="projects-list__settings" role="toolbar" aria-label="Configuração da lista de projetos">
         <ColumnConfigurator
           columns={config.columns}
+          availableColumns={availableColumns}
           onChange={(columns) => commitConfig((current) => ({ ...current, columns }))}
           onRestore={() => commitConfig((current) => ({ ...current, columns: [...DEFAULT_PROJECT_LIST_COLUMNS] }))}
         />
@@ -821,7 +867,7 @@ export default function ProjectsList() {
       </div>
       {preferenceSaved && <p className="small text-success" role="status">Preferência de abertura guardada.</p>}
 
-      <div className="card">
+      <div className="card projects-page__results">
         {error && <ErrorState message={error} onRetry={() => setReloadKey((key) => key + 1)} />}
         {!error && projects === null && <LoadingState label="A carregar projetos…" rows={5} />}
         {!error && projects?.length === 0 && (
@@ -866,13 +912,24 @@ export default function ProjectsList() {
                 {allGroupsExpanded ? "Recolher todos" : "Expandir todos"}
               </button>
             </div>
-            <div className="table-wrap">
+            <div
+              className="table-wrap projects-list__table-wrap"
+              role="region"
+              aria-label="Lista de projetos"
+              tabIndex={0}
+            >
+              <p className="projects-list__scroll-hint">Deslize horizontalmente para consultar todas as colunas.</p>
               <table className="table">
                 <caption className="sr-only">Lista de projetos</caption>
                 <thead>
                   <tr>
-                    {config.columns.map((column) => (
-                      <th key={column} scope="col" className={column === "project" ? "col-main" : undefined}>
+                    {visibleColumns.map((column) => (
+                      <th
+                        key={column}
+                        scope="col"
+                        className={column === "project" ? "col-main" : undefined}
+                        title={column === "payments" ? "FT Adj | EO | FO | Ct" : undefined}
+                      >
                         {PROJECT_LIST_COLUMN_LABELS[column]}
                       </th>
                     ))}
@@ -886,7 +943,7 @@ export default function ProjectsList() {
                     <Fragment key={group.key}>
                       <tbody className={`projects-list__group ${expanded ? "" : "projects-list__group--collapsed"}`}>
                         <tr className="projects-list__group-row">
-                          <th scope="rowgroup" colSpan={config.columns.length}>
+                          <th scope="rowgroup" colSpan={visibleColumns.length}>
                             <button
                               type="button"
                               className="projects-list__group-toggle"
@@ -907,7 +964,7 @@ export default function ProjectsList() {
                       <tbody id={groupId} className="projects-list__group-body" hidden={!expanded}>
                         {group.projects.map((project) => (
                           <tr key={project.id} className={project.overdue_tasks_count > 0 ? "row--danger" : undefined}>
-                            {config.columns.map((column) => (
+                            {visibleColumns.map((column) => (
                               <td key={column} className={column === "pm" ? "nowrap" : undefined} style={column === "progress" ? { minWidth: 150 } : undefined}>
                                 {renderProjectCell(
                                   column,
@@ -917,6 +974,8 @@ export default function ProjectsList() {
                                   lifecycleStatuses,
                                   today,
                                   (updated) => setProjects((current) => current && current.map((row) => (row.id === updated.id ? updated : row))),
+                                  setDeletingProject,
+                                  location,
                                 )}
                               </td>
                             ))}
@@ -931,6 +990,18 @@ export default function ProjectsList() {
           </>
         )}
       </div>
-    </>
+      {deletingProject && (
+        <ProjectDeletionModal
+          project={deletingProject}
+          onClose={() => setDeletingProject(null)}
+          onDeleted={() => {
+            setDeletingProject(null);
+            setProjects((current) => current?.filter((project) => project.id !== deletingProject.id) ?? current);
+            setReloadKey((key) => key + 1);
+            notify("Projeto apagado.", "success");
+          }}
+        />
+      )}
+    </div>
   );
 }

@@ -102,11 +102,12 @@ def test_pm_can_view_and_edit_communication_data_of_own_project(db_session, api_
     project = _own_project(db_session)
     resp = api_client.patch(
         f"/api/projects/{project.id}/communication-data",
-        json={"operator": "Operador Teste", "gsm_m2m_number": "911111111"},
+        json={"communication_status": "ativo", "whereversim_login": "login-teste"},
         headers=_headers("pm.um.sintetico@example.invalid"),
     )
     assert resp.status_code == 200
-    assert resp.json()["operator"] == "Operador Teste"
+    assert resp.json()["communication_status"] == "ativo"
+    assert "operator" not in resp.json()  # SIM vive em /sim-cards
 
 
 def test_editing_field_generates_history_entry(db_session, api_client):

@@ -1,0 +1,8 @@
+.time-bank-notes__form { display: grid; gap: 12px; margin-bottom: 16px; }
+.time-bank-notes__form .btn { min-height: 44px; justify-self: start; }
+.time-bank-notes__list { display: grid; gap: 12px; list-style: none; margin: 0; padding: 0; }
+.time-bank-notes__list li { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
+.time-bank-notes__list p { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.time-bank-notes__list small { color: var(--text-muted); }
+.time-bank-notes__pagination { align-items: center; display: flex; gap: 12px; justify-content: center; margin-top: 16px; }
+.time-bank-notes__pagination .btn { min-height: 44px; }

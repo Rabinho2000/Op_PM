@@ -1,5 +1,5 @@
 // Rótulos e tons visuais — só apresentação (os estados vêm da API).
-import type { AbsenceType, ProjectStatus, TaskPriority, TaskStatus } from "../api/client";
+import type { AbsenceType, PaymentMilestoneCode, ProjectStatus, TaskPriority, TaskStatus } from "../api/client";
 import type { IconName } from "../components/Icon";
 import type { Tone } from "../components/ui";
 
@@ -40,6 +40,27 @@ export const ABSENCE_TYPE_TONES: Record<AbsenceType, Tone> = {
   outro: "info",
 };
 
+export const PAYMENT_MILESTONE_ORDER: PaymentMilestoneCode[] = [
+  "adjudicacao",
+  "entrada_obra",
+  "fim_obra",
+  "certificado_final",
+];
+
+export const PAYMENT_MILESTONE_LABELS: Record<PaymentMilestoneCode, string> = {
+  adjudicacao: "Adjudicação",
+  entrada_obra: "Entrada de Obra",
+  fim_obra: "Fim de Obra",
+  certificado_final: "Certificado final",
+};
+
+export const PAYMENT_MILESTONE_ABBREVIATIONS: Record<PaymentMilestoneCode, string> = {
+  adjudicacao: "FT Adj",
+  entrada_obra: "EO",
+  fim_obra: "FO",
+  certificado_final: "Ct",
+};
+
 export const TASK_TYPE_ICONS: Record<string, IconName> = {
   visita_tecnica: "mapPin",
   preparacao_instalacao: "wrench",
@@ -71,6 +92,10 @@ export const PROJECT_FIELD_LABELS: Record<string, string> = {
   m2m_card: "Cartão M2M",
   upac_connection_date_raw: "Data de ligação UPAC",
   award_year_raw: "Ano de adjudicação",
+  "payment.adjudicacao": "Pagamento recebido — Adjudicação",
+  "payment.entrada_obra": "Pagamento recebido — Entrada de Obra",
+  "payment.fim_obra": "Pagamento recebido — Fim de Obra",
+  "payment.certificado_final": "Pagamento recebido — Certificado final",
   notes: "Notas",
   is_active: "Ativo",
   status: "Estado",

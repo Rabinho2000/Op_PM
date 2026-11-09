@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ApiError, ClientReportListItem, formatApiDetail, listClientReports } from "../api/client";
 import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, PageHeader } from "../components/ui";
+import "./ClientReports.css";
 
 function formatLisbonDate(value: string | null | undefined): string {
   if (!value) return "—";
@@ -122,11 +123,11 @@ export default function ClientReports() {
           Existem <strong>{pendingReviewCount}</strong> rascunho(s) de relatório a aguardar aprovação.
         </Alert>
       )}
-      <Card title="Filtros" icon="search" tone="neutral">
-        <div className="filters filters--inline">
-          <label>
-            <span className="label">Estado</span>
-            <select aria-label="Filtrar por estado" value={status} onChange={(event) => updateFilter("status", event.target.value)}>
+      <Card title="Filtros" icon="search" tone="neutral" className="client-reports__filter-card">
+        <div className="client-reports__filters">
+          <div className="field">
+            <label htmlFor="client-reports-status">Estado</label>
+            <select id="client-reports-status" className="select" value={status} onChange={(event) => updateFilter("status", event.target.value)}>
               <option value="">Todos os estados</option>
               {statusOptions.map(([value, label]) => (
                 <option key={value} value={value}>
@@ -134,10 +135,10 @@ export default function ClientReports() {
                 </option>
               ))}
             </select>
-          </label>
-          <label>
-            <span className="label">PM</span>
-            <select aria-label="Filtrar por PM" value={pm} onChange={(event) => updateFilter("pm", event.target.value)}>
+          </div>
+          <div className="field">
+            <label htmlFor="client-reports-pm">PM</label>
+            <select id="client-reports-pm" className="select" value={pm} onChange={(event) => updateFilter("pm", event.target.value)}>
               <option value="">Todos os PMs</option>
               {pmOptions.map((person) => (
                 <option key={person} value={person}>
@@ -145,32 +146,34 @@ export default function ClientReports() {
                 </option>
               ))}
             </select>
-          </label>
+          </div>
         </div>
       </Card>
 
-      <div className="card" data-testid="client-reports-list">
+      <div className="card client-reports__results" data-testid="client-reports-list">
         {loading ? (
           <LoadingState label="A carregar relatórios…" rows={6} />
         ) : error ? (
           <ErrorState message={error} onRetry={load} />
         ) : filteredItems.length === 0 ? (
           <EmptyState
+            icon={items.length === 0 ? "mail" : "search"}
             title={items.length === 0 ? "Ainda não há relatórios a clientes" : "Nenhum relatório corresponde aos filtros"}
-            text={items.length === 0 ? "Quando existirem projetos configurados, aparecerão aqui." : "Altere ou limpe os filtros para ver outros projetos."}
+            text={items.length === 0 ? "Os projetos com relatórios semanais configurados aparecerão aqui." : "Altere os filtros de estado ou PM para voltar a ver resultados."}
           />
         ) : (
           <div className="table-wrap">
             <table className="table">
+              <caption className="sr-only">Relatórios semanais a clientes por projeto</caption>
               <thead>
                 <tr>
-                  <th>Projeto</th>
-                  <th>Cliente</th>
-                  <th>PM</th>
-                  <th>Estado</th>
-                  <th>Próximo envio</th>
-                  <th>Último envio</th>
-                  <th>Destinatários</th>
+                  <th scope="col">Projeto</th>
+                  <th scope="col">Cliente</th>
+                  <th scope="col">PM</th>
+                  <th scope="col">Estado</th>
+                  <th scope="col">Próximo envio</th>
+                  <th scope="col">Último envio</th>
+                  <th scope="col">Destinatários</th>
                 </tr>
               </thead>
               <tbody>

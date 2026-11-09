@@ -371,6 +371,7 @@ def get_teams_view(
     date: dt.date,
     days: int = 1,
     installer_id: uuid.UUID | None = None,
+    installer_ids: list[uuid.UUID] | None = None,
 ) -> tuple[dt.date, int, list[TeamLocationInstaller]]:
     if not (
         can_view_installers(ctx)
@@ -380,13 +381,16 @@ def get_teams_view(
     if days < 1 or days > 62:
         raise AssignmentError("O período deve ter entre 1 e 62 dias.")
     end = date + dt.timedelta(days=days - 1)
+    selected_installer_ids = set(installer_ids or [])
+    if installer_id is not None:
+        selected_installer_ids.add(installer_id)
     installers_query = db.query(Installer).filter(Installer.is_active.is_(True))
     if is_installer_readonly_scope(ctx):
         if not ctx.active_installer_ids:
             return date, days, []
         installers_query = installers_query.filter(Installer.id.in_(ctx.active_installer_ids))
-    if installer_id is not None:
-        installers_query = installers_query.filter(Installer.id == installer_id)
+    if selected_installer_ids:
+        installers_query = installers_query.filter(Installer.id.in_(selected_installer_ids))
     installers = installers_query.options(joinedload(Installer.teams)).order_by(Installer.name).all()
     # Lê todas as ocupações do período para não declarar "livre" uma equipa
     # que está numa obra fora do âmbito do PM. Só as linhas de projetos
@@ -400,6 +404,7 @@ def get_teams_view(
         )
         .filter(
             Project.is_active.is_(True),
+            Project.deleted_at.is_(None),
             ProjectTeamAssignment.start_date <= end,
             ProjectTeamAssignment.end_date >= date,
             or_(
@@ -408,8 +413,8 @@ def get_teams_view(
             ),
         )
     )
-    if installer_id is not None:
-        rows = rows.filter(ProjectTeamAssignment.installer_id == installer_id)
+    if selected_installer_ids:
+        rows = rows.filter(ProjectTeamAssignment.installer_id.in_(selected_installer_ids))
     if is_installer_readonly_scope(ctx):
         # Occupancy and response rows use the assignment's canonical installer;
         # the visible project's legacy installer must not widen this population.

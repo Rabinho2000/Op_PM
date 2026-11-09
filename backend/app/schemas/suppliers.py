@@ -10,6 +10,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_valida
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
 _PHONE_RE = re.compile(r"^\+?[\d\s().-]+$")
+SUPPLIER_COMPANY_CODES = ("solcor", "verde_milenar")
 
 
 def _blank_to_none(value: object) -> object:
@@ -115,11 +116,19 @@ class SupplierRead(BaseModel):
     is_active: bool
     material_types: list[str] = []
     contacts: list[SupplierContactRead] = []
+    company_codes: list[str] = []
 
     @field_validator("material_types", mode="before")
     @classmethod
     def _type_names(cls, value: object) -> object:
         return [getattr(t, "name", t) for t in value] if isinstance(value, (list, tuple)) else value
+
+    @field_validator("company_codes", mode="before")
+    @classmethod
+    def _association_codes(cls, value: object) -> object:
+        if isinstance(value, (list, tuple)):
+            return [getattr(link, "company_code", link) for link in value]
+        return value
 
 
 class SupplierMaterialTypeRead(BaseModel):
@@ -146,6 +155,7 @@ class SupplierBase(BaseModel):
     notes: str = ""
     material_types: list[str] = Field(default_factory=list, max_length=30)
     contacts: list[SupplierContactInput] = Field(default_factory=list, max_length=30)
+    company_codes: list[str] = Field(default_factory=list, max_length=2)
 
     @field_validator("maps_url")
     @classmethod
@@ -172,6 +182,19 @@ class SupplierBase(BaseModel):
     def _types(cls, value: list[str] | None) -> list[str] | None:
         if value and any(len(" ".join(t.split())) > 128 for t in value):
             raise ValueError("Cada tipo de material tem no máximo 128 caracteres.")
+        return value
+
+    @field_validator("company_codes", mode="before")
+    @classmethod
+    def _company_codes(cls, value: object) -> object:
+        if not isinstance(value, list):
+            raise ValueError("company_codes tem de ser uma lista.")
+        if any(not isinstance(code, str) for code in value):
+            raise ValueError("company_codes só pode conter códigos de empresa texto.")
+        if any(code not in SUPPLIER_COMPANY_CODES for code in value):
+            raise ValueError("Código de empresa inválido.")
+        if len(set(value)) != len(value):
+            raise ValueError("company_codes não pode conter duplicados.")
         return value
 
 
@@ -201,6 +224,7 @@ class SupplierUpdate(SupplierBase):
     notes: str | None = None  # type: ignore[assignment]
     material_types: list[str] | None = Field(default=None, max_length=30)  # type: ignore[assignment]
     contacts: list[SupplierContactInput] | None = Field(default=None, max_length=30)  # type: ignore[assignment]
+    company_codes: list[str] | None = Field(default=None, max_length=2)  # type: ignore[assignment]
 
     @field_validator("name")
     @classmethod

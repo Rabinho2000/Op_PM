@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 BASE_REVISION = "f5a7c9d1e3b2"
+TARGET_REVISION = "a9d4f6c2e8b1"
 
 
 def _run_alembic(database_path: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -33,7 +34,7 @@ def _run_alembic(database_path: Path, *arguments: str) -> subprocess.CompletedPr
 def test_works_preferences_migration_up_down_up_on_fresh_sqlite(tmp_path: Path):
     database_path = tmp_path / "works-preferences-migration.db"
 
-    first = _run_alembic(database_path, "upgrade", "head")
+    first = _run_alembic(database_path, "upgrade", TARGET_REVISION)
     assert first.returncode == 0, first.stdout + first.stderr
     with sqlite3.connect(database_path) as connection:
         table = connection.execute(
@@ -51,7 +52,7 @@ def test_works_preferences_migration_up_down_up_on_fresh_sqlite(tmp_path: Path):
         ).fetchone()
     assert removed is None
 
-    second = _run_alembic(database_path, "upgrade", "head")
+    second = _run_alembic(database_path, "upgrade", TARGET_REVISION)
     assert second.returncode == 0, second.stdout + second.stderr
     with sqlite3.connect(database_path) as connection:
         recreated = connection.execute(

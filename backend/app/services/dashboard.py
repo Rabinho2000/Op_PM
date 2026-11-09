@@ -14,12 +14,14 @@ nesta fase; nenhum indicador aqui depende de `cost.view`.
 from __future__ import annotations
 
 import datetime as dt
+import uuid
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.models.absence import STATUS_APROVADA, STATUS_PENDENTE, Absence
+from app.models.installer import InstallerTeam
 from app.models.people import Person
-from app.models.project import Project
+from app.models.project import Project, ProjectTeamAssignment
 from app.models.task import (
     OPEN_TASK_STATUSES,
     PRIORITY_URGENT,
@@ -28,7 +30,16 @@ from app.models.task import (
     TASK_TYPE_VISITA_TECNICA,
     Task,
 )
-from app.schemas.dashboard import AbsenceMini, BirthdayMini, DashboardSummary, ProjectMini, TaskMini, WeekDaySummary
+from app.schemas.dashboard import (
+    AbsenceMini,
+    BirthdayMini,
+    DashboardSummary,
+    DashboardWorkProject,
+    DashboardWorks,
+    ProjectMini,
+    TaskMini,
+    WeekDaySummary,
+)
 from app.security.permissions import AuthContext, can_approve_absence
 from app.services.absences import visible_absences_query
 from app.services.projects import compute_project_task_summary, visible_projects_query
@@ -39,6 +50,7 @@ PROJECT_STARTING_WINDOW_DAYS = 30
 UPCOMING_ABSENCE_WINDOW_DAYS = 30
 UPCOMING_BIRTHDAY_WINDOW_DAYS = 30
 MAX_LIST_ITEMS = 50
+WORK_LIFECYCLE_STATUSES = frozenset({"construcao", "preparacao"})
 
 
 def _project_missing_fields(project: Project) -> list[str]:
@@ -84,6 +96,95 @@ def _absence_mini(absence: Absence) -> AbsenceMini:
         end_date=absence.end_date,
         type=absence.type,
     )
+
+
+def _work_project_mini(project: Project, next_task: Task | None) -> DashboardWorkProject:
+    assignments = project.team_assignments
+    team_names = list(
+        dict.fromkeys(
+            assignment.team.name
+            for assignment in assignments
+            if assignment.team is not None and assignment.team.name
+        )
+    )
+    installer_names = list(
+        dict.fromkeys(
+            assignment.team.installer.name
+            for assignment in assignments
+            if assignment.team is not None and assignment.team.installer is not None
+        )
+    )
+    if not team_names and project.installer_team is not None:
+        team_names = [project.installer_team.name]
+    if not installer_names and project.installer is not None:
+        installer_names = [project.installer.name]
+    return DashboardWorkProject(
+        id=project.id,
+        name=project.name,
+        expected_start_date=project.work_start_date or project.start_date,
+        pm_display_name=project.pm.display_name if project.pm else None,
+        installer_display_name=", ".join(installer_names) or None,
+        team_display_name=", ".join(team_names) or None,
+        next_task_title=next_task.title if next_task else None,
+        next_task_due_date=next_task.due_date if next_task else None,
+    )
+
+
+def compute_dashboard_works(db: Session, ctx: AuthContext) -> DashboardWorks:
+    """Obras ativas visíveis em construção/preparação e a próxima tarefa aberta.
+
+    A lista de projetos é sempre ancorada em `visible_projects_query`; as
+    tarefas são carregadas numa única query limitada aos IDs visíveis.
+    """
+    projects = (
+        visible_projects_query(db, ctx)
+        .filter(Project.is_active.is_(True), Project.lifecycle_status.in_(WORK_LIFECYCLE_STATUSES))
+        .options(
+            joinedload(Project.pm),
+            joinedload(Project.installer),
+            joinedload(Project.installer_team),
+            selectinload(Project.team_assignments)
+            .joinedload(ProjectTeamAssignment.team)
+            .joinedload(InstallerTeam.installer),
+        )
+        .all()
+    )
+    project_ids = [project.id for project in projects]
+    tasks_by_project: dict[uuid.UUID, list[Task]] = {}
+    if project_ids:
+        tasks = db.query(Task).filter(
+            Task.project_id.in_(project_ids), Task.status.in_(OPEN_TASK_STATUSES)
+        ).all()
+        for task in tasks:
+            tasks_by_project.setdefault(task.project_id, []).append(task)
+
+    def next_task_for(project: Project) -> Task | None:
+        tasks = tasks_by_project.get(project.id, [])
+        if not tasks:
+            return None
+        return min(
+            tasks,
+            key=lambda task: (
+                task.due_date is None,
+                task.due_date or dt.date.max,
+                task.created_at,
+                str(task.id),
+            ),
+        )
+
+    entries = {project.id: _work_project_mini(project, next_task_for(project)) for project in projects}
+    construction = [entries[project.id] for project in projects if project.lifecycle_status == "construcao"]
+    construction.sort(key=lambda project: (project.name.casefold(), str(project.id)))
+    preparation = [entries[project.id] for project in projects if project.lifecycle_status == "preparacao"]
+    preparation.sort(
+        key=lambda project: (
+            project.expected_start_date is None,
+            project.expected_start_date or dt.date.max,
+            project.name.casefold(),
+            str(project.id),
+        )
+    )
+    return DashboardWorks(construction=construction, preparation=preparation)
 
 
 def _next_birthday_days_until(birth_date: dt.date, today: dt.date) -> int:

@@ -24,7 +24,7 @@ import uuid
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
@@ -38,13 +38,18 @@ from app.models.inventory import (
     MOVEMENT_RECOLHA,
     MOVEMENT_RESERVA,
     MOVEMENT_SAIDA,
+    MOVEMENT_TRANSITO_ENTRADA,
+    MOVEMENT_TRANSITO_SAIDA,
     InventoryItem,
     InventoryLocation,
     InventoryMovement,
+    INVENTORY_OWNER_SOLCOR,
+    INVENTORY_OWNER_VERDE_MILENAR,
+    INVENTORY_OWNERS,
     ProjectMaterialRequirement,
 )
 
-ZERO = Decimal("0")
+ZERO = Decimal("0.000")
 QUANTITY_QUANTUM = Decimal("0.001")
 MONEY_QUANTUM = Decimal("0.01")
 
@@ -63,6 +68,34 @@ def _canonical_money(value: Decimal | None) -> Decimal | None:
 
 class InventoryError(ValueError):
     pass
+
+
+def _require_owner(owner: str) -> str:
+    if owner not in INVENTORY_OWNERS:
+        raise InventoryError("Proprietário de inventário inválido.")
+    return owner
+
+
+def _owner_movements(query, owner: str):
+    owner = _require_owner(owner)
+    query = query.outerjoin(InventoryLocation, InventoryMovement.location_id == InventoryLocation.id)
+    if owner == INVENTORY_OWNER_SOLCOR:
+        return query.filter(
+            or_(
+                InventoryLocation.owner == owner,
+                and_(InventoryMovement.location_id.is_(None), InventoryLocation.id.is_(None)),
+            )
+        )
+    return query.filter(InventoryLocation.owner == owner)
+
+
+def _movement_owner(db: Session, movement: InventoryMovement) -> str:
+    if movement.location_id is None:
+        return INVENTORY_OWNER_SOLCOR
+    location = db.get(InventoryLocation, movement.location_id)
+    if location is None:
+        raise InventoryError("A localização do movimento não existe.")
+    return _require_owner(location.owner)
 
 
 class InsufficientStockError(InventoryError):
@@ -117,12 +150,24 @@ def _movement_fingerprint(
     destination_location_id: uuid.UUID | None,
     reference: str,
     unit_cost: Decimal | None,
+    owner: str = INVENTORY_OWNER_SOLCOR,
 ) -> str:
     # The compatibility token is only valid when the request omitted a
     # location. Explicit locations remain part of the canonical fingerprint.
     fingerprint_location_id: object = location_id
     if location_id is None and movement_type in (MOVEMENT_ENTRADA, MOVEMENT_AJUSTE):
         fingerprint_location_id = "__central__"
+    # Project operations historically had no location in their fingerprint.
+    # Keep Solcor retries compatible while distinguishing Verde Milenar keys.
+    if movement_type in {
+        MOVEMENT_RESERVA,
+        MOVEMENT_LIBERTA_RESERVA,
+        MOVEMENT_CONSUMO,
+        MOVEMENT_DEVOLUCAO,
+        MOVEMENT_ENTREGA,
+        MOVEMENT_RECOLHA,
+    }:
+        fingerprint_location_id = None
     payload = {
         "item_id": _fingerprint_value(item_id),
         "movement_type": movement_type,
@@ -133,6 +178,8 @@ def _movement_fingerprint(
         "reference": reference,
         "unit_cost": _fingerprint_value(_canonical_money(unit_cost)),
     }
+    if owner == INVENTORY_OWNER_VERDE_MILENAR:
+        payload["owner"] = owner
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -244,9 +291,10 @@ def _prepare_item_movement(
 
 
 def _existing_movement_fingerprint(db: Session, movement: InventoryMovement) -> str:
+    owner = _movement_owner(db, movement)
     location_id = movement.location_id
     if location_id is None and movement.movement_type in (MOVEMENT_ENTRADA, MOVEMENT_AJUSTE):
-        location_id = active_central_location(db).id
+        location_id = active_central_location(db, owner).id
     return _movement_fingerprint(
         item_id=movement.item_id,
         movement_type=movement.movement_type,
@@ -256,6 +304,7 @@ def _existing_movement_fingerprint(db: Session, movement: InventoryMovement) -> 
         destination_location_id=movement.destination_location_id,
         reference=movement.reference,
         unit_cost=movement.unit_cost,
+        owner=owner,
     )
 
 
@@ -291,11 +340,13 @@ def _require_active_item(item: InventoryItem) -> None:
         raise InactiveInventoryReferenceError("O artigo de inventário está inativo.")
 
 
-def active_central_location(db: Session) -> InventoryLocation:
+def active_central_location(db: Session, owner: str = INVENTORY_OWNER_SOLCOR) -> InventoryLocation:
+    owner = _require_owner(owner)
     locations = (
         db.query(InventoryLocation)
         .filter(
             InventoryLocation.location_type == "central",
+            InventoryLocation.owner == owner,
             InventoryLocation.is_active.is_(True),
         )
         .all()
@@ -321,10 +372,14 @@ def _movement_sum(
     movement_types: tuple[str, ...],
     project_id: uuid.UUID | None = None,
     project_filter: bool = False,
+    owner: str = INVENTORY_OWNER_SOLCOR,
 ) -> Decimal:
-    query = db.query(func.coalesce(func.sum(InventoryMovement.quantity), ZERO)).filter(
-        InventoryMovement.item_id == item_id,
-        InventoryMovement.movement_type.in_(movement_types),
+    query = _owner_movements(
+        db.query(func.coalesce(func.sum(InventoryMovement.quantity), ZERO)).filter(
+            InventoryMovement.item_id == item_id,
+            InventoryMovement.movement_type.in_(movement_types),
+        ),
+        owner,
     )
     if project_filter:
         query = query.filter(InventoryMovement.project_id == project_id)
@@ -332,20 +387,20 @@ def _movement_sum(
     return (_canonical_quantity(Decimal(result)) or ZERO) if result is not None else ZERO
 
 
-def physical_stock_central(db: Session, item_id: uuid.UUID) -> Decimal:
-    entradas = _movement_sum(db, item_id=item_id, movement_types=(MOVEMENT_ENTRADA,))
-    saidas = _movement_sum(db, item_id=item_id, movement_types=(MOVEMENT_SAIDA,))
-    consumos = _movement_sum(db, item_id=item_id, movement_types=(MOVEMENT_CONSUMO,))
-    devolucoes = _movement_sum(db, item_id=item_id, movement_types=(MOVEMENT_DEVOLUCAO,))
+def physical_stock_central(db: Session, item_id: uuid.UUID, owner: str = INVENTORY_OWNER_SOLCOR) -> Decimal:
+    entradas = _movement_sum(db, item_id=item_id, movement_types=(MOVEMENT_ENTRADA,), owner=owner)
+    saidas = _movement_sum(db, item_id=item_id, movement_types=(MOVEMENT_SAIDA,), owner=owner)
+    consumos = _movement_sum(db, item_id=item_id, movement_types=(MOVEMENT_CONSUMO,), owner=owner)
+    devolucoes = _movement_sum(db, item_id=item_id, movement_types=(MOVEMENT_DEVOLUCAO,), owner=owner)
     # ajuste guarda o delta com sinal (positivo = stock encontrado a mais,
     # negativo = quebra/perda) — soma direta, sem separar por tipo.
-    ajustes = _movement_sum(db, item_id=item_id, movement_types=(MOVEMENT_AJUSTE,))
+    ajustes = _movement_sum(db, item_id=item_id, movement_types=(MOVEMENT_AJUSTE,), owner=owner)
     return entradas - saidas - consumos + devolucoes + ajustes
 
 
-def reserved_for_project(db: Session, item_id: uuid.UUID, project_id: uuid.UUID) -> Decimal:
+def reserved_for_project(db: Session, item_id: uuid.UUID, project_id: uuid.UUID, owner: str = INVENTORY_OWNER_SOLCOR) -> Decimal:
     reservas = _movement_sum(
-        db, item_id=item_id, movement_types=(MOVEMENT_RESERVA,), project_id=project_id, project_filter=True
+        db, item_id=item_id, movement_types=(MOVEMENT_RESERVA,), project_id=project_id, project_filter=True, owner=owner
     )
     libertacoes = _movement_sum(
         db,
@@ -353,38 +408,43 @@ def reserved_for_project(db: Session, item_id: uuid.UUID, project_id: uuid.UUID)
         movement_types=(MOVEMENT_LIBERTA_RESERVA,),
         project_id=project_id,
         project_filter=True,
+        owner=owner,
     )
     consumos = _movement_sum(
-        db, item_id=item_id, movement_types=(MOVEMENT_CONSUMO,), project_id=project_id, project_filter=True
+        db, item_id=item_id, movement_types=(MOVEMENT_CONSUMO,), project_id=project_id, project_filter=True, owner=owner
     )
     return reservas - libertacoes - consumos
 
 
-def total_reserved(db: Session, item_id: uuid.UUID) -> Decimal:
+def total_reserved(db: Session, item_id: uuid.UUID, owner: str = INVENTORY_OWNER_SOLCOR) -> Decimal:
     """Soma de `reserved_for_project` sobre todos os projetos — usada para
     calcular o disponível. Não filtra por projeto: soma reserva/liberta/
     consumo de qualquer projeto."""
-    reservas = _movement_sum(db, item_id=item_id, movement_types=(MOVEMENT_RESERVA,))
-    libertacoes = _movement_sum(db, item_id=item_id, movement_types=(MOVEMENT_LIBERTA_RESERVA,))
-    consumos = _movement_sum(db, item_id=item_id, movement_types=(MOVEMENT_CONSUMO,))
+    reservas = _movement_sum(db, item_id=item_id, movement_types=(MOVEMENT_RESERVA,), owner=owner)
+    libertacoes = _movement_sum(db, item_id=item_id, movement_types=(MOVEMENT_LIBERTA_RESERVA,), owner=owner)
+    consumos = _movement_sum(db, item_id=item_id, movement_types=(MOVEMENT_CONSUMO,), owner=owner)
     return reservas - libertacoes - consumos
 
 
-def available_stock(db: Session, item_id: uuid.UUID) -> Decimal:
-    return physical_stock_central(db, item_id) - total_reserved(db, item_id)
+def available_stock(db: Session, item_id: uuid.UUID, owner: str = INVENTORY_OWNER_SOLCOR) -> Decimal:
+    return physical_stock_central(db, item_id, owner) - total_reserved(db, item_id, owner)
 
 
-def consumed_for_project(db: Session, item_id: uuid.UUID, project_id: uuid.UUID) -> Decimal:
+def consumed_for_project(
+    db: Session, item_id: uuid.UUID, project_id: uuid.UUID, owner: str = INVENTORY_OWNER_SOLCOR
+) -> Decimal:
     consumos = _movement_sum(
-        db, item_id=item_id, movement_types=(MOVEMENT_CONSUMO,), project_id=project_id, project_filter=True
+        db, item_id=item_id, movement_types=(MOVEMENT_CONSUMO,), project_id=project_id, project_filter=True, owner=owner
     )
     devolucoes = _movement_sum(
-        db, item_id=item_id, movement_types=(MOVEMENT_DEVOLUCAO,), project_id=project_id, project_filter=True
+        db, item_id=item_id, movement_types=(MOVEMENT_DEVOLUCAO,), project_id=project_id, project_filter=True, owner=owner
     )
     return consumos - devolucoes
 
 
-def on_site_for_project(db: Session, item_id: uuid.UUID, project_id: uuid.UUID) -> Decimal:
+def on_site_for_project(
+    db: Session, item_id: uuid.UUID, project_id: uuid.UUID, owner: str = INVENTORY_OWNER_SOLCOR
+) -> Decimal:
     """Material fisicamente na instalação (D-064):
 
         no_local = Σ entrega − Σ recolha − Σ from_site_quantity(consumo)
@@ -393,25 +453,24 @@ def on_site_for_project(db: Session, item_id: uuid.UUID, project_id: uuid.UUID) 
     excedente enviado pela transportadora ou reforço propositado) e do stock
     físico central. Soma simples, independente da ordem dos movimentos."""
     entregas = _movement_sum(
-        db, item_id=item_id, movement_types=(MOVEMENT_ENTREGA,), project_id=project_id, project_filter=True
+        db, item_id=item_id, movement_types=(MOVEMENT_ENTREGA,), project_id=project_id, project_filter=True, owner=owner
     )
     recolhas = _movement_sum(
-        db, item_id=item_id, movement_types=(MOVEMENT_RECOLHA,), project_id=project_id, project_filter=True
+        db, item_id=item_id, movement_types=(MOVEMENT_RECOLHA,), project_id=project_id, project_filter=True, owner=owner
     )
-    abatido = (
-        db.query(func.coalesce(func.sum(InventoryMovement.from_site_quantity), ZERO))
-        .filter(
+    abatido = _owner_movements(
+        db.query(func.coalesce(func.sum(InventoryMovement.from_site_quantity), ZERO)).filter(
             InventoryMovement.item_id == item_id,
             InventoryMovement.project_id == project_id,
             InventoryMovement.movement_type == MOVEMENT_CONSUMO,
-        )
-        .scalar()
-    )
+        ),
+        owner,
+    ).scalar()
     return entregas - recolhas - ((_canonical_quantity(Decimal(abatido)) or ZERO) if abatido is not None else ZERO)
 
 
 def on_site_balances_by_project(
-    db: Session, project_ids: list[uuid.UUID]
+    db: Session, project_ids: list[uuid.UUID], owner: str = INVENTORY_OWNER_SOLCOR
 ) -> dict[uuid.UUID, dict[uuid.UUID, Decimal]]:
     """Saldo "no local" positivo por projeto e item, numa única query
     agregada (mesma fórmula de `on_site_for_project`). Usado pelo mapa e pelo
@@ -430,7 +489,9 @@ def on_site_balances_by_project(
     )
     balance = func.sum(signed)
     rows = (
-        db.query(InventoryMovement.project_id, InventoryMovement.item_id, balance.label("on_site"))
+        _owner_movements(
+            db.query(InventoryMovement.project_id, InventoryMovement.item_id, balance.label("on_site")), owner
+        )
         .filter(
             InventoryMovement.project_id.in_(project_ids),
             InventoryMovement.movement_type.in_((MOVEMENT_ENTREGA, MOVEMENT_RECOLHA, MOVEMENT_CONSUMO)),
@@ -454,12 +515,52 @@ class InventoryItemBalance:
     total_reserved: Decimal
 
 
-def item_balance(db: Session, item: InventoryItem) -> InventoryItemBalance:
-    physical = physical_stock_central(db, item.id)
-    reserved = total_reserved(db, item.id)
+def item_balance(db: Session, item: InventoryItem, owner: str = INVENTORY_OWNER_SOLCOR) -> InventoryItemBalance:
+    physical = physical_stock_central(db, item.id, owner)
+    reserved = total_reserved(db, item.id, owner)
     return InventoryItemBalance(
         item_id=item.id, physical_stock=physical, available_stock=physical - reserved, total_reserved=reserved
     )
+
+
+def physical_stock_by_location(
+    db: Session, item_id: uuid.UUID, owner: str = INVENTORY_OWNER_SOLCOR
+) -> list[dict[str, object]]:
+    """Physical stock split by location, preserving locationless legacy rows."""
+    balances: dict[uuid.UUID | None, Decimal] = {}
+    movements = _owner_movements(
+        db.query(InventoryMovement).filter(InventoryMovement.item_id == item_id), owner
+    ).all()
+    for movement in movements:
+        if movement.movement_type in (MOVEMENT_ENTRADA, MOVEMENT_DEVOLUCAO, MOVEMENT_TRANSITO_ENTRADA):
+            delta = movement.quantity
+        elif movement.movement_type in (MOVEMENT_SAIDA, MOVEMENT_CONSUMO, MOVEMENT_TRANSITO_SAIDA):
+            delta = -movement.quantity
+        elif movement.movement_type == MOVEMENT_AJUSTE:
+            delta = movement.quantity
+        else:
+            continue
+        location_id = (
+            movement.destination_location_id
+            if movement.movement_type == MOVEMENT_TRANSITO_ENTRADA
+            else movement.location_id
+        )
+        balances[location_id] = balances.get(location_id, ZERO) + delta
+
+    result: list[dict[str, object]] = []
+    for location_id, quantity in balances.items():
+        quantity = _canonical_quantity(quantity) or ZERO
+        if quantity == ZERO:
+            continue
+        location = db.get(InventoryLocation, location_id) if location_id is not None else None
+        result.append(
+            {
+                "location_id": location_id,
+                "location_name": location.name if location else "Sem localização (legado)",
+                "physical_stock": quantity,
+            }
+        )
+    return sorted(result, key=lambda row: (str(row["location_name"]).casefold(), str(row["location_id"] or "")))
 
 
 def _create_movement(
@@ -481,6 +582,10 @@ def _create_movement(
     quantity = _canonical_quantity(quantity)  # type: ignore[assignment]
     from_site_quantity = _canonical_quantity(from_site_quantity)
     unit_cost = _canonical_money(unit_cost)
+    location = db.get(InventoryLocation, location_id) if location_id is not None else None
+    if location_id is not None and location is None:
+        raise InventoryError("A localização do movimento não existe.")
+    owner = location.owner if location is not None else INVENTORY_OWNER_SOLCOR
     request_fingerprint = _movement_fingerprint(
         item_id=item_id,
         movement_type=movement_type,
@@ -494,6 +599,7 @@ def _create_movement(
         destination_location_id=destination_location_id,
         reference=reference,
         unit_cost=unit_cost,
+        owner=owner,
     )
     existing = _existing_by_idempotency_key(db, idempotency_key, request_fingerprint)
     if existing is not None:
@@ -538,11 +644,13 @@ def enter_stock(
     unit_cost: Decimal | None = None,
     idempotency_key: str | None = None,
     location_id: uuid.UUID | None = None,
+    owner: str = INVENTORY_OWNER_SOLCOR,
 ) -> InventoryMovement:
     quantity = _canonical_quantity(quantity)  # type: ignore[assignment]
     if quantity <= ZERO:
         raise InventoryError("A quantidade de entrada tem de ser positiva.")
-    central = active_central_location(db) if location_id is None else _require_active_central_location(db, location_id)
+    owner = _require_owner(owner)
+    central = active_central_location(db, owner) if location_id is None else _require_active_central_location(db, location_id)
     existing = _prepare_item_movement(
         db,
         item=item,
@@ -556,6 +664,7 @@ def enter_stock(
             destination_location_id=None,
             reference=reference,
             unit_cost=unit_cost,
+            owner=central.owner,
         ),
     )
     if existing is not None:
@@ -584,13 +693,15 @@ def adjust_stock(
     reference: str = "",
     idempotency_key: str | None = None,
     location_id: uuid.UUID | None = None,
+    owner: str = INVENTORY_OWNER_SOLCOR,
 ) -> InventoryMovement:
     """`delta` pode ser positivo (stock encontrado a mais) ou negativo
     (quebra/perda) — nunca deixa o stock físico central ficar negativo."""
     delta = _canonical_quantity(delta)  # type: ignore[assignment]
     if delta == ZERO:
         raise InventoryError("O ajuste tem de ter um valor diferente de zero.")
-    central = active_central_location(db) if location_id is None else _require_active_central_location(db, location_id)
+    owner = _require_owner(owner)
+    central = active_central_location(db, owner) if location_id is None else _require_active_central_location(db, location_id)
     existing = _prepare_item_movement(
         db,
         item=item,
@@ -604,11 +715,12 @@ def adjust_stock(
             destination_location_id=None,
             reference=reference,
             unit_cost=None,
+            owner=central.owner,
         ),
     )
     if existing is not None:
         return existing
-    current = physical_stock_central(db, item.id)
+    current = physical_stock_central(db, item.id, central.owner)
     if current + delta < ZERO:
         raise InsufficientStockError(
             f"Ajuste deixaria o stock físico negativo (atual {current}, ajuste {delta})."
@@ -637,8 +749,11 @@ def reserve_for_project(
     created_by_person_id: uuid.UUID | None,
     reference: str = "",
     idempotency_key: str | None = None,
+    owner: str = INVENTORY_OWNER_SOLCOR,
 ) -> InventoryMovement:
     quantity = _canonical_quantity(quantity)  # type: ignore[assignment]
+    owner = _require_owner(owner)
+    central = active_central_location(db, owner)
     if quantity <= ZERO:
         raise InventoryError("A quantidade a reservar tem de ser positiva.")
     existing = _prepare_item_movement(
@@ -650,15 +765,16 @@ def reserve_for_project(
             movement_type=MOVEMENT_RESERVA,
             quantity=quantity,
             project_id=project_id,
-            location_id=None,
+            location_id=central.id,
             destination_location_id=None,
             reference=reference,
             unit_cost=None,
+            owner=owner,
         ),
     )
     if existing is not None:
         return existing
-    available = available_stock(db, item.id)
+    available = available_stock(db, item.id, owner)
     if quantity > available:
         raise InsufficientStockError(
             f"Stock disponível insuficiente para reservar (disponível {available}, pedido {quantity})."
@@ -673,6 +789,7 @@ def reserve_for_project(
         reference=reference,
         unit_cost=None,
         idempotency_key=idempotency_key,
+        location_id=central.id,
     )
 
 
@@ -685,8 +802,11 @@ def release_reservation(
     created_by_person_id: uuid.UUID | None,
     reference: str = "",
     idempotency_key: str | None = None,
+    owner: str = INVENTORY_OWNER_SOLCOR,
 ) -> InventoryMovement:
     quantity = _canonical_quantity(quantity)  # type: ignore[assignment]
+    owner = _require_owner(owner)
+    central = active_central_location(db, owner)
     if quantity <= ZERO:
         raise InventoryError("A quantidade a libertar tem de ser positiva.")
     existing = _prepare_item_movement(
@@ -702,11 +822,12 @@ def release_reservation(
             destination_location_id=None,
             reference=reference,
             unit_cost=None,
+            owner=owner,
         ),
     )
     if existing is not None:
         return existing
-    reserved = reserved_for_project(db, item.id, project_id)
+    reserved = reserved_for_project(db, item.id, project_id, owner)
     if quantity > reserved:
         raise InsufficientReservationError(
             f"Não pode libertar mais do que o reservado (reservado {reserved}, pedido {quantity})."
@@ -721,6 +842,7 @@ def release_reservation(
         reference=reference,
         unit_cost=None,
         idempotency_key=idempotency_key,
+        location_id=central.id,
     )
 
 
@@ -733,11 +855,14 @@ def consume_from_project(
     created_by_person_id: uuid.UUID | None,
     reference: str = "",
     idempotency_key: str | None = None,
+    owner: str = INVENTORY_OWNER_SOLCOR,
 ) -> InventoryMovement:
     """Exige reserva ativa suficiente no projeto — o pedido original não
     define "consumo sem reserva"; esta é a opção mais segura e auditável
     (ver docs/PLAN_OPERATIONS_MVP.md secção 11)."""
     quantity = _canonical_quantity(quantity)  # type: ignore[assignment]
+    owner = _require_owner(owner)
+    central = active_central_location(db, owner)
     if quantity <= ZERO:
         raise InventoryError("A quantidade a consumir tem de ser positiva.")
     existing = _prepare_item_movement(
@@ -749,15 +874,16 @@ def consume_from_project(
             movement_type=MOVEMENT_CONSUMO,
             quantity=quantity,
             project_id=project_id,
-            location_id=None,
+            location_id=central.id,
             destination_location_id=None,
             reference=reference,
             unit_cost=None,
+            owner=owner,
         ),
     )
     if existing is not None:
         return existing
-    reserved = reserved_for_project(db, item.id, project_id)
+    reserved = reserved_for_project(db, item.id, project_id, owner)
     if quantity > reserved:
         raise InsufficientReservationError(
             f"Não pode consumir mais do que o reservado para este projeto "
@@ -766,7 +892,7 @@ def consume_from_project(
     # O consumo abate primeiro ao material que está no local (D-064) — a parte
     # abatida fica registada no próprio movimento. O consumo em si (exige
     # reserva, reduz stock central e reservado) não muda.
-    on_site = max(on_site_for_project(db, item.id, project_id), ZERO)
+    on_site = max(on_site_for_project(db, item.id, project_id, owner), ZERO)
     return _create_movement(
         db,
         item_id=item.id,
@@ -778,6 +904,7 @@ def consume_from_project(
         unit_cost=None,
         idempotency_key=idempotency_key,
         from_site_quantity=min(quantity, on_site),
+        location_id=central.id,
     )
 
 
@@ -790,11 +917,14 @@ def return_to_stock(
     created_by_person_id: uuid.UUID | None,
     reference: str = "",
     idempotency_key: str | None = None,
+    owner: str = INVENTORY_OWNER_SOLCOR,
 ) -> InventoryMovement:
     """Reverte um consumo anterior: aumenta o stock físico central, nunca
     reabre a reserva do projeto de origem (decisão assumida — ver
     docs/PLAN_OPERATIONS_MVP.md secção 11)."""
     quantity = _canonical_quantity(quantity)  # type: ignore[assignment]
+    owner = _require_owner(owner)
+    central = active_central_location(db, owner)
     if quantity <= ZERO:
         raise InventoryError("A quantidade a devolver tem de ser positiva.")
     existing = _prepare_item_movement(
@@ -810,11 +940,12 @@ def return_to_stock(
             destination_location_id=None,
             reference=reference,
             unit_cost=None,
+            owner=owner,
         ),
     )
     if existing is not None:
         return existing
-    consumed = consumed_for_project(db, item.id, project_id)
+    consumed = consumed_for_project(db, item.id, project_id, owner)
     if quantity > consumed:
         raise InventoryError(
             f"Não pode devolver mais do que o consumido por este projeto "
@@ -830,6 +961,7 @@ def return_to_stock(
         reference=reference,
         unit_cost=None,
         idempotency_key=idempotency_key,
+        location_id=central.id,
     )
 
 
@@ -842,6 +974,7 @@ def deliver_to_project(
     created_by_person_id: uuid.UUID | None,
     reference: str = "",
     idempotency_key: str | None = None,
+    owner: str = INVENTORY_OWNER_SOLCOR,
 ) -> InventoryMovement:
     """Regista material que passou a estar fisicamente na instalação.
 
@@ -849,6 +982,8 @@ def deliver_to_project(
     (excedente da transportadora ou reforço propositado, ex. painéis de
     reserva). Não altera o stock físico central nem a reserva (D-064)."""
     quantity = _canonical_quantity(quantity)  # type: ignore[assignment]
+    owner = _require_owner(owner)
+    central = active_central_location(db, owner)
     if quantity <= ZERO:
         raise InventoryError("A quantidade a entregar tem de ser positiva.")
     existing = _prepare_item_movement(
@@ -864,6 +999,7 @@ def deliver_to_project(
             destination_location_id=None,
             reference=reference,
             unit_cost=None,
+            owner=owner,
         ),
     )
     if existing is not None:
@@ -878,6 +1014,7 @@ def deliver_to_project(
         reference=reference,
         unit_cost=None,
         idempotency_key=idempotency_key,
+        location_id=central.id,
     )
 
 
@@ -890,6 +1027,7 @@ def collect_from_project(
     created_by_person_id: uuid.UUID | None,
     reference: str = "",
     idempotency_key: str | None = None,
+    owner: str = INVENTORY_OWNER_SOLCOR,
 ) -> InventoryMovement:
     """Regista material que deixou de estar na instalação (recolhido).
 
@@ -898,6 +1036,8 @@ def collect_from_project(
     recolha normalmente nunca foi reservado; libertar reserva é uma operação
     separada e explícita."""
     quantity = _canonical_quantity(quantity)  # type: ignore[assignment]
+    owner = _require_owner(owner)
+    central = active_central_location(db, owner)
     if quantity <= ZERO:
         raise InventoryError("A quantidade a recolher tem de ser positiva.")
     existing = _prepare_item_movement(
@@ -913,11 +1053,12 @@ def collect_from_project(
             destination_location_id=None,
             reference=reference,
             unit_cost=None,
+            owner=owner,
         ),
     )
     if existing is not None:
         return existing
-    on_site = on_site_for_project(db, item.id, project_id)
+    on_site = on_site_for_project(db, item.id, project_id, owner)
     if quantity > on_site:
         raise InventoryError(
             f"Não pode recolher mais do que o que está no local (no local {on_site}, pedido {quantity})."
@@ -932,6 +1073,7 @@ def collect_from_project(
         reference=reference,
         unit_cost=None,
         idempotency_key=idempotency_key,
+        location_id=central.id,
     )
 
 
@@ -970,11 +1112,12 @@ def reverse_project_movement(
 
     project_id = movement.project_id
     item_id = item.id
-    reserved = reserved_for_project(db, item_id, project_id)
-    consumed = consumed_for_project(db, item_id, project_id)
-    physical = physical_stock_central(db, item_id)
-    on_site = on_site_for_project(db, item_id, project_id)
-    available = available_stock(db, item_id)
+    owner = _movement_owner(db, movement)
+    reserved = reserved_for_project(db, item_id, project_id, owner)
+    consumed = consumed_for_project(db, item_id, project_id, owner)
+    physical = physical_stock_central(db, item_id, owner)
+    on_site = on_site_for_project(db, item_id, project_id, owner)
+    available = available_stock(db, item_id, owner)
     reserved_delta = ZERO
     consumed_delta = ZERO
     physical_delta = ZERO
@@ -1107,14 +1250,19 @@ def update_material_requirement(
 
 
 def material_requirement_status(
-    db: Session, *, project_id: uuid.UUID, item: InventoryItem, quantity_required: Decimal
+    db: Session,
+    *,
+    project_id: uuid.UUID,
+    item: InventoryItem,
+    quantity_required: Decimal,
+    owner: str = INVENTORY_OWNER_SOLCOR,
 ) -> MaterialRequirementStatus:
-    reserved = reserved_for_project(db, item.id, project_id)
-    consumed = consumed_for_project(db, item.id, project_id)
+    reserved = reserved_for_project(db, item.id, project_id, owner)
+    consumed = consumed_for_project(db, item.id, project_id, owner)
     missing = quantity_required - reserved - consumed
     if missing < ZERO:
         missing = ZERO
-    available = available_stock(db, item.id)
+    available = available_stock(db, item.id, owner)
     return MaterialRequirementStatus(
         project_id=project_id,
         item_id=item.id,

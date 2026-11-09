@@ -8,6 +8,7 @@ export type ProjectListColumn =
   | "next_task"
   | "overdue"
   | "warnings"
+  | "payments"
   | "installer"
   | "start_date"
   | "power_kwp";

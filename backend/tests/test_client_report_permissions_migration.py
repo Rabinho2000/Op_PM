@@ -272,7 +272,7 @@ def test_upgrade_provisions_report_permissions_on_production_like_db(tmp_path: P
     permissions_before = _count(engine, "permissions")
     grants_before = _count(engine, "role_permissions")
 
-    _alembic_ok(database_path, "upgrade", "head")
+    _alembic_ok(database_path, "upgrade", THIS_REVISION)
 
     assert _version(engine) == THIS_REVISION
     assert _report_permissions(engine) == {code: PERMISSIONS[code] for code in REPORT_CODES}
@@ -320,7 +320,7 @@ def test_upgrade_is_idempotent_and_downgrade_removes_only_what_it_provisioned(tm
             )
         )
 
-    _alembic_ok(database_path, "upgrade", "head")
+    _alembic_ok(database_path, "upgrade", THIS_REVISION)
 
     # Sem duplicados e sem sobrescrever a linha existente.
     assert _report_permissions(engine)[REPORT_VIEW] == custom_description
@@ -380,7 +380,7 @@ def test_upgrade_is_idempotent_and_downgrade_removes_only_what_it_provisioned(tm
         )
 
     # Upgrade → pode voltar a correr sem erro (estado intermédio coerente).
-    _alembic_ok(database_path, "upgrade", "head")
+    _alembic_ok(database_path, "upgrade", THIS_REVISION)
     assert _version(engine) == THIS_REVISION
     assert (REPORT_VIEW, "administrador") in _report_grants(engine)
 
@@ -393,7 +393,7 @@ def test_downgrade_removes_permissions_it_created_when_unused(tmp_path: Path):
     permissions_before = _count(engine, "permissions")
     grants_before = _count(engine, "role_permissions")
 
-    _alembic_ok(database_path, "upgrade", "head")
+    _alembic_ok(database_path, "upgrade", THIS_REVISION)
     _alembic_ok(database_path, "downgrade", PREVIOUS_HEAD)
 
     assert _report_permissions(engine) == {}
@@ -405,7 +405,7 @@ def test_downgrade_removes_permissions_it_created_when_unused(tmp_path: Path):
 def test_upgrade_on_empty_database_creates_permissions_without_roles(tmp_path: Path):
     """BD nova: ainda não há papéis; a migração cria as permissões e não falha."""
     database_path = tmp_path / "report-permissions-empty.db"
-    _alembic_ok(database_path, "upgrade", "head")
+    _alembic_ok(database_path, "upgrade", THIS_REVISION)
     engine = _engine(database_path)
 
     assert _report_permissions(engine) == {code: PERMISSIONS[code] for code in REPORT_CODES}

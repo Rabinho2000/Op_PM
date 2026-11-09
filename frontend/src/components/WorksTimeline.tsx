@@ -22,17 +22,53 @@ import {
   workStartDate,
   weekTicks,
   Window,
-  ZOOMS,
   Zoom,
 } from "../utils/worksTimeline";
 import Icon from "./Icon";
 
-const LANE_H = 30;
-const LANE_GAP = 4;
-const ROW_PAD = 6;
-const HEADER_ROW_H = 30;
-const AXIS_H = 44;
-export const LABEL_W = 210;
+const DENSITY_SIZES: Record<WorksDensity, {
+  dayPx: Record<Zoom, number>;
+  laneHeight: number;
+  laneGap: number;
+  rowPadding: number;
+  headerRowHeight: number;
+  axisHeight: number;
+  dayAxisHeight: number;
+  labelWidth: number;
+}> = {
+  compacto: {
+    dayPx: { weeks: 24, months: 6, quarters: 3, month_days: 28 },
+    laneHeight: 30,
+    laneGap: 4,
+    rowPadding: 6,
+    headerRowHeight: 30,
+    axisHeight: 44,
+    dayAxisHeight: 56,
+    labelWidth: 210,
+  },
+  normal: {
+    dayPx: { weeks: 28, months: 7, quarters: 4, month_days: 36 },
+    laneHeight: 38,
+    laneGap: 6,
+    rowPadding: 8,
+    headerRowHeight: 40,
+    axisHeight: 48,
+    dayAxisHeight: 64,
+    labelWidth: 240,
+  },
+  grande: {
+    dayPx: { weeks: 32, months: 9, quarters: 5, month_days: 44 },
+    laneHeight: 46,
+    laneGap: 8,
+    rowPadding: 10,
+    headerRowHeight: 48,
+    axisHeight: 54,
+    dayAxisHeight: 72,
+    labelWidth: 280,
+  },
+};
+
+export type WorksDensity = "compacto" | "normal" | "grande";
 
 // Deslocamento mínimo (px) para um clique passar a ser um arrasto.
 const DRAG_THRESHOLD = 4;
@@ -47,9 +83,6 @@ interface DragState {
   targetRow: TimelineRow;
   moved: boolean;
 }
-
-const rowHeight = (row: TimelineRow): number =>
-  row.kind === "header" ? HEADER_ROW_H : row.laneCount * (LANE_H + LANE_GAP) - LANE_GAP + ROW_PAD * 2;
 
 function describe(work: WorkItem, statusLabel: string): string {
   const where = [work.installer_name, work.installer_team_name ?? work.team_name].filter(Boolean).join(" / ") || "sem instalador";
@@ -73,9 +106,11 @@ export default function WorksTimeline({
   installers,
   window: win,
   zoom,
+  density,
   today,
   statuses,
   showIdle,
+  selectedInstallerIds,
   onPlanChange,
   onOpenProject,
 }: {
@@ -83,16 +118,22 @@ export default function WorksTimeline({
   installers: Installer[];
   window: Window;
   zoom: Zoom;
+  density: WorksDensity;
   today: string;
   statuses: LifecycleStatus[];
   showIdle: boolean;
+  selectedInstallerIds: string[];
   /** Chamado ao largar uma obra com alterações; sem esta propriedade o calendário é só de leitura. */
   onPlanChange?: (work: WorkItem, changes: WorkPlanInput) => void;
   /** Abre o detalhe em overlay apenas para cliques primários sem modificadores. */
   onOpenProject?: (projectId: string, event: ReactMouseEvent<HTMLAnchorElement>) => void;
 }) {
-  const dayPx = ZOOMS[zoom].dayPx;
-  const rows = buildRows(works, installers, showIdle);
+  const dimensions = DENSITY_SIZES[density];
+  const dayPx = dimensions.dayPx[zoom];
+  const rows = buildRows(works, installers, showIdle, selectedInstallerIds);
+  const rowHeight = (row: TimelineRow) => row.kind === "header"
+    ? dimensions.headerRowHeight
+    : row.laneCount * (dimensions.laneHeight + dimensions.laneGap) - dimensions.laneGap + dimensions.rowPadding * 2;
   const width = totalDays(win) * dayPx;
   const months = monthTicks(win, dayPx);
   const weeks = weekTicks(win, dayPx);
@@ -100,7 +141,7 @@ export default function WorksTimeline({
   const todayX = dayPosition(today, win, dayPx);
   const bodyHeight = rows.reduce((sum, r) => sum + rowHeight(r), 0);
   const tops = rowTops(rows, rowHeight);
-  const axisHeight = zoom === "month_days" ? 56 : AXIS_H;
+  const axisHeight = zoom === "month_days" ? dimensions.dayAxisHeight : dimensions.axisHeight;
   const rowsRef = useRef<HTMLDivElement>(null);
   const suppressClick = useRef(false);
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -163,8 +204,8 @@ export default function WorksTimeline({
   }
 
   return (
-    <div className="works" role="region" aria-label="Calendário de obras por instalador e equipa">
-      <div className="works__labels" style={{ width: LABEL_W }}>
+    <div className={`works works--density-${density}`} role="region" aria-label="Calendário de obras por instalador e equipa">
+      <div className="works__labels" style={{ width: dimensions.labelWidth }}>
         <div className="works__corner" style={{ height: axisHeight }}>
           Instalador / equipa
         </div>
@@ -251,17 +292,17 @@ export default function WorksTimeline({
                     .filter(Boolean)
                     .join(" ");
                   const text = describe(work, statusLabel(work.lifecycle_status));
-                  const ownTop = ROW_PAD + lane * (LANE_H + LANE_GAP);
+                  const ownTop = dimensions.rowPadding + lane * (dimensions.laneHeight + dimensions.laneGap);
                   // Ao mudar de linha, a barra acompanha o rato na vertical até à linha de destino.
                   const targetIndex = dragging ? rows.findIndex((r) => r.key === dragging.targetRow.key) : rowIndex;
-                  const top = dragging && targetIndex >= 0 && targetIndex !== rowIndex ? tops[targetIndex] - tops[rowIndex] + ROW_PAD : ownTop;
+                  const top = dragging && targetIndex >= 0 && targetIndex !== rowIndex ? tops[targetIndex] - tops[rowIndex] + dimensions.rowPadding : ownTop;
                   return (
                     <Link
                       key={workEntryKey(work)}
                       to={`/projects/${work.project_id}`}
                       className={classes}
                       data-entry-key={workEntryKey(work)}
-                      style={{ left: g.left, width: g.width, top, height: LANE_H }}
+                      style={{ left: g.left, width: g.width, top, height: dimensions.laneHeight }}
                       title={dragging ? `${formatIsoPt(dates.start)} a ${formatIsoPt(dates.end)}` : text}
                       aria-label={text}
                       draggable={false}
@@ -283,7 +324,7 @@ export default function WorksTimeline({
                     >
                       {canDrag && !g.clippedStart && <span className="works__handle works__handle--start" data-handle="start" aria-hidden="true" />}
                       {work.conflict && <Icon name="alert" size={13} />}
-                      <span className="works__barname">{work.name}</span>
+                      <span className="works__barname" title={work.name}>{work.name}</span>
                       {canDrag && !g.clippedEnd && <span className="works__handle works__handle--end" data-handle="end" aria-hidden="true" />}
                     </Link>
                   );

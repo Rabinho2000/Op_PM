@@ -25,6 +25,7 @@ DEFAULT_WORKS_PREFERENCE: dict[str, object] = {
     "lifecycle_status": [],
     "pm_person_id": None,
     "installer_id": None,
+    "installer_ids": [],
     "team_id": None,
     "show_idle": False,
 }
@@ -46,11 +47,17 @@ def _default_payload() -> dict[str, object]:
 def _preference_payload(row: UserWorksPreference | None) -> dict[str, object]:
     if row is None:
         return _default_payload()
+    installer_ids = (
+        [uuid.UUID(str(value)) for value in row.installer_ids]
+        if row.installer_ids
+        else ([row.installer_id] if row.installer_id is not None else [])
+    )
     return {
         "zoom": row.zoom,
         "lifecycle_status": list(row.lifecycle_status),
         "pm_person_id": row.pm_person_id,
-        "installer_id": row.installer_id,
+        "installer_id": installer_ids[0] if len(installer_ids) == 1 else None,
+        "installer_ids": installer_ids,
         "team_id": row.team_id,
         "show_idle": bool(row.show_idle),
     }
@@ -67,8 +74,9 @@ def get_works_preferences(db: Session, ctx: AuthContext) -> dict[str, object]:
     visible_pm_ids, visible_installer_ids, visible_team_ids = _visible_reference_ids(db, ctx)
     if payload["pm_person_id"] not in visible_pm_ids:
         payload["pm_person_id"] = None
-    if payload["installer_id"] not in visible_installer_ids:
-        payload["installer_id"] = None
+    installer_ids = [value for value in cast(list[uuid.UUID], payload["installer_ids"]) if value in visible_installer_ids]
+    payload["installer_ids"] = installer_ids
+    payload["installer_id"] = installer_ids[0] if len(installer_ids) == 1 else None
     if payload["team_id"] not in visible_team_ids:
         payload["team_id"] = None
     return payload
@@ -81,6 +89,31 @@ def _dedupe_statuses(values: Iterable[str]) -> list[str]:
         # validação de contrato, não uma sonda de dados.
         raise WorksPreferenceValidationError("Filtro de estado do ciclo de vida inválido.")
     return list(dict.fromkeys(statuses))
+
+
+def _sync_installer_selection(state: dict[str, object], changes: dict[str, object]) -> None:
+    """Canonical list with a singleton alias for clients using installer_id."""
+    if "installer_ids" in changes:
+        raw_ids = changes["installer_ids"]
+        if not isinstance(raw_ids, list) or any(not isinstance(value, uuid.UUID) for value in raw_ids):
+            raise WorksPreferenceValidationError("Filtro de instalador inválido.")
+        installer_ids = list(dict.fromkeys(raw_ids))
+    elif "installer_id" in changes:
+        legacy_id = state["installer_id"]
+        if legacy_id is not None and not isinstance(legacy_id, uuid.UUID):
+            raise WorksPreferenceValidationError("Filtro de instalador inválido.")
+        installer_ids = [legacy_id] if legacy_id is not None else []
+    else:
+        raw_ids = state.get("installer_ids")
+        if raw_ids is None:
+            legacy_id = state.get("installer_id")
+            installer_ids = [legacy_id] if isinstance(legacy_id, uuid.UUID) else []
+        elif isinstance(raw_ids, list) and all(isinstance(value, uuid.UUID) for value in raw_ids):
+            installer_ids = list(dict.fromkeys(raw_ids))
+        else:
+            raise WorksPreferenceValidationError("Filtro de instalador inválido.")
+    state["installer_ids"] = installer_ids
+    state["installer_id"] = installer_ids[0] if len(installer_ids) == 1 else None
 
 
 def _visible_reference_ids(db: Session, ctx: AuthContext) -> tuple[set[uuid.UUID], set[uuid.UUID], set[uuid.UUID]]:
@@ -194,29 +227,27 @@ def _validate_final_state(db: Session, ctx: AuthContext, state: dict[str, object
     if state["show_idle"] is None or not isinstance(state["show_idle"], bool):
         raise WorksPreferenceValidationError("show_idle tem de ser um booleano.")
 
-    pm_ids, installer_ids, team_ids = _visible_reference_ids(db, ctx)
+    pm_ids, visible_installer_ids, visible_team_ids = _visible_reference_ids(db, ctx)
     pm_person_id = cast(uuid.UUID | None, state["pm_person_id"])
-    installer_id = cast(uuid.UUID | None, state["installer_id"])
+    selected_installer_ids = cast(list[uuid.UUID], state["installer_ids"])
     team_id = cast(uuid.UUID | None, state["team_id"])
     if pm_person_id is not None:
         _validate_person(db, ctx, pm_person_id, pm_ids)
-    if installer_id is not None:
-        _validate_installer(db, ctx, installer_id, installer_ids)
+    for selected_id in selected_installer_ids:
+        _validate_installer(db, ctx, selected_id, visible_installer_ids)
     team = None
     if team_id is not None:
-        team = _validate_team(db, ctx, team_id, team_ids)
+        team = _validate_team(db, ctx, team_id, visible_team_ids)
 
-    # O filtro de equipa é guardado com o instalador correspondente para que
-    # o estado persistido possa ser reaplicado sem uma relação ambígua.
-    if team_id is not None and installer_id is None:
+    # Uma equipa só pode ser guardada quando pertence a um dos instaladores selecionados.
+    if team_id is not None and not selected_installer_ids:
         raise WorksPreferenceValidationError(
             "Os filtros de instalador e equipa não são compatíveis."
         )
-    if installer_id is not None and team_id is not None:
-        if team is None or team.installer_id != installer_id:
-            raise WorksPreferenceValidationError(
-                "Os filtros de instalador e equipa não são compatíveis."
-            )
+    if team_id is not None and (team is None or team.installer_id not in selected_installer_ids):
+        raise WorksPreferenceValidationError(
+            "Os filtros de instalador e equipa não são compatíveis."
+        )
 
 
 def update_works_preferences(
@@ -230,6 +261,7 @@ def update_works_preferences(
     )
     state = _preference_payload(row)
     state.update(changes)
+    _sync_installer_selection(state, changes)
     _validate_final_state(db, ctx, state)
 
     if row is None:
@@ -257,10 +289,12 @@ def update_works_preferences(
         else:
             state = _preference_payload(row)
             state.update(changes)
+            _sync_installer_selection(state, changes)
             _validate_final_state(db, ctx, state)
     row.zoom = str(state["zoom"])
     row.lifecycle_status = list(cast(list[str], state["lifecycle_status"]))
     row.pm_person_id = cast(uuid.UUID | None, state["pm_person_id"])
+    row.installer_ids = [str(value) for value in cast(list[uuid.UUID], state["installer_ids"])]
     row.installer_id = cast(uuid.UUID | None, state["installer_id"])
     row.team_id = cast(uuid.UUID | None, state["team_id"])
     row.show_idle = cast(bool, state["show_idle"])

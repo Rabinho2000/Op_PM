@@ -1,7 +1,7 @@
 // Separador "Inventário" do detalhe do projeto — material no local, e as
 // ações entregar/recolher (D-064). O servidor continua a validar tudo
 // (recolher mais do que o que está no local, permissões por projeto).
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { InventoryItem, InventoryMovement, ProjectInventorySummary } from "../api/client";
 import { makeMe, makeProject, makeTask } from "../test/fixtures";
@@ -16,6 +16,7 @@ const api = vi.hoisted(() => ({
   getProjectInventory: vi.fn(),
   listInventoryItems: vi.fn(),
   deliverProjectMaterial: vi.fn(),
+  consumeProjectMaterial: vi.fn(),
   collectProjectMaterial: vi.fn(),
   reverseProjectMovement: vi.fn(),
 }));
@@ -101,6 +102,7 @@ async function openInventoryTab(permissions = PERMISSIONS) {
 }
 
 beforeEach(() => {
+  localStorage.removeItem("op_pm_inventory_owner");
   Object.values(api).forEach((fn) => fn.mockReset());
   api.getProject.mockResolvedValue(makeProject());
   api.getProjectHistory.mockResolvedValue([]);
@@ -111,6 +113,77 @@ beforeEach(() => {
 });
 
 describe("Detalhe do projeto — material no local", () => {
+  it("atualiza reserva com entrega parcial como novo movimento, preservando os dados de origem", async () => {
+    const source = movement({ id: "reserve-1", movement_type: "reserva", quantity: "10.000", reference: "Pedido inicial" });
+    api.getProjectInventory.mockResolvedValue(summary({ reservations: [source] }));
+    api.listInventoryItems.mockResolvedValue([PANEL, { ...PANEL, id: "item-2", name: "Outro artigo" }]);
+    await openInventoryTab();
+    fireEvent.click(await screen.findByRole("button", { name: /atualizar movimento/i }));
+    expect(screen.getByText(/Cria um novo movimento; o original mantém-se no histórico/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("Item *")).toBeDisabled();
+    expect(within(screen.getByLabelText("Item *")).getByRole("option", { name: "Outro artigo (un)" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Item *"), { target: { value: "item-2" } });
+    expect(screen.getByLabelText("Quantidade *")).toHaveValue(10);
+    fireEvent.change(screen.getByLabelText("Quantidade *"), { target: { value: "4" } });
+    api.deliverProjectMaterial.mockResolvedValue({});
+    fireEvent.click(screen.getByRole("button", { name: /^aplicar$/i }));
+    await waitFor(() => expect(api.deliverProjectMaterial).toHaveBeenCalledWith("proj-1", expect.objectContaining({ item_id: "item-1", quantity: "4", reference: "Pedido inicial", owner: "solcor", idempotency_key: expect.any(String) })));
+    expect(source.quantity).toBe("10.000");
+    expect(api.reverseProjectMovement).not.toHaveBeenCalled();
+  });
+
+  it("ignora a conclusão de um pedido cancelado depois de reabrir um movimento", async () => {
+    const source = movement({ id: "reserve-1", movement_type: "reserva" });
+    api.getProjectInventory.mockResolvedValue(summary({ reservations: [source] }));
+    let resolveDelivery!: (value: unknown) => void;
+    api.deliverProjectMaterial.mockReturnValue(new Promise((resolve) => { resolveDelivery = resolve; }));
+    await openInventoryTab();
+    fireEvent.click(await screen.findByRole("button", { name: /atualizar movimento/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^aplicar$/i }));
+    await waitFor(() => expect(api.deliverProjectMaterial).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    fireEvent.click(screen.getByRole("button", { name: /atualizar movimento/i }));
+
+    resolveDelivery({});
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+    expect(screen.getByLabelText("Quantidade *")).toHaveValue(3);
+    expect(api.getProjectInventory).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignora a conclusão após mudar o proprietário sem cancelar e preserva o novo rascunho", async () => {
+    const source = movement({ id: "reserve-1", movement_type: "reserva" });
+    api.getProjectInventory.mockResolvedValue(summary({ reservations: [source] }));
+    let resolveDelivery!: (value: unknown) => void;
+    api.deliverProjectMaterial.mockReturnValue(new Promise((resolve) => { resolveDelivery = resolve; }));
+    await openInventoryTab();
+    fireEvent.click(await screen.findByRole("button", { name: /atualizar movimento/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^aplicar$/i }));
+    await waitFor(() => expect(api.deliverProjectMaterial).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Verde Milenar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(api.getProjectInventory).toHaveBeenCalledTimes(2));
+    fireEvent.click(await screen.findByRole("button", { name: /atualizar movimento/i }));
+    fireEvent.change(screen.getByLabelText("Quantidade *"), { target: { value: "1.5" } });
+
+    await act(async () => { resolveDelivery({}); });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByLabelText("Quantidade *")).toHaveValue(1.5);
+    expect(api.getProjectInventory).toHaveBeenCalledTimes(2);
+    expect(api.deliverProjectMaterial).toHaveBeenCalledTimes(1);
+  });
+
+  it("oferece só consumo para entrega existente e permite quantidade parcial", async () => {
+    api.getProjectInventory.mockResolvedValue(summary({ reservations: [movement()] }));
+    await openInventoryTab([...PERMISSIONS, "inventory.consume_project"]);
+    fireEvent.click(await screen.findByRole("button", { name: /atualizar movimento/i }));
+    expect(screen.getByLabelText("Ação")).toHaveValue("consume");
+    expect(within(screen.getByLabelText("Ação")).getAllByRole("option")).toHaveLength(1);
+    fireEvent.change(screen.getByLabelText("Quantidade *"), { target: { value: "1.25" } });
+    api.consumeProjectMaterial.mockResolvedValue({});
+    fireEvent.click(screen.getByRole("button", { name: /^aplicar$/i }));
+    await waitFor(() => expect(api.consumeProjectMaterial).toHaveBeenCalledWith("proj-1", expect.objectContaining({ item_id: "item-1", quantity: "1.25", owner: "solcor" })));
+  });
   it("mostra o material no local, incluindo excedentes sem necessidade associada", async () => {
     api.getProjectInventory.mockResolvedValue(
       summary({ on_site: [{ item_id: "item-1", item_name: "Painel 450 W", item_unit: "un", quantity: "3.000" }] })
@@ -143,6 +216,7 @@ describe("Detalhe do projeto — material no local", () => {
         item_id: "item-1",
         quantity: "13",
         reference: "Transportadora",
+        owner: "solcor",
       })
     );
     expect(api.collectProjectMaterial).not.toHaveBeenCalled();
@@ -173,7 +247,7 @@ describe("Detalhe do projeto — material no local", () => {
     fireEvent.click(screen.getByRole("button", { name: /^aplicar$/i }));
 
     expect(await screen.findByText(/Não pode recolher mais do que o que está no local/)).toBeInTheDocument();
-    expect(api.collectProjectMaterial).toHaveBeenCalledWith("proj-1", { item_id: "item-1", quantity: "9", reference: undefined });
+    expect(api.collectProjectMaterial).toHaveBeenCalledWith("proj-1", { item_id: "item-1", quantity: "9", reference: undefined, owner: "solcor" });
   });
 
   it("mantém o catálogo completo para formatar movimentos de artigos inativos", async () => {

@@ -52,7 +52,9 @@ def complete_delivered_projects(
     subtasks = [t for t in db.query(WorkflowSubtask).all() if t.stage_id in stage_by_id]
     contact_stages = [s for s in to_complete if s.has_contact_checkpoint]
 
-    projects = db.query(Project).filter(Project.is_active.is_(True), Project.lifecycle_status == DELIVERED).all()
+    projects = db.query(Project).filter(
+        Project.is_active.is_(True), Project.deleted_at.is_(None), Project.lifecycle_status == DELIVERED
+    ).all()
     project_ids = [p.id for p in projects]
     existing_subtasks = {
         (r.project_id, r.subtask_id): r

@@ -1,0 +1,44 @@
+.client-reports__filter-card {
+  margin-bottom: 16px;
+}
+
+.client-reports__filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 280px));
+  gap: 16px;
+}
+
+.client-reports__filters > .field {
+  max-width: 280px;
+}
+
+.client-reports__filters .select {
+  min-height: 44px;
+}
+
+.client-reports__results {
+  min-width: 0;
+}
+
+.client-reports__results .table-wrap {
+  max-width: 100%;
+}
+
+.client-reports__results .table td:last-child {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 540px) {
+  .client-reports__filter-card {
+    margin-bottom: 12px;
+  }
+
+  .client-reports__filters {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .client-reports__filters > .field {
+    max-width: none;
+  }
+}

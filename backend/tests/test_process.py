@@ -61,6 +61,12 @@ def _stage_id(db, code: str):
     return db.query(WorkflowStage).filter(WorkflowStage.code == code).one().id
 
 
+def _mark_stage_subtasks(api_client, project, stage_id, done=True, email=CHEFE):
+    return api_client.patch(
+        f"/api/projects/{project.id}/process/stages/{stage_id}/subtasks", json={"done": done}, headers=_h(email)
+    )
+
+
 # --- catálogo ---------------------------------------------------------------------
 
 
@@ -216,6 +222,44 @@ def test_planned_dates_use_business_days_from_the_project_start(db_session, api_
     assert s14["planned_end"] == business_day(dt.date(2026, 3, 17), 49).isoformat() == "2026-05-22"
     assert s14["contact"]["planned_date"] == business_day(dt.date(2026, 3, 17), 45).isoformat()
     assert stages["etapa-12"]["contact"] is None
+
+
+def test_completed_stage_exposes_the_latest_subtask_completion_date(db_session, api_client):
+    project = _project(db_session, OWN)
+    subtasks = (
+        db_session.query(WorkflowSubtask)
+        .filter(WorkflowSubtask.stage_id == _stage_id(db_session, "etapa-02"))
+        .order_by(WorkflowSubtask.sort_order)
+        .all()
+    )
+    dates = [dt.datetime(2026, 4, 6, 9, tzinfo=dt.timezone.utc), dt.datetime(2026, 4, 7, 15, tzinfo=dt.timezone.utc)]
+    for index, subtask in enumerate(subtasks):
+        db_session.add(
+            ProjectSubtaskProgress(
+                project_id=project.id,
+                subtask_id=subtask.id,
+                done=True,
+                done_at=dates[index] if index < len(dates) else dates[-1],
+            )
+        )
+    db_session.flush()
+
+    body = _get(api_client, project).json()
+    completed_at = _stages(body)["etapa-02"]["completed_at"]
+
+    assert completed_at is not None
+    assert dt.datetime.fromisoformat(completed_at).replace(tzinfo=None) == dates[-1].replace(tzinfo=None)
+
+
+def test_completed_stage_without_reliable_subtask_dates_exposes_no_completion_date(db_session, api_client):
+    project = _project(db_session, OWN)
+    subtask = db_session.query(WorkflowSubtask).filter(WorkflowSubtask.code == "etapa-01.0").one()
+    db_session.add(ProjectSubtaskProgress(project_id=project.id, subtask_id=subtask.id, done=True, source="legacy"))
+    db_session.flush()
+
+    stage = _stages(_get(api_client, project).json())["etapa-01"]
+    assert stage["status"] == "done"
+    assert stage["completed_at"] is None
 
 
 @pytest.mark.parametrize(
@@ -384,6 +428,65 @@ def test_pm_marks_own_projects_only_and_others_are_404(db_session, api_client):
     assert _mark(api_client, other, sid, email=PM_UM).status_code == 404
     assert _get(api_client, other, email=PM_UM).status_code == 404
     assert db_session.query(ProjectSubtaskProgress).filter(ProjectSubtaskProgress.project_id == other.id).count() == 0
+
+
+def test_bulk_stage_marks_every_subtask_and_records_one_history_entry_per_change(db_session, api_client):
+    project = _project(db_session, OWN)
+    stage_id = _stage_id(db_session, "etapa-02")
+
+    response = _mark_stage_subtasks(api_client, project, stage_id)
+    assert response.status_code == 200
+    stage = _stages(response.json())["etapa-02"]
+    assert stage["done_count"] == stage["total_count"] == 6
+    assert all(subtask["done"] for subtask in stage["subtasks"])
+
+    entries = (
+        db_session.query(ProjectHistory)
+        .filter(ProjectHistory.project_id == project.id, ProjectHistory.field_name.like("processo:etapa-02.%"))
+        .order_by(ProjectHistory.field_name)
+        .all()
+    )
+    assert len(entries) == 6
+    assert [(entry.old_value, entry.new_value, entry.source) for entry in entries] == [("pendente", "feita", "ui")] * 6
+
+
+def test_bulk_stage_can_clear_every_subtask_and_records_the_reverse_history(db_session, api_client):
+    project = _project(db_session, OWN)
+    stage_id = _stage_id(db_session, "etapa-02")
+    assert _mark_stage_subtasks(api_client, project, stage_id).status_code == 200
+
+    response = _mark_stage_subtasks(api_client, project, stage_id, done=False)
+    assert response.status_code == 200
+    stage = _stages(response.json())["etapa-02"]
+    assert stage["done_count"] == 0
+    assert all(not subtask["done"] for subtask in stage["subtasks"])
+
+    entries = (
+        db_session.query(ProjectHistory)
+        .filter(ProjectHistory.project_id == project.id, ProjectHistory.field_name.like("processo:etapa-02.%"))
+        .all()
+    )
+    assert len(entries) == 12
+    assert sum(entry.new_value == "pendente" for entry in entries) == 6
+
+
+def test_bulk_stage_refuses_without_permission_without_writing_any_progress_or_history(db_session, api_client):
+    project = _project(db_session, OWN)
+    stage_id = _stage_id(db_session, "etapa-02")
+
+    response = _mark_stage_subtasks(api_client, project, stage_id, email=COMERCIAL)
+    assert response.status_code == 403
+    assert db_session.query(ProjectSubtaskProgress).filter(ProjectSubtaskProgress.project_id == project.id).count() == 0
+    assert db_session.query(ProjectHistory).filter(ProjectHistory.project_id == project.id, ProjectHistory.field_name.like("processo:etapa-02.%")).count() == 0
+
+
+def test_bulk_stage_returns_404_for_another_project_scope_and_unknown_stage(db_session, api_client):
+    own, other = _project(db_session, OWN), _project(db_session, LEGACY_PM)
+    stage_id = _stage_id(db_session, "etapa-02")
+    missing = "00000000-0000-0000-0000-000000000000"
+
+    assert _mark_stage_subtasks(api_client, other, stage_id, email=PM_UM).status_code == 404
+    assert _mark_stage_subtasks(api_client, own, missing).status_code == 404
 
 
 def test_read_only_roles_see_the_process_but_cannot_mark(db_session, api_client):
