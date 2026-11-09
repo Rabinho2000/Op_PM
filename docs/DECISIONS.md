@@ -3848,3 +3848,33 @@ A secção de Painéis mostra stock físico por localização, mas o modelo atua
 `InventoryItem`/`InventoryItemRead` não tem potência nominal (Wp), fabricante
 nem modelo. A interface assinala estas ausências em vez de inventar valores;
 a tabela poderá apresentar esses dados quando forem adicionados ao modelo/API.
+
+## D-114 — Marcos de pagamento por projeto
+
+Cada projeto pode ter quatro marcos de pagamento: `adjudicacao`,
+`entrada_obra`, `fim_obra` e `certificado_final`, nesta ordem. Os códigos são
+estáveis; uma linha em `project_payment_milestones` representa um marco, com
+unicidade por projeto e código. Sem linha significa não recebido. Não há
+backfill a partir do ClickUp e não se inferem datas ou autores históricos.
+
+`payment.view` é concedida por omissão a administrador, chefe de operações,
+financeiro e project manager. `payment.edit` é concedida a administrador e
+financeiro. Ambas respeitam o âmbito normal de projeto (`can_view_project`);
+estas permissões não alteram `project.view_all` nem o âmbito dos restantes
+papéis. A migração `a6c8e0f2d4b1` sucede `f9c2a4e6b8d0` e acompanha as linhas
+de permissões e concessões que cria, para o downgrade preservar dados
+preexistentes.
+
+Uma alteração real atualiza o marco e acrescenta um evento a
+`project_history` na mesma transação. Repetir o estado atual não escreve na
+tabela nem no histórico. A lista devolve os quatro indicadores numa consulta
+agregada por página e só inclui os valores quando o utilizador tem
+`payment.view`; o detalhe usa `can_edit_payments` calculado no servidor.
+
+**Verificado:**
+
+- `alembic heads` devolveu um único head (`a6c8e0f2d4b1`).
+- `pytest -q tests/test_project_payment_migration.py` passou (4 testes), cobrindo upgrade/downgrade/upgrade em base vazia e com dados, preservação de concessões preexistentes e paridade catálogo/BD.
+- `python -m compileall -q app tests` passou.
+- No frontend, Vitest passou com 93 ficheiros e 804 testes, `npm run lint` passou e `npm run build -- --configLoader runner` terminou com sucesso (com aviso de bundle grande).
+- Os testes HTTP desta feature foram tentados com TestClient, mas a primeira chamada GET ficou bloqueada no sandbox; não estão contados como verificados e devem ser executados pelo coordenador.

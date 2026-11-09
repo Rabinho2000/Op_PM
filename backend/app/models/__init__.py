@@ -65,6 +65,7 @@ from app.models.project import (  # noqa: F401
     ProjectSubtaskProgress,
     ProjectTeamAssignment,
 )
+from app.models.project_payments import ProjectPaymentMilestone  # noqa: F401
 from app.models.safety_sheet import (
     ProjectSafetySheet,
     ProjectSafetySheetHistory,

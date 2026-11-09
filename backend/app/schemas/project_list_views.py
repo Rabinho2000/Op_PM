@@ -17,11 +17,21 @@ PROJECT_LIST_COLUMNS: tuple[str, ...] = (
     "next_task",
     "overdue",
     "warnings",
+    "payments",
     "installer",
     "start_date",
     "power_kwp",
 )
-PROJECT_LIST_DEFAULT_COLUMNS: tuple[str, ...] = PROJECT_LIST_COLUMNS[:7]
+PROJECT_LIST_DEFAULT_COLUMNS: tuple[str, ...] = (
+    "project",
+    "pm",
+    "lifecycle",
+    "payments",
+    "progress",
+    "next_task",
+    "overdue",
+    "warnings",
+)
 PROJECT_LIST_SORT_FIELDS = frozenset({"name", "start_date", "power_kwp", "created_at"})
 PROJECT_LIST_SORT_DIRECTIONS = frozenset({"asc", "desc"})
 PROJECT_LIST_STATUSES = frozenset({"", "nao_iniciado", "em_curso", "concluido"})

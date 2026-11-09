@@ -43,7 +43,7 @@ def _table_exists(connection: sqlite3.Connection, name: str) -> bool:
 def test_project_list_migration_up_down_up_on_sqlite(tmp_path: Path):
     database_path = tmp_path / "project-list-migration.db"
 
-    first = _run_alembic(database_path, "upgrade", "head")
+    first = _run_alembic(database_path, "upgrade", "e2f4a6c8b0d1")
     assert first.returncode == 0, first.stdout + first.stderr
     with sqlite3.connect(database_path) as connection:
         assert _table_exists(connection, PREFERENCE_TABLE)
@@ -67,7 +67,7 @@ def test_project_list_migration_up_down_up_on_sqlite(tmp_path: Path):
         assert not _table_exists(connection, PREFERENCE_TABLE)
         assert not _table_exists(connection, VIEW_TABLE)
 
-    second = _run_alembic(database_path, "upgrade", "head")
+    second = _run_alembic(database_path, "upgrade", "e2f4a6c8b0d1")
     assert second.returncode == 0, second.stdout + second.stderr
     with sqlite3.connect(database_path) as connection:
         assert _table_exists(connection, PREFERENCE_TABLE)

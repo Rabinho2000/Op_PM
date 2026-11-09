@@ -694,6 +694,25 @@ a:hover {
   color: var(--text-muted);
 }
 
+.payment-indicators {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.payment-indicators__item {
+  display: inline-flex;
+  min-width: 1em;
+  justify-content: center;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.payment-indicators__item--received {
+  color: var(--success);
+}
+
 .small {
   font-size: 0.85rem;
 }

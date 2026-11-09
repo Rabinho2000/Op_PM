@@ -86,6 +86,8 @@ class ProjectRead(BaseModel):
     can_edit_sim_cards: bool = False
     can_reveal_sim_secrets: bool = False
     can_edit_surplus_contracts: bool = False
+    payments: dict[str, bool] | None = None
+    can_edit_payments: bool = False
     installer_name: str | None = None
     installer_team_name: str | None = None
     installer_team_leader_name: str | None = None

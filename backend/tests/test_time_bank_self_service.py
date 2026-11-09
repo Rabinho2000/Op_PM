@@ -413,7 +413,7 @@ def test_m1_provisions_expected_grants_and_downgrade_only_removes_owned_rows(tmp
     seeded = _seed_m1_roles(database_path)
     assert seeded.returncode == 0, seeded.stdout + seeded.stderr
 
-    upgraded = _run_alembic(database_path, "upgrade", "head")
+    upgraded = _run_alembic(database_path, "upgrade", "b5e7a9c1d3f4")
     assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
     with sqlite3.connect(database_path) as connection:
         grants = connection.execute(
@@ -466,7 +466,7 @@ def test_m1_provisions_expected_grants_and_downgrade_only_removes_owned_rows(tmp
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'pedidos_jornada_permission_provisioning'"
         ).fetchone()[0] == 0
 
-    upgraded_again = _run_alembic(database_path, "upgrade", "head")
+    upgraded_again = _run_alembic(database_path, "upgrade", "b5e7a9c1d3f4")
     assert upgraded_again.returncode == 0, upgraded_again.stdout + upgraded_again.stderr
 
 
@@ -477,7 +477,7 @@ def test_m1_is_safe_when_no_roles_exist(tmp_path: Path):
     cleared = _clear_m1_roles(database_path)
     assert cleared.returncode == 0, cleared.stdout + cleared.stderr
 
-    upgraded = _run_alembic(database_path, "upgrade", "head")
+    upgraded = _run_alembic(database_path, "upgrade", "b5e7a9c1d3f4")
     assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
     with sqlite3.connect(database_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM roles").fetchone()[0] == 0

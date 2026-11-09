@@ -234,6 +234,16 @@ def can_view_project(ctx: AuthContext, project: Project) -> bool:
     return project_matches_installer_scope(ctx, project)
 
 
+def can_view_project_payments(ctx: AuthContext, project: Project) -> bool:
+    """Payment visibility is a separate capability within normal project scope."""
+    return ctx.has_permission("payment.view") and can_view_project(ctx, project)
+
+
+def can_edit_project_payments(ctx: AuthContext, project: Project) -> bool:
+    """Only payment editors may change milestones, and only on visible projects."""
+    return ctx.has_permission("payment.edit") and can_view_project(ctx, project)
+
+
 def can_view_task(ctx: AuthContext, task: Task) -> bool:
     """Uma tarefa respeita a união dos âmbitos de projeto efetivos.
 

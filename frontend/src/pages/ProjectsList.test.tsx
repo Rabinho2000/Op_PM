@@ -618,4 +618,46 @@ describe("ProjectsList (filtros)", () => {
     expect(await screen.findByText("Preferência recusada")).toBeInTheDocument();
     expect(screen.queryByText("Preferência de abertura guardada.")).not.toBeInTheDocument();
   });
+
+  it("mostra os quatro indicadores de pagamentos por ordem com nomes acessíveis e tooltip", async () => {
+    listProjects.mockResolvedValue([
+      makeProject({
+        payments: {
+          adjudicacao: true,
+          entrada_obra: false,
+          fim_obra: true,
+          certificado_final: false,
+        },
+      }),
+    ]);
+    const { container } = renderWithProviders(<ProjectsList />, {
+      me: makeMe({ permissions: ["project.view_all", "payment.view"] }),
+      route: "/projects?estado=todos",
+    });
+
+    await screen.findByRole("columnheader", { name: "Pagamentos" });
+    const header = screen.getByRole("columnheader", { name: "Pagamentos" });
+    expect(header).toHaveAttribute("title", "FT Adj | EO | FO | Ct");
+    const indicators = Array.from(container.querySelectorAll(".payment-indicators__item"));
+    expect(indicators.map((item) => item.getAttribute("aria-label"))).toEqual([
+      "Adjudicação: recebido",
+      "Entrada de Obra: não recebido",
+      "Fim de Obra: recebido",
+      "Certificado final: não recebido",
+    ]);
+    expect(indicators.map((item) => item.textContent)).toEqual(["✓", "○", "✓", "○"]);
+  });
+
+  it("não mostra nem oferece a coluna Pagamentos sem payment.view", async () => {
+    listProjects.mockResolvedValue([makeProject({ payments: null })]);
+    renderWithProviders(<ProjectsList />, {
+      me: makeMe({ permissions: ["project.view_all"] }),
+      route: "/projects?estado=todos",
+    });
+
+    await screen.findByText(makeProject().name);
+    expect(screen.queryByRole("columnheader", { name: "Pagamentos" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Colunas" }));
+    expect(screen.queryByLabelText("Mostrar Pagamentos")).not.toBeInTheDocument();
+  });
 });

@@ -33,7 +33,7 @@ def _run_alembic(database_path: Path, *arguments: str) -> subprocess.CompletedPr
 
 def test_cable_design_migration_round_trip_on_sqlite(tmp_path: Path):
     database_path = tmp_path / "cable-design-migration.db"
-    upgraded = _run_alembic(database_path, "upgrade", "head")
+    upgraded = _run_alembic(database_path, "upgrade", "a1c3e5f7b9d0")
     assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
 
     with sqlite3.connect(database_path) as connection:
@@ -94,7 +94,7 @@ def test_cable_design_migration_round_trip_on_sqlite(tmp_path: Path):
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cable_design_permission_provisioning'"
         ).fetchone() is None
 
-    upgraded_again = _run_alembic(database_path, "upgrade", "head")
+    upgraded_again = _run_alembic(database_path, "upgrade", "a1c3e5f7b9d0")
     assert upgraded_again.returncode == 0, upgraded_again.stdout + upgraded_again.stderr
 
 
@@ -135,7 +135,7 @@ def test_cable_design_migration_tracks_only_new_role_grants(tmp_path: Path):
     )
     assert seed_roles.returncode == 0, seed_roles.stdout + seed_roles.stderr
 
-    upgraded = _run_alembic(database_path, "upgrade", "head")
+    upgraded = _run_alembic(database_path, "upgrade", "a1c3e5f7b9d0")
     assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
 
     with sqlite3.connect(database_path) as connection:

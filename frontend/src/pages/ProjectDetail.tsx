@@ -45,6 +45,7 @@ import {
 import Icon from "../components/Icon";
 import ProjectDeletionModal from "../components/ProjectDeletionModal";
 import ProjectPrimaryPhoto from "../components/ProjectPrimaryPhoto";
+import ProjectPaymentsCard from "../components/ProjectPaymentsCard";
 import { LifecycleStatusControl, useLifecycleStatuses } from "../components/LifecycleStatus";
 import PmInlineSelect from "../components/PmInlineSelect";
 import ProjectProcess from "../components/ProjectProcess";
@@ -1088,6 +1089,12 @@ export default function ProjectDetail() {
               </dl>
             </Card>
             <div className="grid">
+              {project.payments != null && (
+                <ProjectPaymentsCard
+                  project={project}
+                  onPaymentsChanged={(payments) => setProject((current) => current ? { ...current, payments } : current)}
+                />
+              )}
               <WorkPlanCard project={project} onChanged={setProject} />
               <Card title="Próximo passo" icon="flag" tone="info">
                 {project.next_task_title ? (

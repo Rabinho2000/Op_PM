@@ -31,6 +31,7 @@ from app.api.routes_project_sim_cards import router as project_sim_cards_router
 from app.api.routes_project_surplus import router as project_surplus_router
 from app.api.routes_projects import router as projects_router
 from app.api.routes_project_photos import router as project_photos_router
+from app.api.routes_project_payments import router as project_payments_router
 from app.api.routes_requests import router as requests_router
 from app.api.routes_project_list_views import preferences_router as project_list_preferences_router
 from app.api.routes_project_list_views import views_router as project_list_views_router
@@ -75,6 +76,7 @@ app.include_router(me_router)
 app.include_router(client_reports_router)
 app.include_router(projects_router)
 app.include_router(project_photos_router)
+app.include_router(project_payments_router)
 app.include_router(requests_router)
 app.include_router(cable_projects_router)
 app.include_router(cable_designs_router)

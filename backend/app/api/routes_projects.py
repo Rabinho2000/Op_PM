@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from typing import cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -36,6 +37,7 @@ from app.security.permissions import (
     can_create_task,
     can_edit_project,
     can_plan_project_work,
+    can_edit_project_payments,
     is_installer_readonly_scope,
     can_edit_project_credentials,
     can_reveal_project_credential,
@@ -47,6 +49,7 @@ from app.security.project_fields import PM_EDITABLE_PROJECT_FIELDS
 from app.services.installers import PlanError, update_work_plan
 from app.services.process import progress_percent_by_project
 from app.services.project_lifecycle import LIFECYCLE_FLOW, LIFECYCLE_STATUS_CODES, LIFECYCLE_STATUSES
+from app.services.project_payments import payment_summaries_by_project
 from app.services.projects import (
     change_lifecycle_status,
     compute_project_task_summary,
@@ -85,6 +88,7 @@ def _require_installer_mutation_scope(ctx: AuthContext) -> None:
 
 
 _COMPUTE = object()  # "calcular só para este projeto" (por oposição a `None` = sem catálogo)
+_PAYMENTS_COMPUTE = object()
 
 
 def _to_read(
@@ -92,6 +96,7 @@ def _to_read(
     project: Project,
     ctx: AuthContext,
     process_percents: dict[uuid.UUID, int] | None | object = _COMPUTE,
+    payment_summaries: dict[uuid.UUID, dict[str, bool]] | None | object = _PAYMENTS_COMPUTE,
 ) -> ProjectRead:
     """`process_percents`: percentagem do processo de vários projetos, já calculada (a listagem
     calcula-a uma vez para todos, sem uma query por projeto). Omitido, calcula-se só para este;
@@ -132,6 +137,25 @@ def _to_read(
     data.can_edit_sim_cards = can_edit_project_sim_cards(ctx, project)
     data.can_reveal_sim_secrets = can_reveal_project_sim_secrets(ctx, project)
     data.can_edit_surplus_contracts = can_edit_project_surplus_contracts(ctx, project)
+    data.can_edit_payments = can_edit_project_payments(ctx, project)
+    if ctx.has_permission("payment.view"):
+        summaries = (
+            payment_summaries_by_project(db, ctx=ctx, projects=[project])
+            if payment_summaries is _PAYMENTS_COMPUTE
+            else cast(dict[uuid.UUID, dict[str, bool]] | None, payment_summaries)
+        )
+        data.payments = (
+            summaries.get(project.id, {
+                "adjudicacao": False,
+                "entrada_obra": False,
+                "fim_obra": False,
+                "certificado_final": False,
+            })
+            if summaries is not None
+            else None
+        )
+    else:
+        data.payments = None
     data.installer_name = project.installer.name if project.installer else None
     data.installer_team_name = project.installer_team.name if project.installer_team else None
     data.installer_team_leader_name = project.installer_team.leader_name if project.installer_team else None
@@ -204,7 +228,12 @@ def list_projects_endpoint(
         lifecycle_statuses=lifecycle_status,
     )
     percents = progress_percent_by_project(db, [p.id for p in projects])
-    result = [_to_read(db, p, ctx, percents) for p in projects]
+    payments = (
+        payment_summaries_by_project(db, ctx=ctx, projects=projects)
+        if ctx.has_permission("payment.view")
+        else None
+    )
+    result = [_to_read(db, p, ctx, percents, payments) for p in projects]
     # Estado derivado da checklist e dos estados finais do ciclo de vida
     # (compute_project_task_summary), por isso o filtro aplica-se depois do
     # cálculo — nunca uma segunda regra.

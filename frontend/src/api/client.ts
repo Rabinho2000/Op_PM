@@ -328,6 +328,19 @@ export interface Project {
   can_edit_sim_cards: boolean;
   can_reveal_sim_secrets: boolean;
   can_edit_surplus_contracts: boolean;
+  payments?: ProjectPayments | null;
+  can_edit_payments?: boolean;
+}
+
+export type PaymentMilestoneCode = "adjudicacao" | "entrada_obra" | "fim_obra" | "certificado_final";
+export type ProjectPayments = Record<PaymentMilestoneCode, boolean>;
+
+export interface ProjectPaymentMilestone {
+  milestone: PaymentMilestoneCode;
+  label: string;
+  received: boolean;
+  marked_at: string | null;
+  marked_by: string | null;
 }
 
 export type ProjectStatus = Project["status"];
@@ -379,6 +392,10 @@ export const getProject = (id: string) => apiGet<Project>(`/api/projects/${id}`)
 export const updateProject = (id: string, changes: Partial<Project>) =>
   apiPatch<Project>(`/api/projects/${id}`, changes);
 export const getProjectHistory = (id: string) => apiGet<ProjectHistoryEntry[]>(`/api/projects/${id}/history`);
+export const getProjectPayments = (id: string) =>
+  apiGet<ProjectPaymentMilestone[]>(`/api/projects/${id}/payments`);
+export const updateProjectPayment = (id: string, milestone: PaymentMilestoneCode, received: boolean) =>
+  apiPut<ProjectPaymentMilestone>(`/api/projects/${id}/payments/${milestone}`, { received });
 export async function getProjectPhotoBlob(id: string): Promise<Blob> {
   const res = await fetch(`${API_BASE_URL}/api/projects/${id}/photo`, { headers: await authHeaders() });
   if (!res.ok) {

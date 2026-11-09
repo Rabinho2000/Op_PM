@@ -574,7 +574,7 @@ def test_catalog_migration_backfills_explicit_location_without_central(tmp_path)
             {"id": str(movement_id), "item_id": str(item_id), "location_id": str(location_id)},
         )
 
-    run_alembic("upgrade", "head")
+    run_alembic("upgrade", "8a1d3f4c6b90")
     with local_engine.connect() as connection:
         assert connection.execute(text("SELECT COUNT(*) FROM inventory_locations WHERE location_type = 'central'")).scalar_one() == 0
         stored_fingerprint = connection.execute(
