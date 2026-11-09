@@ -97,6 +97,8 @@ def _to_read(
     ctx: AuthContext,
     process_percents: dict[uuid.UUID, int] | None | object = _COMPUTE,
     payment_summaries: dict[uuid.UUID, dict[str, bool]] | None | object = _PAYMENTS_COMPUTE,
+    *,
+    include_payments: bool = True,
 ) -> ProjectRead:
     """`process_percents`: percentagem do processo de vários projetos, já calculada (a listagem
     calcula-a uma vez para todos, sem uma query por projeto). Omitido, calcula-se só para este;
@@ -138,7 +140,7 @@ def _to_read(
     data.can_reveal_sim_secrets = can_reveal_project_sim_secrets(ctx, project)
     data.can_edit_surplus_contracts = can_edit_project_surplus_contracts(ctx, project)
     data.can_edit_payments = can_edit_project_payments(ctx, project)
-    if ctx.has_permission("payment.view"):
+    if include_payments and ctx.has_permission("payment.view"):
         summaries = (
             payment_summaries_by_project(db, ctx=ctx, projects=[project])
             if payment_summaries is _PAYMENTS_COMPUTE
@@ -264,7 +266,7 @@ def list_deleted_projects_endpoint(
     if not ctx.has_permission("project.restore"):
         raise HTTPException(status_code=403, detail="Sem permissão para ver projetos apagados.")
     projects = db.query(Project).filter(Project.deleted_at.is_not(None)).order_by(Project.deleted_at.desc()).all()
-    return [_to_read(db, project, ctx) for project in projects]
+    return [_to_read(db, project, ctx, include_payments=False) for project in projects]
 
 
 @router.get("/{project_id}", response_model=ProjectRead)
@@ -536,6 +538,8 @@ def get_project_history_endpoint(
     )
     result: list[ProjectHistoryRead] = []
     for entry in entries:
+        if entry.field_name.startswith("payment.") and not ctx.has_permission("payment.view"):
+            continue
         data = ProjectHistoryRead.model_validate(entry)
         if entry.changed_by_person_id:
             person = db.get(Person, entry.changed_by_person_id)

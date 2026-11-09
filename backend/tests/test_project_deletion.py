@@ -79,6 +79,7 @@ def test_project_delete_requires_reason_hides_and_restores_with_history(db_sessi
     assert deleted_read["can_restore"] is True
     assert deleted_read["deleted_at"]
     assert deleted_read["deleted_by_person_id"]
+    assert deleted_read["payments"] is None
 
     history = api_client.get(f"/api/projects/{project_id}/history", headers=_headers())
     assert history.status_code == 200, history.text

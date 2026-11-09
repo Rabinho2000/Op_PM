@@ -38,6 +38,19 @@ def _make_user(db_session, *, suffix: str, role_code: str | None) -> User:
     return user
 
 
+def _make_permission_user(db_session, *, suffix: str, permission_codes: tuple[str, ...]) -> User:
+    user = _make_user(db_session, suffix=suffix, role_code=None)
+    role = Role(code=f"{suffix}_payments_test", name=f"Papel sintético {suffix}", description="")
+    db_session.add(role)
+    db_session.flush()
+    db_session.add(UserRole(user_id=user.id, role_id=role.id))
+    for code in permission_codes:
+        permission = db_session.query(Permission).filter_by(code=code).one()
+        db_session.add(RolePermission(role_id=role.id, permission_id=permission.id))
+    db_session.flush()
+    return user
+
+
 @pytest.mark.parametrize(
     ("account", "get_status", "put_status"),
     [
@@ -140,6 +153,44 @@ def test_payment_put_is_idempotent_and_history_is_written_only_for_real_changes(
         ("false", "true"),
         ("true", "false"),
     ]
+
+
+def test_project_history_hides_payment_events_without_payment_view(api_client, db_session):
+    project = _project(db_session)
+    update = api_client.put(
+        f"{BASE_URL}/{project.id}/payments/adjudicacao",
+        headers=_headers("financeiro.sintetico@example.invalid"),
+        json={"received": True},
+    )
+    assert update.status_code == 200, update.text
+
+    commercial_history = api_client.get(
+        f"{BASE_URL}/{project.id}/history", headers=_headers("comercial.sintetico@example.invalid")
+    )
+    assert commercial_history.status_code == 200, commercial_history.text
+    assert all(not item["field_name"].startswith("payment.") for item in commercial_history.json())
+
+    chief_history = api_client.get(
+        f"{BASE_URL}/{project.id}/history", headers=_headers("chefe.sintetico@example.invalid")
+    )
+    assert chief_history.status_code == 200, chief_history.text
+    assert any(item["field_name"] == "payment.adjudicacao" for item in chief_history.json())
+
+
+def test_payment_put_requires_payment_view_to_return_audit_identity(api_client, db_session):
+    project = _project(db_session)
+    editor = _make_permission_user(
+        db_session,
+        suffix="edit-without-view",
+        permission_codes=("project.view_all", "payment.edit"),
+    )
+    response = api_client.put(
+        f"{BASE_URL}/{project.id}/payments/adjudicacao",
+        headers=_headers(editor.email),
+        json={"received": True},
+    )
+    assert response.status_code == 403
+    assert db_session.query(ProjectPaymentMilestone).filter_by(project_id=project.id).count() == 0
 
 
 def test_invalid_milestone_and_invisible_or_deleted_projects(api_client, db_session):

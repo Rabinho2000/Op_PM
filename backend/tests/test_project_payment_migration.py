@@ -138,7 +138,7 @@ def _permission_grants(connection: sa.Connection, code: str) -> set[str]:
     )
 
 
-def test_empty_database_upgrade_downgrade_upgrade_is_noop_without_roles(tmp_path: Path):
+def test_empty_database_upgrade_provisions_permissions_without_roles_and_downgrade_cleans_them(tmp_path: Path):
     database_path = tmp_path / "payment-milestones-empty.db"
     _alembic_ok(database_path, "upgrade", PREVIOUS_HEAD)
     engine = sa.create_engine(f"sqlite:///{database_path}")
@@ -154,23 +154,32 @@ def test_empty_database_upgrade_downgrade_upgrade_is_noop_without_roles(tmp_path
         assert connection.execute(sa.text("SELECT COUNT(*) FROM roles")).scalar_one() == 0
         assert connection.execute(
             sa.text("SELECT COUNT(*) FROM permissions WHERE code IN ('payment.view', 'payment.edit')")
-        ).scalar_one() == 0
+        ).scalar_one() == 2
         assert connection.execute(
             sa.text(f"SELECT COUNT(*) FROM { 'project_payment_permission_provisioning' }")
-        ).scalar_one() == 0
+        ).scalar_one() == 2
+        assert connection.execute(
+            sa.text(
+                "SELECT COUNT(*) FROM project_payment_permission_provisioning "
+                "WHERE kind = 'permission'"
+            )
+        ).scalar_one() == 2
 
     _alembic_ok(database_path, "downgrade", PREVIOUS_HEAD)
     with engine.connect() as connection:
         assert not sa.inspect(connection).has_table("project_payment_milestones")
         assert not sa.inspect(connection).has_table("project_payment_permission_provisioning")
         assert connection.execute(sa.text("SELECT COUNT(*) FROM roles")).scalar_one() == 0
+        assert connection.execute(
+            sa.text("SELECT COUNT(*) FROM permissions WHERE code IN ('payment.view', 'payment.edit')")
+        ).scalar_one() == 0
 
     _alembic_ok(database_path, "upgrade", THIS_REVISION)
     with engine.connect() as connection:
         assert sa.inspect(connection).has_table("project_payment_milestones")
         assert connection.execute(
             sa.text("SELECT COUNT(*) FROM permissions WHERE code IN ('payment.view', 'payment.edit')")
-        ).scalar_one() == 0
+        ).scalar_one() == 2
 
 
 def test_existing_database_upgrade_downgrade_upgrade_preserves_data_and_catalog_parity(tmp_path: Path):

@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Sequence
 
 from sqlalchemy import and_, case, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.audit.log import record_project_change
@@ -119,8 +120,17 @@ def set_project_payment_milestone(
     milestone: str,
     received: bool,
 ) -> ProjectPaymentMilestoneRead:
-    project = _visible_project(db, ctx, project_id)
+    # Lock the project row so all milestone updates for it are serialized on
+    # databases that support row locks. SQLite treats FOR UPDATE as a no-op;
+    # the unique constraint below remains the final guard there.
+    # Scope and permissions are checked before taking the lock, so callers
+    # outside the project scope can never block authorised writers.
+    _visible_project(db, ctx, project_id)
     ctx.require("payment.edit")
+    project = db.query(Project).filter(Project.id == project_id).with_for_update().one_or_none()
+    if project is None or not can_view_project(ctx, project):
+        raise ProjectPaymentsNotFound
+    ctx.require("payment.view")
     if not can_edit_project_payments(ctx, project):
         raise PermissionDenied("payment.edit")
     if milestone not in PAYMENT_MILESTONES:
@@ -132,12 +142,14 @@ def set_project_payment_milestone(
             ProjectPaymentMilestone.project_id == project.id,
             ProjectPaymentMilestone.milestone == milestone,
         )
+        .populate_existing()
         .one_or_none()
     )
     previous = bool(row.received) if row is not None else False
     if previous == received:
         return _read(row, milestone)
 
+    creating = row is None
     marked_at = dt.datetime.now(dt.timezone.utc)
     if row is None:
         row = ProjectPaymentMilestone(
@@ -163,6 +175,33 @@ def set_project_payment_milestone(
         changed_by_person_id=ctx.person_id,
         note=PAYMENT_MILESTONE_LABELS[milestone],
     )
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if creating:
+            # Another request may have inserted the same (project, milestone)
+            # after our read. Return its result when it already satisfies this
+            # request; if it recorded the opposite value, retry as an update.
+            current = (
+                db.query(ProjectPaymentMilestone)
+                .filter(
+                    ProjectPaymentMilestone.project_id == project.id,
+                    ProjectPaymentMilestone.milestone == milestone,
+                )
+                .populate_existing()
+                .one_or_none()
+            )
+            if current is not None:
+                if bool(current.received) == received:
+                    return _read(current, milestone)
+                return set_project_payment_milestone(
+                    db,
+                    ctx=ctx,
+                    project_id=project_id,
+                    milestone=milestone,
+                    received=received,
+                )
+        raise
     db.refresh(row)
     return _read(row, milestone)

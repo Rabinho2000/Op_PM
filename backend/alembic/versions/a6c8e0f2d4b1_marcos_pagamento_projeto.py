@@ -128,11 +128,6 @@ def upgrade() -> None:
             sa.PrimaryKeyConstraint("id"),
         )
 
-    # A schema-only/test database with no provisioned roles gets no permission
-    # rows or grants. The schema migration itself remains available.
-    if not existing_role_rows:
-        return
-
     role_ids = {code: role_id for role_id, code in existing_role_rows}
     for code, description, allowed_roles in _PROVISIONS:
         permission_id = permission_ids[code]
@@ -154,6 +149,8 @@ def upgrade() -> None:
         for role_code in allowed_roles:
             role_id = role_ids.get(role_code)
             if role_id is None:
+                # Permissions are still provisioned in schema-only databases;
+                # only grants to roles that do not exist are skipped.
                 continue
             existing_grant = bind.execute(
                 sa.select(role_permissions.c.id).where(
