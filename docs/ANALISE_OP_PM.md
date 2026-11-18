@@ -320,7 +320,7 @@ O CI corre o pytest em SQLite e em PostgreSQL 16, e no frontend `tsc`, `vitest` 
 | 14 | Defaults fail-closed (`APP_ENV=production` por omissão) | A7 | 0,5 d |
 | 15 | Testes: autenticação em todas as rotas, validador Entra real, drift entre migrações e modelos, scheduler | Secção 4 | 2–3 d |
 | 16 | CI: ruff, mypy (gradual), `pip-audit`/`npm audit`, gitleaks, Trivy, Dependabot, `npm ci`, build do Dockerfile de produção, `permissions:` | M9, M10 | 1–2 d |
-| 17 | JWKS: 503 com log e timeout; estados de erro no frontend em vez de listas vazias | M3, M4 | 1–2 d |
+| 17 | JWKS: 503 com log e timeout; estados de erro no frontend em vez de listas vazias (**frontend feito** no branch `fase1/frontend-error-states`, ainda sem deploy: M4 resolvido; falta a parte do JWKS, M3) | M3, M4 | 1–2 d |
 
 ### Fase 2 — Trabalho estrutural (≈ 3–5 semanas)
 

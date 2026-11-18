@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ApiError, getProject, listPeople, Project } from "../api/client";
+import { ApiError, errorMessage, getProject, listPeople, Project } from "../api/client";
 import {
   CableDesign,
   CableDesignHistoryEntry,
@@ -340,7 +340,7 @@ export default function CableDesignEditor() {
       setProjectError(null);
       return loaded;
     } catch (reason) {
-      setProjectError(apiErrorMessage(reason));
+      setProjectError(errorMessage(reason));
       return null;
     }
   }, [projectId]);
@@ -352,7 +352,7 @@ export default function CableDesignEditor() {
       setRevisions(await listCableRevisions(designId));
     } catch (reason) {
       setRevisions(null);
-      setRevisionsError(apiErrorMessage(reason));
+      setRevisionsError(errorMessage(reason));
     }
   }, [designId]);
 
@@ -363,7 +363,7 @@ export default function CableDesignEditor() {
       setHistory(await listCableHistory(designId));
     } catch (reason) {
       setHistory(null);
-      setHistoryError(apiErrorMessage(reason));
+      setHistoryError(errorMessage(reason));
     }
   }, [designId]);
 
