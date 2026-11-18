@@ -31,6 +31,7 @@ from app.schemas.time_bank import (
 )
 from app.security.current_user import get_auth_context
 from app.security.permissions import AuthContext
+from app.utils.timezones import today_lisbon
 from app.services.time_bank_ledger import (
     TimeBankConflict,
     TimeBankError,
@@ -353,13 +354,13 @@ def reverse_adjustment_endpoint(
 @router.get("/summary", response_model=TimeBankSummary)
 def summary_endpoint(
     person_id: uuid.UUID | None = None,
-    year: int = Query(default=2026, ge=1900, le=2200),
+    year: int | None = Query(default=None, ge=1900, le=2200),
     month: int | None = Query(default=None, ge=1, le=12),
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> TimeBankSummary:
     try:
-        return TimeBankSummary.model_validate({"people": summary(db, ctx, person_id=person_id, year=year, month=month)})
+        return TimeBankSummary.model_validate({"people": summary(db, ctx, person_id=person_id, year=year or today_lisbon().year, month=month)})
     except TimeBankError as exc:
         raise _raise(exc)
     except SQLAlchemyError as exc:

@@ -559,7 +559,7 @@ def test_apply_requires_confirm_flag(db_session, api_client):
 
 
 def test_conflict_detected_and_resolution_required_before_apply(db_session, api_client):
-    headers = _headers("comercial.sintetico@example.invalid")
+    headers = _headers("chefe.sintetico@example.invalid")  # altera um projeto existente (D-035)
 
     existing = Project(
         name="Projeto Sintético Já Existente para Conflito",
@@ -887,7 +887,7 @@ def test_conflict_can_be_re_resolved_before_apply_but_is_immutable_after_apply(d
 
 
 def test_ambiguous_target_requires_target_specific_conflicts_before_apply(db_session, api_client):
-    headers = _headers("comercial.sintetico@example.invalid")
+    headers = _headers("chefe.sintetico@example.invalid")  # altera um projeto existente (D-035)
     first = Project(
         name="Projeto Sintético Ambíguo A",
         client_email="cliente.notas.sintetico@example.invalid",
@@ -2647,3 +2647,39 @@ def test_postgresql_creation_lock_rejects_repeatable_read_before_lock():
     assert len(calls) == 1
     assert "show transaction_isolation" in calls[0]
     assert "pg_advisory_xact_lock" not in calls[0]
+
+
+def test_commercial_cannot_change_admin_fields_of_an_existing_project_via_notes(db_session, api_client):
+    """A5: import.notes cria projetos novos, mas não contorna a allowlist D-028/D-035."""
+    headers = _headers("comercial.sintetico@example.invalid")
+    existing = Project(
+        name="Projeto Sintético Existente Protegido",
+        client_email="cliente.notas.sintetico@example.invalid",
+        power_kwp=1.0,
+    )
+    db_session.add(existing)
+    db_session.commit()
+
+    preview = api_client.post(
+        "/api/imports/notes/preview",
+        files={"file": ("notas-protegidas.json", _json_fixture_bytes(), "application/json")},
+        headers=headers,
+    )
+    assert preview.status_code == 201, preview.text
+    body = preview.json()
+    record = body["records"][0]
+    assert record["target_project_id"] == str(existing.id)
+    for conflict in record["conflicts"]:
+        resolved = api_client.post(
+            f"/api/imports/conflicts/{conflict['id']}/resolve",
+            json={"resolution": "use_new"},
+            headers=headers,
+        )
+        assert resolved.status_code == 200, resolved.text
+
+    applied = api_client.post(
+        "/api/imports/notes/apply", json={"batch_id": body["id"], "confirm": True}, headers=headers
+    )
+    assert applied.status_code == 403, applied.text
+    db_session.expire_all()
+    assert db_session.get(Project, existing.id).power_kwp == 1.0

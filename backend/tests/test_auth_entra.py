@@ -50,13 +50,38 @@ def test_second_login_resolves_directly_by_entra_object_id(db_session, api_clien
     assert resp.json()["email"] == "chefe.sintetico@example.invalid"
 
 
-def test_invalid_token_signature_is_rejected(api_client_with_mock_entra_auth):
+def test_hs256_token_is_rejected_by_algorithm_allowlist(api_client_with_mock_entra_auth):
     bad_token = pyjwt.encode(
         {"iss": TEST_ISSUER, "aud": TEST_AUDIENCE, "sub": "x", "oid": "x", "iat": 0, "exp": 99999999999},
         "chave-completamente-errada",
         algorithm="HS256",
     )
     resp = api_client_with_mock_entra_auth.get("/me", headers={"Authorization": f"Bearer {bad_token}"})
+    assert resp.status_code == 401
+
+
+def _valid_claims_and_header() -> tuple[dict, dict]:
+    token = issue_mock_token(object_id="oid-assinatura", email="pm.um.sintetico@example.invalid")
+    return pyjwt.decode(token, options={"verify_signature": False}), pyjwt.get_unverified_header(token)
+
+
+def test_rs256_token_signed_with_another_key_is_rejected(api_client_with_mock_entra_auth):
+    """Mesmas claims (e `kid`, se houver) de um token válido, mas assinado por outra chave RSA:
+    só a verificação da assinatura o pode rejeitar."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    claims, header = _valid_claims_and_header()
+    other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    extra_headers = {"kid": header["kid"]} if header.get("kid") else None
+    forged = pyjwt.encode(claims, other_key, algorithm="RS256", headers=extra_headers)
+    resp = api_client_with_mock_entra_auth.get("/me", headers={"Authorization": f"Bearer {forged}"})
+    assert resp.status_code == 401
+
+
+def test_unsigned_alg_none_token_is_rejected(api_client_with_mock_entra_auth):
+    claims, _header = _valid_claims_and_header()
+    unsigned = pyjwt.encode(claims, None, algorithm="none")
+    resp = api_client_with_mock_entra_auth.get("/me", headers={"Authorization": f"Bearer {unsigned}"})
     assert resp.status_code == 401
 
 

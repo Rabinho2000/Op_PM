@@ -1,13 +1,20 @@
 """Regras do relatório semanal ao cliente.
 
 O serviço concentra autorização, regras de âmbito e transições de estado. O
-adaptador de envio é deliberadamente injetável: nesta fatia, quando Graph está
-desligado, o único adaptador concreto é o outbox local `.eml`.
+adaptador de envio é deliberadamente injetável: com `GRAPH_ENABLED=true` usa o
+Microsoft Graph (`app.adapters.graph_mail`); desligado, grava um `.eml` no
+outbox local e o envio fica `outbox_local` — nunca `sent`, porque o cliente
+não recebeu nada.
+
+Envio idempotente: a linha `pending` é gravada (commit) antes da chamada
+externa e um índice único parcial em (project_id, iso_week) para os estados
+ativos impede dois envios na mesma semana, mesmo com pedidos concorrentes.
 """
 from __future__ import annotations
 
 import datetime as dt
 import html
+import logging
 import re
 import unicodedata
 import uuid
@@ -16,6 +23,7 @@ from pathlib import Path
 from typing import Callable, Protocol
 from zoneinfo import ZoneInfo
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
@@ -27,7 +35,14 @@ from app.models.workflow import Phase, WorkflowStage
 from app.security.permissions import AuthContext
 from app.services.performance import completed_tasks_by_week
 
+logger = logging.getLogger(__name__)
+
 LISBON = ZoneInfo("Europe/Lisbon")
+# Estados que ocupam a semana ISO de um projeto (índice único parcial
+# `uq_client_report_sends_active_week`): um envio em curso, em revisão ou feito.
+ACTIVE_SEND_STATUSES = ("pending", "pending_review", "sent")
+STATUS_OUTBOX_LOCAL = "outbox_local"
+OUTBOX_LOCAL_NOTE = "Graph desativado: mensagem gravada no outbox local e NÃO enviada ao cliente."
 REPORT_MANAGE = "client_report.manage"
 REPORT_VIEW = "client_report.view"
 EXCLUDED_LIFECYCLE = {
@@ -557,7 +572,7 @@ def _find_existing_send(db: Session, project_id: uuid.UUID, iso_week: str) -> Cl
         .filter(
             ClientReportSend.project_id == project_id,
             ClientReportSend.iso_week == iso_week,
-            ClientReportSend.status.in_(["sent", "pending_review"]),
+            ClientReportSend.status.in_(ACTIVE_SEND_STATUSES),
         )
         .order_by(ClientReportSend.created_at.desc())
         .first()
@@ -597,26 +612,37 @@ def _deliver(
     settings: Settings,
     now: dt.datetime | None = None,
 ) -> ClientReportSend:
-    if sender is None:
-        if settings.graph_enabled:
-            from app.adapters.graph_mail import graph_sender
-            sender = graph_sender(settings)
-        else:
-            sender = local_eml_sender(settings)
     try:
-        row.graph_message_id = sender(
+        # A construção do sender fica dentro do try: um segredo Graph em falta
+        # tem de resultar num envio `failed` auditado, não num 500 genérico.
+        if sender is None:
+            if settings.graph_enabled:
+                from app.adapters.graph_mail import graph_sender
+                sender = graph_sender(settings)
+            else:
+                sender = local_eml_sender(settings)
+        message_id = sender(
             from_email=row.from_email,
             to_emails=list(row.to_emails or []),
             cc_emails=list(row.cc_emails or []),
             subject=row.subject,
             body_html=row.body_html,
         )
-        row.status = "sent"
-        row.error = "Modo de teste: mensagem gravada no outbox local." if row.graph_message_id.startswith("local:") else None
-        row.sent_at = now or dt.datetime.now(dt.timezone.utc)
-    except Exception as exc:  # erro fica auditado e não escapa sem contexto
+    except Exception as exc:  # erro fica auditado e registado no log
+        logger.exception("Falha ao entregar o relatório semanal send=%s projeto=%s", row.id, row.project_id)
         row.status = "failed"
-        row.error = str(exc)
+        row.error = str(exc)[:2000]
+        db.flush()
+        return row
+    row.graph_message_id = message_id
+    row.sent_at = now or dt.datetime.now(dt.timezone.utc)
+    if message_id.startswith("local:"):
+        row.status = STATUS_OUTBOX_LOCAL
+        row.error = OUTBOX_LOCAL_NOTE
+        logger.warning("Relatório semanal send=%s projeto=%s ficou no outbox local (Graph desativado)", row.id, row.project_id)
+    else:
+        row.status = "sent"
+        row.error = None
     db.flush()
     return row
 
@@ -663,9 +689,20 @@ def send_report(
         cc_emails=list(config.cc_emails or []),
     )
     db.add(row)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # Outro pedido (scheduler, outra aba) ocupou a semana entretanto.
+        db.rollback()
+        existing = _find_existing_send(db, project_id, iso_week)
+        if existing is not None:
+            return existing
+        raise
     if row.status == "pending_review":
         return row
+    # A intenção de envio fica gravada antes da chamada externa: se o processo
+    # cair depois de o email sair, a linha `pending` impede um reenvio.
+    db.commit()
     result = _deliver(db, row, sender=sender, settings=settings or get_settings(), now=now)
     if result.status == "sent":
         config.weekly_note = None
@@ -689,7 +726,20 @@ def approve_send(
     _require_project_access(ctx, project, manage=True)
     if row.status != "pending_review":
         raise ClientReportValidationError("Só um rascunho pendente pode ser aprovado.")
-    row.approved_by_person_id = ctx.person_id
+    # Transição atómica pending_review -> pending: dois cliques ou duas abas
+    # nunca aprovam (e enviam) o mesmo rascunho duas vezes.
+    claimed = (
+        db.query(ClientReportSend)
+        .filter(ClientReportSend.id == row.id, ClientReportSend.status == "pending_review")
+        .update(
+            {ClientReportSend.status: "pending", ClientReportSend.approved_by_person_id: ctx.person_id},
+            synchronize_session=False,
+        )
+    )
+    if claimed != 1:
+        raise ClientReportValidationError("Só um rascunho pendente pode ser aprovado.")
+    db.commit()
+    db.refresh(row)
     result = _deliver(db, row, sender=sender, settings=settings or get_settings(), now=now)
     if result.status == "sent":
         config = _config_or_none(db, project.id)

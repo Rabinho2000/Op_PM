@@ -21,6 +21,7 @@ function formatLisbonDate(value: string | null | undefined): string {
 function sendStatusLabel(status: string | undefined): string {
   const labels: Record<string, string> = {
     sent: "Enviado",
+    outbox_local: "Não enviado (outbox local)",
     failed: "Falhou",
     skipped: "Ignorado",
     pending_review: "A aguardar aprovação",
@@ -34,6 +35,7 @@ function sendStatusLabel(status: string | undefined): string {
 function reportStatus(item: ClientReportListItem): string {
   if (item.pending_review_count && item.pending_review_count > 0) return "A aguardar revisão";
   if (item.last_send?.status === "failed") return "Falhou";
+  if (item.last_send?.status === "outbox_local") return "Não enviado (outbox local)";
   if (item.enabled) return "Ativo";
   if (item.last_send || item.next_send_at) return "Pausado";
   return "Sem configuração";

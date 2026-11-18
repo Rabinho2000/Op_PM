@@ -30,6 +30,7 @@ from app.services.imports_notes import (
     DuplicateImportError,
     ImportPendingStateError,
     NotesImportError,
+    NotesImportPermissionError,
     _SensitiveValueBudgetExceeded,
     SENSITIVE_FIELD_PLACEHOLDER,
     SENSITIVE_VALUE_PLACEHOLDER,
@@ -325,6 +326,7 @@ def apply_notes_endpoint(
             batch=batch,
             target_project_id=body.target_project_id,
             applied_by_person_id=ctx.person_id,
+            ctx=ctx,
         )
         db.commit()
         current_record = (
@@ -336,6 +338,9 @@ def apply_notes_endpoint(
     except ImportPendingStateError as exc:
         db.commit()
         raise HTTPException(status_code=400, detail=str(exc))
+    except NotesImportPermissionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=403, detail=str(exc))
     except NotesImportError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return ApplyImportResult(

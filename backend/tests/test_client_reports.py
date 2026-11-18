@@ -56,14 +56,34 @@ def _settings(tmp_path):
     return Settings(app_env="test", graph_enabled=False, graph_fallback_dir=str(tmp_path))
 
 
-def test_due_configs_matches_lisbon_weekday_and_minute(db_session):
+def _graph_sender(**_kwargs):
+    """Sender falso que simula uma entrega real (Graph) bem-sucedida."""
+    return "graph:pm@example.com"
+
+
+def test_due_configs_window_starts_at_configured_time_and_tolerates_loop_interval(db_session):
     project = _project(db_session)
     ctx = _pm_context(db_session)
     update_report(db_session, project.id, {"enabled": True, "weekday": 1, "send_time": "13:00", "to_emails": ["cliente@example.com"]}, ctx)
+    # NOW = terça 13:00 em Lisboa (12:00 UTC, horário de verão).
+    assert not due_configs(db_session, now=NOW - dt.timedelta(minutes=1))
     assert due_configs(db_session, now=NOW)
-    assert not due_configs(db_session, now=NOW + dt.timedelta(minutes=1))
+    # Um ciclo de 5 minutos que acorde às 13:03 (ou depois de um reinício) não salta o envio.
+    assert due_configs(db_session, now=NOW + dt.timedelta(minutes=3))
+    assert due_configs(db_session, now=NOW + dt.timedelta(hours=47))
+    assert not due_configs(db_session, now=NOW + dt.timedelta(hours=48))
 
 
+def test_due_configs_skips_projects_already_handled_this_iso_week(db_session, tmp_path):
+    project = _project(db_session)
+    ctx = _pm_context(db_session)
+    update_report(db_session, project.id, {"enabled": True, "weekday": 1, "send_time": "13:00", "to_emails": ["cliente@example.com"]}, ctx)
+    row = send_report(db_session, project.id, ctx, settings=_settings(tmp_path), now=NOW)
+    assert row.status == "outbox_local"
+    # Qualquer linha da semana (aqui outbox local) fecha a semana para o scheduler.
+    assert not due_configs(db_session, now=NOW + dt.timedelta(minutes=5))
+    # Na semana seguinte volta a ficar devido.
+    assert due_configs(db_session, now=NOW + dt.timedelta(days=7))
 
 
 def test_validate_recipient_cardinality_and_case_insensitive_duplicates():
@@ -165,7 +185,7 @@ def test_update_report_normalises_valid_config(db_session):
     assert result["review_before_send"] is True
 
 
-def test_manual_send_uses_local_eml_and_clears_note_after_success(db_session, tmp_path):
+def test_manual_send_with_graph_off_goes_to_outbox_local_and_keeps_note(db_session, tmp_path):
     project = _project(db_session)
     ctx = _pm_context(db_session)
     update_report(
@@ -188,13 +208,30 @@ def test_manual_send_uses_local_eml_and_clears_note_after_success(db_session, tm
         now=NOW,
     )
 
-    assert row.status == "sent"
+    # O cliente não recebeu nada: nunca "sent", e a nota semanal mantém-se.
+    assert row.status == "outbox_local"
     assert row.graph_message_id.startswith("local:")
-    assert "Modo de teste" in row.error
+    assert "NÃO enviada ao cliente" in row.error
     eml_path = Path(row.graph_message_id.removeprefix("local:"))
     assert eml_path.parent == tmp_path
     assert eml_path.exists()
     assert "saveToSentItems" not in row.body_html
+    assert db_session.query(ClientReportConfig).filter_by(project_id=project.id).one().weekly_note is not None
+
+
+def test_real_delivery_marks_sent_and_clears_note(db_session, tmp_path):
+    project = _project(db_session)
+    ctx = _pm_context(db_session)
+    update_report(
+        db_session,
+        project.id,
+        {"enabled": True, "to_emails": ["cliente@example.com"], "weekly_note": "Nota a limpar"},
+        ctx,
+    )
+    row = send_report(db_session, project.id, ctx, sender=_graph_sender, settings=_settings(tmp_path), now=NOW)
+    assert row.status == "sent"
+    assert row.error is None
+    assert row.graph_message_id == "graph:pm@example.com"
     assert db_session.query(ClientReportConfig).filter_by(project_id=project.id).one().weekly_note is None
 
 
@@ -208,12 +245,13 @@ def test_manual_and_scheduled_send_are_idempotent_within_iso_week(db_session, tm
         ctx,
     )
 
-    first = send_report(db_session, project.id, ctx, trigger="manual", settings=_settings(tmp_path), now=NOW)
+    first = send_report(db_session, project.id, ctx, trigger="manual", sender=_graph_sender, settings=_settings(tmp_path), now=NOW)
     second = send_report(
         db_session,
         project.id,
         ctx,
         trigger="scheduled",
+        sender=_graph_sender,
         settings=_settings(tmp_path),
         now=NOW + dt.timedelta(hours=2),
     )
@@ -246,6 +284,7 @@ def test_review_flow_pending_approve_discard_and_expire(db_session, tmp_path):
         db_session,
         pending.id,
         ctx,
+        sender=_graph_sender,
         settings=_settings(tmp_path),
         now=NOW,
     )
@@ -333,7 +372,7 @@ def test_global_list_honors_visibility_and_status_filters(db_session, tmp_path):
             },
             admin,
         )
-    sent = send_report(db_session, demo.id, admin, settings=_settings(tmp_path), now=NOW)
+    sent = send_report(db_session, demo.id, admin, sender=_graph_sender, settings=_settings(tmp_path), now=NOW)
     pending = send_report(db_session, upcoming.id, admin, settings=_settings(tmp_path), now=NOW)
     assert sent.status == "sent"
     assert pending.status == "pending_review"
@@ -679,7 +718,8 @@ def test_report_work_period_starts_at_last_successful_send_and_empty_report_is_e
         ClientReportSend(
             project_id=project.id,
             iso_week="2026-W41",
-            status="pending_review",
+            # Outbox local não é uma entrega: não pode mover o início do período.
+            status="outbox_local",
             trigger="scheduled",
             subject="Rascunho sintético",
             body_html="<html></html>",

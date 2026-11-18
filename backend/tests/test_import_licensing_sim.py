@@ -416,7 +416,13 @@ def assert_no_fake_values(*texts: str, tmp_path: Path | None = None, only_secret
         scrubbed = _UUID.sub("<uuid>", text)
         if tmp_path is not None:
             scrubbed = scrubbed.replace(str(tmp_path), "<tmp>")
-        leaked = sorted(name for name, value in forbidden.items() if value in scrubbed)
+        # Token isolado (não subcadeia): um PIN de 4 dígitos coincide por acaso com
+        # trechos de hashes SHA-256 ou de tokens cifrados, e isso não é uma fuga.
+        leaked = sorted(
+            name
+            for name, value in forbidden.items()
+            if re.search(rf"(?<![0-9A-Za-z]){re.escape(value)}(?![0-9A-Za-z])", scrubbed)
+        )
         assert not leaked, f"valores fictícios apareceram na saída: {leaked}"
 
 

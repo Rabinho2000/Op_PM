@@ -2801,6 +2801,7 @@ export const cancelCalendarEvent = (id: string) =>
 export type ClientReportDeliveryMode = "local" | "graph" | string;
 export type ClientReportSendStatus =
   | "sent"
+  | "outbox_local"
   | "failed"
   | "skipped"
   | "pending_review"
