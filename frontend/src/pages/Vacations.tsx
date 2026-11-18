@@ -5,6 +5,7 @@ import {
   AbsenceMini,
   AbsenceType,
   ApiError,
+  errorMessage,
   approveAbsence,
   BirthdayMini,
   cancelAbsence,
@@ -65,6 +66,8 @@ function AbsenceApprovalMeta({ absence }: { absence: Absence }) {
 
 function CreateAbsenceModal({
   people,
+  peopleError,
+  onRetryPeople,
   canManageAll,
   selfPersonId,
   selfName,
@@ -72,6 +75,8 @@ function CreateAbsenceModal({
   onCreated,
 }: {
   people: Person[];
+  peopleError: string | null;
+  onRetryPeople: () => void;
   canManageAll: boolean;
   selfPersonId: string;
   selfName: string;
@@ -129,6 +134,17 @@ function CreateAbsenceModal({
         {error && (
           <div className="span-2">
             <Alert tone="danger">{error}</Alert>
+          </div>
+        )}
+        {canManageAll && peopleError && (
+          <div className="span-2">
+            <Alert
+              tone="warning"
+              title="Não foi possível carregar a lista de pessoas."
+              action={<button type="button" className="btn btn--sm" onClick={onRetryPeople}>Tentar novamente</button>}
+            >
+              {peopleError}
+            </Alert>
           </div>
         )}
         <div className="field span-2">
@@ -293,6 +309,10 @@ export default function Vacations() {
   const [current, setCurrent] = useState<AbsenceMini[] | null>(null);
   const [upcoming, setUpcoming] = useState<AbsenceMini[] | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
+  const [peopleError, setPeopleError] = useState<string | null>(null);
+  // O resumo (ausentes, próximas ausências, aniversários) vem de um só pedido: se falhar,
+  // as três secções mostram o erro em vez de "ninguém ausente".
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState<Absence | null>(null);
@@ -311,23 +331,27 @@ export default function Vacations() {
   const seesEveryone = can("absence.view_all");
   const canManageHolidays = can("holiday.manage");
 
-  const load = useCallback(() => {
-    setError(null);
-    listAbsences()
-      .then(setAbsences)
-      .catch((e) => setError(e instanceof ApiError ? e.detail : "Não foi possível contactar o servidor."));
+  const loadSummary = useCallback(() => {
+    setSummaryError(null);
+    setBirthdays(null);
+    setCurrent(null);
+    setUpcoming(null);
     getDashboardSummary()
       .then((s) => {
         setBirthdays(s.upcoming_birthdays);
         setCurrent(s.current_absences);
         setUpcoming(s.upcoming_absences);
       })
-      .catch(() => {
-        setBirthdays([]);
-        setCurrent([]);
-        setUpcoming([]);
-      });
+      .catch((e) => setSummaryError(errorMessage(e)));
   }, []);
+
+  const load = useCallback(() => {
+    setError(null);
+    listAbsences()
+      .then(setAbsences)
+      .catch((e) => setError(errorMessage(e)));
+    loadSummary();
+  }, [loadSummary]);
 
   useEffect(load, [load]);
   const days = useMemo(() => monthGrid(cursor.year, cursor.month), [cursor.year, cursor.month]);
@@ -341,12 +365,15 @@ export default function Vacations() {
     }
   }, [canManageHolidays, days]);
   useEffect(() => { void loadHolidays(); }, [loadHolidays]);
-  useEffect(() => {
-    if (!canManageAll) return;
+  const loadPeople = useCallback(() => {
+    setPeopleError(null);
     listPeople()
       .then(setPeople)
-      .catch(() => setPeople([]));
-  }, [canManageAll]);
+      .catch((e) => setPeopleError(errorMessage(e)));
+  }, []);
+  useEffect(() => {
+    if (canManageAll) loadPeople();
+  }, [canManageAll, loadPeople]);
 
   const calendarAbsences = useMemo(
     () => (absences ?? []).filter((a) => a.status === "aprovada" || a.status === "pendente"),
@@ -622,7 +649,9 @@ export default function Vacations() {
 
           <div className="grid">
             <Card title="Ausentes hoje" icon="plane" tone="violet" flush>
-              {current === null ? (
+              {current === null && summaryError ? (
+                <ErrorState message={summaryError} onRetry={loadSummary} />
+              ) : current === null ? (
                 <LoadingState rows={2} />
               ) : current.length === 0 ? (
                 <EmptyState compact icon="calendar" title="Ninguém ausente hoje." />
@@ -642,7 +671,9 @@ export default function Vacations() {
               )}
             </Card>
             <Card title="Próximas ausências (30 dias)" icon="calendar" tone="violet" flush>
-              {upcoming === null ? (
+              {upcoming === null && summaryError ? (
+                <ErrorState message={summaryError} onRetry={loadSummary} />
+              ) : upcoming === null ? (
                 <LoadingState rows={2} />
               ) : upcoming.length === 0 ? (
                 <EmptyState compact icon="calendar" title="Sem ausências marcadas." />
@@ -664,7 +695,9 @@ export default function Vacations() {
               )}
             </Card>
             <Card title="Aniversários próximos" icon="gift" tone="warning" flush>
-              {birthdays === null ? (
+              {birthdays === null && summaryError ? (
+                <ErrorState message={summaryError} onRetry={loadSummary} />
+              ) : birthdays === null ? (
                 <LoadingState rows={2} />
               ) : birthdays.length === 0 ? (
                 <EmptyState compact icon="gift" title="Sem aniversários nos próximos 30 dias." />
@@ -916,6 +949,8 @@ export default function Vacations() {
       {creating && me && (
         <CreateAbsenceModal
           people={people}
+          peopleError={peopleError}
+          onRetryPeople={loadPeople}
           canManageAll={canManageAll}
           selfPersonId={me.person_id}
           selfName={me.display_name ?? me.email}

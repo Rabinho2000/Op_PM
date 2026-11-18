@@ -190,6 +190,13 @@ export const apiUpload = <T>(path: string, formData: FormData) => requestUpload<
 
 export { ApiError };
 
+export const NETWORK_ERROR_MESSAGE = "Não foi possível contactar o servidor.";
+
+/** Mensagem de erro para o utilizador: o `detail` da API ou, se o pedido nem chegou lá, o texto de reserva. */
+export function errorMessage(err: unknown, fallback: string = NETWORK_ERROR_MESSAGE): string {
+  return err instanceof ApiError ? err.detail : fallback;
+}
+
 // --- /health, /me ---
 
 export interface HealthResponse {

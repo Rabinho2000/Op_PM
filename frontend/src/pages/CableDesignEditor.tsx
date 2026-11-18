@@ -159,7 +159,18 @@ function actorLabel(value: string | null | undefined, peopleById: ReadonlyMap<st
   return label && label.trim() ? label : "—";
 }
 
-function RevisionList({ revisions, peopleById }: { revisions: CableDesignRevision[] | null; peopleById: ReadonlyMap<string, string> }) {
+function RevisionList({
+  revisions,
+  error,
+  onRetry,
+  peopleById,
+}: {
+  revisions: CableDesignRevision[] | null;
+  error: string | null;
+  onRetry: () => void;
+  peopleById: ReadonlyMap<string, string>;
+}) {
+  if (revisions === null && error) return <ErrorState message={error} onRetry={onRetry} />;
   if (revisions === null) return <LoadingState label="A carregar revisões…" rows={3} />;
   if (revisions.length === 0) return <p className="muted small">Sem revisões registadas.</p>;
   return (
@@ -179,7 +190,18 @@ function RevisionList({ revisions, peopleById }: { revisions: CableDesignRevisio
   );
 }
 
-function HistoryList({ history, peopleById }: { history: CableDesignHistoryEntry[] | null; peopleById: ReadonlyMap<string, string> }) {
+function HistoryList({
+  history,
+  error,
+  onRetry,
+  peopleById,
+}: {
+  history: CableDesignHistoryEntry[] | null;
+  error: string | null;
+  onRetry: () => void;
+  peopleById: ReadonlyMap<string, string>;
+}) {
+  if (history === null && error) return <ErrorState message={error} onRetry={onRetry} />;
   if (history === null) return <LoadingState label="A carregar histórico…" rows={3} />;
   if (history.length === 0) return <p className="muted small">Sem histórico registado.</p>;
   return (
@@ -199,12 +221,20 @@ function HistoryList({ history, peopleById }: { history: CableDesignHistoryEntry
 
 function AuditDrawer({
   revisions,
+  revisionsError,
+  onRetryRevisions,
   history,
+  historyError,
+  onRetryHistory,
   peopleById,
   onClose,
 }: {
   revisions: CableDesignRevision[] | null;
+  revisionsError: string | null;
+  onRetryRevisions: () => void;
   history: CableDesignHistoryEntry[] | null;
+  historyError: string | null;
+  onRetryHistory: () => void;
   peopleById: ReadonlyMap<string, string>;
   onClose: () => void;
 }) {
@@ -216,8 +246,8 @@ function AuditDrawer({
           <button type="button" className="btn btn--ghost btn--icon" aria-label="Fechar" onClick={onClose}>×</button>
         </header>
         <div className="cable-editor__drawer-body">
-          <Card title="Revisões" icon="activity"><RevisionList revisions={revisions} peopleById={peopleById} /></Card>
-          <Card title="Histórico" icon="activity"><HistoryList history={history} peopleById={peopleById} /></Card>
+          <Card title="Revisões" icon="activity"><RevisionList revisions={revisions} error={revisionsError} onRetry={onRetryRevisions} peopleById={peopleById} /></Card>
+          <Card title="Histórico" icon="activity"><HistoryList history={history} error={historyError} onRetry={onRetryHistory} peopleById={peopleById} /></Card>
         </div>
       </aside>
     </div>
@@ -261,6 +291,10 @@ export default function CableDesignEditor() {
   const [project, setProject] = useState<Project | null>(null);
   const [revisions, setRevisions] = useState<CableDesignRevision[] | null>(null);
   const [history, setHistory] = useState<CableDesignHistoryEntry[] | null>(null);
+  // Falhas em secções auxiliares ficam visíveis: não se confundem com "sem dados".
+  const [projectError, setProjectError] = useState<string | null>(null);
+  const [revisionsError, setRevisionsError] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [readOnlyOverride, setReadOnlyOverride] = useState(false);
@@ -299,6 +333,40 @@ export default function CableDesignEditor() {
     return () => { mounted = false; };
   }, []);
 
+  const loadProject = useCallback(async (): Promise<Project | null> => {
+    if (!projectId) return null;
+    try {
+      const loaded = await getProject(projectId);
+      setProjectError(null);
+      return loaded;
+    } catch (reason) {
+      setProjectError(apiErrorMessage(reason));
+      return null;
+    }
+  }, [projectId]);
+
+  const loadRevisions = useCallback(async () => {
+    if (!designId) return;
+    setRevisionsError(null);
+    try {
+      setRevisions(await listCableRevisions(designId));
+    } catch (reason) {
+      setRevisions(null);
+      setRevisionsError(apiErrorMessage(reason));
+    }
+  }, [designId]);
+
+  const loadHistory = useCallback(async () => {
+    if (!designId) return;
+    setHistoryError(null);
+    try {
+      setHistory(await listCableHistory(designId));
+    } catch (reason) {
+      setHistory(null);
+      setHistoryError(apiErrorMessage(reason));
+    }
+  }, [designId]);
+
   const load = useCallback(async () => {
     if (!designId) return;
     setLoading(true);
@@ -306,18 +374,9 @@ export default function CableDesignEditor() {
     setActionError(null);
     try {
       const loadedDesign = await getCableDesign(designId);
-      let loadedProject: Project | null = null;
-      if (projectId) {
-        try { loadedProject = await getProject(projectId); } catch { loadedProject = null; }
-      }
-      const [loadedRevisions, loadedHistory] = await Promise.all([
-        listCableRevisions(designId).catch(() => []),
-        listCableHistory(designId).catch(() => []),
-      ]);
+      const [loadedProject] = await Promise.all([loadProject(), loadRevisions(), loadHistory()]);
       setDesign(loadedDesign);
       setProject(loadedProject);
-      setRevisions(loadedRevisions);
-      setHistory(loadedHistory);
     } catch (reason) {
       setDesign(null);
       setProject(null);
@@ -325,7 +384,7 @@ export default function CableDesignEditor() {
     } finally {
       setLoading(false);
     }
-  }, [designId, projectId]);
+  }, [designId, loadProject, loadRevisions, loadHistory]);
 
   useEffect(() => {
     if (!canView) {
@@ -348,13 +407,20 @@ export default function CableDesignEditor() {
 
   const refreshAudit = useCallback(async () => {
     if (!designId) return;
-    const [nextRevisions, nextHistory] = await Promise.all([
-      listCableRevisions(designId).catch(() => []),
-      listCableHistory(designId).catch(() => []),
-    ]);
-    setRevisions(nextRevisions);
-    setHistory(nextHistory);
-  }, [designId]);
+    await Promise.all([loadRevisions(), loadHistory()]);
+  }, [designId, loadRevisions, loadHistory]);
+
+  const retryProject = useCallback(async () => {
+    // O projeto fornece os valores iniciais do estudo: recarregá-lo reinicia o estudo e
+    // descartaria alterações por gravar.
+    if (study.flush()?.dirty) {
+      setActionError("Grave as alterações antes de voltar a carregar os dados do projeto.");
+      return;
+    }
+    setActionError(null);
+    const loaded = await loadProject();
+    if (loaded) setProject(loaded);
+  }, [loadProject, study.flush]);
 
   const saveCurrent = useCallback(async (force = false): Promise<CableDesign | null> => {
     if (!design || !designId || readOnly || !engineState.engine || !study.store) return design;
@@ -586,6 +652,15 @@ export default function CableDesignEditor() {
       </header>
 
       {actionError && <Alert tone="danger">{actionError}</Alert>}
+      {projectError && (
+        <Alert
+          tone="warning"
+          title="Não foi possível carregar os dados do projeto."
+          action={<button type="button" className="btn btn--sm" onClick={() => void retryProject()}>Tentar novamente</button>}
+        >
+          O nome, o cliente e a morada da obra podem ficar por preencher. {projectError}
+        </Alert>
+      )}
       {lockedMessage && <Alert tone="warning">{lockedMessage}</Alert>}
 
       {approved ? (
@@ -617,7 +692,7 @@ export default function CableDesignEditor() {
         <main className="cable-editor__summary"><ErrorState message="O estudo de cabos ainda não está pronto." /></main>
       )}
 
-      {drawerOpen && <AuditDrawer revisions={revisions} history={history} peopleById={peopleById} onClose={() => setDrawerOpen(false)} />}
+      {drawerOpen && <AuditDrawer revisions={revisions} revisionsError={revisionsError} onRetryRevisions={() => void loadRevisions()} history={history} historyError={historyError} onRetryHistory={() => void loadHistory()} peopleById={peopleById} onClose={() => setDrawerOpen(false)} />}
       {conflictState && <ConflictDialog state={conflictState} onReload={() => void reloadAfterConflict()} onCopy={() => void copyStateAndReload()} onClose={() => setConflictState(null)} />}
       <a className="sr-only" href={projectPath}>Voltar ao projeto</a>
     </div>

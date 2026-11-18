@@ -509,8 +509,11 @@ export default function ProjectsList() {
   useEffect(() => {
     listPeople()
       .then((all) => setPeople(all))
-      .catch(() => setPeople([]));
-  }, []);
+      .catch(() => {
+        setPeople([]);
+        notify("Não foi possível carregar a lista de pessoas.", "error");
+      });
+  }, [notify]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => setDebouncedSearch(config.filters.search), 250);

@@ -29,8 +29,11 @@ export default function ReconciliationQueue() {
   useEffect(() => {
     listPeople()
       .then(setPeople)
-      .catch(() => setPeople([]));
-  }, []);
+      .catch(() => {
+        setPeople([]);
+        notify("Não foi possível carregar a lista de pessoas.", "error");
+      });
+  }, [notify]);
 
   async function handleResolve(
     id: string,

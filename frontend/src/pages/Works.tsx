@@ -319,11 +319,17 @@ export default function Works() {
   useEffect(() => {
     listInstallers()
       .then(setInstallers)
-      .catch(() => setInstallers([]));
+      .catch(() => {
+        setInstallers([]);
+        notify("Não foi possível carregar a lista de instaladores.", "error");
+      });
     listPeople()
       .then(setPeople)
-      .catch(() => setPeople([]));
-  }, []);
+      .catch(() => {
+        setPeople([]);
+        notify("Não foi possível carregar a lista de pessoas.", "error");
+      });
+  }, [notify]);
 
   const lifecycleKey = lifecycle.join(",");
   useEffect(() => {
