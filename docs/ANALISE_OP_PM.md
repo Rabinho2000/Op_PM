@@ -94,6 +94,7 @@ Formato: **ID — título** · `ficheiro:linha` · problema → impacto → corr
   - Remover o `demo-setup` deste compose.
   - Fixar `ENTRA_JIT_LINK_BY_EMAIL=false` depois de ligar todos os utilizadores.
   - Definir um `SECRET_KEY` real.
+- **Estado (2026-11-18): preparado, cutover pendente.** `docker-compose.production.example.yml` (genérico) e um compose concreto fora do Git: `APP_ENV=production`, `DEMO_MODE=false`, segredos por ficheiro (`SECRET_KEY_FILE`, `DATABASE_PASSWORD_FILE`), `migrate` à parte (sem seed), PostgreSQL saudável antes do `migrate`. Ensaiado numa cópia; procedimento em `docs/RUNBOOK_CUTOVER_POSTGRES.md`. Falta correr o cutover e decidir a ligação dos utilizadores Entra sem `entra_object_id` (JIT desligado em production).
 
 **C2 — O relatório semanal ao cliente quase nunca dispara e, quando disparar, pode ser enviado em duplicado**
 - `backend/app/services/client_report_scheduler.py:32-35` (exige `hora == hh and minuto == mm`); `docker-compose.tailscale.yml:74` (`--interval 300`); `client_report_scheduler.py:39-47` (`db.rollback()` por projeto, `commit` único no fim).
@@ -157,11 +158,13 @@ Formato: **ID — título** · `ficheiro:linha` · problema → impacto → corr
 - `backend/app/config.py:28, 46-50, 65-68, 83-87`: `APP_ENV=local`, `AUTH_ENABLED=false`, `SECRET_KEY` público e SQLite por omissão.
 - **Impacto:** se `APP_ENV` for omitido ou estiver mal escrito, a API aceita `X-Dev-User-Email` e qualquer pessoa pode fazer-se passar pelo administrador.
 - **Correção:** por omissão, `APP_ENV=production`, e exigir `APP_ENV=local` de forma explícita para desenvolvimento. Em alternativa, recusar o arranque quando `APP_ENV` não está definido.
+- **Estado (2026-11-18): preparado, cutover pendente.** O compose de produção fixa `APP_ENV=production` de forma explícita; a instância deixa de depender do default `local` quando o cutover correr. Os defaults fail-closed do código (`APP_ENV` obrigatório) são da frente de hardening do backend.
 
 **A8 — Produção em SQLite com dois processos a escrever, e locks que o SQLite ignora**
 - `docker-compose.tailscale.yml:31, 51, 74` (o backend e o scheduler usam o mesmo ficheiro); `backend/app/services/safety_sheet.py:125-142` (`with_for_update()` sem efeito em SQLite; o comentário diz o contrário). Os testes de concorrência só correm em PostgreSQL.
 - **Impacto:** erros `database is locked`, perda de escrita na primeira gravação da ficha de segurança, e garantias de concorrência validadas num motor que não é o de produção.
 - **Correção:** migrar para PostgreSQL (o projeto já suporta e o CI já testa). Até lá, aplicar o padrão de "UPDATE vazio" que o inventário e o banco de horas já usam.
+- **Estado (2026-11-18): preparado, cutover pendente.** CLI `app.cli.migrate_sqlite_to_postgres` (esquema por Alembic, cópia em lotes, checksums por tabela, `--dry-run`, deteção de linhas rejeitáveis). Ensaio sobre um backup real: 109 tabelas e 12 943 linhas copiadas em cerca de 2 s, contagens e checksums iguais, sem linhas rejeitadas. Suíte pytest contra PostgreSQL executada no ensaio. Falta o cutover real.
 
 **A9 — Os backups não cobrem os ficheiros e ficam no mesmo host**
 - Script de utilizador do servidor (fora do repo): faz `sqlite.backup` das 2 BDs 4 vezes por dia, guarda 14 dias e corre `integrity_check`. Isto está bem feito.
@@ -314,8 +317,8 @@ O CI corre o pytest em SQLite e em PostgreSQL 16, e no frontend `tsc`, `vitest` 
 
 | # | Ação | Resolve | Esforço |
 |---|---|---|---|
-| 11 | Novo compose de produção: `APP_ENV=production`, sem `demo-setup`, `migrate` separado com backup prévio, `SECRET_KEY` real, JIT desligado | C1, A7 | 2 d |
-| 12 | Migrar de SQLite para PostgreSQL (o caminho de migração já existe), com ensaio em staging | A8 | 3–4 d |
+| 11 | Novo compose de produção: `APP_ENV=production`, sem `demo-setup`, `migrate` separado com backup prévio, `SECRET_KEY` real, JIT desligado (preparado, cutover pendente) | C1, A7 | 2 d |
+| 12 | Migrar de SQLite para PostgreSQL (o caminho de migração já existe), com ensaio em staging (preparado, cutover pendente) | A8 | 3–4 d |
 | 13 | Backups: incluir fotos, documentos e outbox; cópia off-site cifrada; ensaio de restauro; runbook | A9 | 1–2 d |
 | 14 | Defaults fail-closed (`APP_ENV=production` por omissão) | A7 | 0,5 d |
 | 15 | Testes: autenticação em todas as rotas, validador Entra real, drift entre migrações e modelos, scheduler | Secção 4 | 2–3 d |

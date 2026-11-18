@@ -368,11 +368,20 @@ class CopyFailed(Exception):
 # --------------------------------------------------------------------------
 
 
-def open_source(path: str) -> sqlite3.Connection:
+def open_source(path: str, *, immutable: bool = False) -> sqlite3.Connection:
+    """Abre a origem só em leitura. `immutable=True` serve para um ficheiro
+    num suporte só de leitura (por exemplo montado com `:ro` num contentor),
+    onde o SQLite não consegue criar os ficheiros auxiliares do modo WAL;
+    recusa-se se existir um `-wal` com conteúdo (ficaria por ler)."""
     source = Path(path)
     if not source.is_file():
         raise CopyRefused(f"ficheiro de origem inexistente: {source}")
     uri = f"file:{source.resolve().as_posix()}?mode=ro"
+    if immutable:
+        wal = Path(f"{source}-wal")
+        if wal.exists() and wal.stat().st_size > 0:
+            raise CopyRefused("--immutable recusado: existe um -wal com dados ao lado da origem (faça um backup consistente)")
+        uri += "&immutable=1"
     conn = sqlite3.connect(uri, uri=True, timeout=30)
     conn.text_factory = lambda raw: raw.decode("utf-8", errors="surrogateescape")
     try:
@@ -694,6 +703,7 @@ def run_copy(
     dry_run: bool = False,
     replace_existing: bool = False,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    immutable_source: bool = False,
     engine: Engine | None = None,
     log: Callable[[str], None] = lambda _msg: None,
 ) -> Report:
@@ -706,7 +716,7 @@ def run_copy(
         engine = create_engine(target_url, future=True)
     elif engine.dialect.name != "postgresql":
         raise CopyRefused("o destino tem de ser PostgreSQL")
-    src = open_source(source_path)
+    src = open_source(source_path, immutable=immutable_source)
     try:
         with engine.connect() as conn:
             metadata = reflect_target(conn)
@@ -790,12 +800,14 @@ def run_copy(
     return report
 
 
-def verify_only(source_path: str, target_url: str, *, engine: Engine | None = None) -> Report:
+def verify_only(
+    source_path: str, target_url: str, *, immutable_source: bool = False, engine: Engine | None = None
+) -> Report:
     """Compara uma cópia já feita (contagens e checksums), sem gravar nada."""
     report = Report(dry_run=True)
     owns_engine = engine is None
     engine = engine or create_engine(target_url, future=True)
-    src = open_source(source_path)
+    src = open_source(source_path, immutable=immutable_source)
     try:
         with engine.connect() as conn:
             metadata = reflect_target(conn)
@@ -894,6 +906,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="permite um destino com dados: apaga TUDO no destino antes de copiar",
     )
+    parser.add_argument(
+        "--immutable",
+        action="store_true",
+        help="abre a origem com immutable=1 (para um ficheiro montado só em leitura; recusa um -wal com dados)",
+    )
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument("--report", help="escreve o relatório em JSON (0600) neste caminho")
     args = parser.parse_args(argv)
@@ -903,7 +920,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         target_url = args.target_url or _default_target_url()
         if args.verify_only:
-            report = verify_only(args.source, target_url)
+            report = verify_only(args.source, target_url, immutable_source=args.immutable)
         else:
             report = run_copy(
                 args.source,
@@ -911,6 +928,7 @@ def main(argv: list[str] | None = None) -> int:
                 dry_run=args.dry_run,
                 replace_existing=args.replace_existing_data,
                 batch_size=args.batch_size,
+                immutable_source=args.immutable,
                 log=lambda m: print(m, file=sys.stderr),
             )
     except CopyRefused as exc:

@@ -443,3 +443,12 @@ def test_sequences_are_adjusted(pg_admin, target):
         assert report.sequences_adjusted == ["seq_probe.id"]
         assert conn.execute(text("INSERT INTO seq_probe (note) VALUES ('c') RETURNING id")).scalar() == 43
     engine.dispose()
+
+
+def test_immutable_source_works_and_refuses_pending_wal(source_copy, target, tmp_path):
+    report = run_copy(str(source_copy), target, dry_run=True, immutable_source=True)
+    assert report.verified
+    wal = Path(f"{source_copy}-wal")
+    wal.write_bytes(b"x" * 64)
+    with pytest.raises(CopyRefused, match="-wal"):
+        run_copy(str(source_copy), target, dry_run=True, immutable_source=True)
