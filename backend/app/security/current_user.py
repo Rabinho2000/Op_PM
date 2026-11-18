@@ -33,7 +33,12 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.models.identity import AuthAuditLog, User
-from app.security.entra_auth import EntraClaims, TokenValidationError, get_token_validator
+from app.security.entra_auth import (
+    EntraClaims,
+    TokenValidationError,
+    TokenValidationUnavailableError,
+    get_token_validator,
+)
 from app.security.permissions import AuthContext, load_auth_context
 
 logger = logging.getLogger(__name__)
@@ -120,6 +125,15 @@ def get_current_user(
             raise HTTPException(
                 status_code=401,
                 detail="Token inválido, expirado, ou não emitido para este tenant/aplicação.",
+            )
+        except TokenValidationUnavailableError as exc:
+            # Falha de rede ou do JWKS: o token pode até ser válido. 503 (e
+            # não 401) para o frontend não a tratar como sessão expirada; a
+            # mensagem é genérica, o detalhe técnico só vai para o log.
+            logger.warning("Validação de token indisponível (JWKS/rede): %s", exc)
+            raise HTTPException(
+                status_code=503,
+                detail="Serviço de autenticação temporariamente indisponível. Tente novamente dentro de instantes.",
             )
 
         user = _resolve_user_from_entra_claims(db, claims, settings)
