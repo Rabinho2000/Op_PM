@@ -4,16 +4,14 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
-import pytest
 import sqlalchemy as sa
 
 from app.models.identity import Role, User, UserRole
 from app.models.notification import Notification
 from app.models.people import Person
 from app.models.process_alerts import ProcessStageSubscription
-from app.models.project import Project, ProjectSubtaskProgress
+from app.models.project import Project
 from app.models.workflow import WorkflowStage, WorkflowSubtask
-from app.security.catalog import ROLE_PM
 
 CHEFE = "chefe.sintetico@example.invalid"
 PM_UM = "pm.um.sintetico@example.invalid"

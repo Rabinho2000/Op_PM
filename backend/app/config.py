@@ -200,7 +200,7 @@ class Settings(BaseSettings):
         return explicit
 
     @model_validator(mode="after")
-    def _enforce_hardening_in_non_local_envs(self) -> "Settings":
+    def _enforce_hardening_in_non_local_envs(self) -> Settings:
         """Impede o arranque em staging/produção com configuração de
         desenvolvimento ou incompleta. Isto corre sempre que `Settings()` é
         construído — incluindo em `get_settings()`, chamado no import de

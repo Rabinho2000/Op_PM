@@ -27,4 +27,4 @@ class UserPlanningPreference(UUIDPk, TimestampMixin, Base):
     view: Mapped[str] = mapped_column(String(16), default="month", nullable=False)
     hide_weekends: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
-    user: Mapped["User"] = relationship()
+    user: Mapped[User] = relationship()

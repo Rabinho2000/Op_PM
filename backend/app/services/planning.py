@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 from dataclasses import dataclass
-from typing import Iterable
+from collections.abc import Iterable
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_, select

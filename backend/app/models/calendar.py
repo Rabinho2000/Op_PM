@@ -18,6 +18,7 @@ from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
 
 if TYPE_CHECKING:
+    from app.models.project import Project
     from app.models.people import Person
     from app.models.task import Task
     from app.models.workflow import WorkflowStage, WorkflowSubtask
@@ -40,7 +41,7 @@ class Visit(UUIDPk, TimestampMixin, Base):
         GUID(), ForeignKey("people.id"), nullable=True
     )
 
-    events: Mapped[list["CalendarEvent"]] = relationship(back_populates="visit")
+    events: Mapped[list[CalendarEvent]] = relationship(back_populates="visit")
 
 
 calendar_event_assignees = Table(
@@ -82,14 +83,14 @@ class CalendarEvent(UUIDPk, TimestampMixin, Base):
     # caminho local do fallback .ics enquanto o Graph não está configurado
     ics_fallback_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
-    visit: Mapped["Visit | None"] = relationship(back_populates="events")
-    project: Mapped["Project | None"] = relationship()
-    task: Mapped["Task | None"] = relationship()
-    assigned_to: Mapped["Person | None"] = relationship(foreign_keys=[assigned_to_person_id])
-    assignees: Mapped[list["Person"]] = relationship(
+    visit: Mapped[Visit | None] = relationship(back_populates="events")
+    project: Mapped[Project | None] = relationship()
+    task: Mapped[Task | None] = relationship()
+    assigned_to: Mapped[Person | None] = relationship(foreign_keys=[assigned_to_person_id])
+    assignees: Mapped[list[Person]] = relationship(
         secondary=calendar_event_assignees,
         lazy="selectin",
         order_by="Person.display_name",
     )
-    process_stage: Mapped["WorkflowStage | None"] = relationship(foreign_keys=[process_stage_id])
-    process_subtask: Mapped["WorkflowSubtask | None"] = relationship(foreign_keys=[process_subtask_id])
+    process_stage: Mapped[WorkflowStage | None] = relationship(foreign_keys=[process_stage_id])
+    process_subtask: Mapped[WorkflowSubtask | None] = relationship(foreign_keys=[process_subtask_id])

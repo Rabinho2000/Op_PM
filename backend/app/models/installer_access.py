@@ -31,7 +31,7 @@ class InstallerAccessMembership(UUIDPk, TimestampMixin, Base):
     granted_by_person_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("people.id"), nullable=True)
     revoked_by_person_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("people.id"), nullable=True)
 
-    history: Mapped[list["InstallerAccessMembershipHistory"]] = relationship(
+    history: Mapped[list[InstallerAccessMembershipHistory]] = relationship(
         back_populates="membership", cascade="all, delete-orphan", order_by="InstallerAccessMembershipHistory.occurred_at"
     )
 

@@ -1545,7 +1545,7 @@ def test_preview_does_not_commit_unrelated_dirty_state(tmp_path):
     unrelated_id = unrelated.id
     unrelated.name = "Projeto independente pendente"
 
-    payload = '{"formVersion":"12","cliente":"Cliente Preview Sintético","potenciaKwp":1.0}'.encode("utf-8")
+    payload = '{"formVersion":"12","cliente":"Cliente Preview Sintético","potenciaKwp":1.0}'.encode()
     with pytest.raises(NotesImportError, match="alterações pendentes"):
         preview_notes_import(db, filename="preview-dirty.json", content=payload, uploaded_by_person_id=None)
 
@@ -1563,7 +1563,7 @@ def test_apply_does_not_commit_unrelated_dirty_state_on_success(tmp_path):
     db.add(unrelated)
     db.commit()
     unrelated_id = unrelated.id
-    payload = '{"formVersion":"12","cliente":"Cliente Apply Sintético","potenciaKwp":1.0}'.encode("utf-8")
+    payload = '{"formVersion":"12","cliente":"Cliente Apply Sintético","potenciaKwp":1.0}'.encode()
     batch = preview_notes_import(db, filename="apply-dirty.json", content=payload, uploaded_by_person_id=None)
     db.commit()  # route boundary owns this commit in production
 
@@ -1584,7 +1584,7 @@ def test_apply_error_does_not_commit_unrelated_dirty_state(tmp_path):
     db.add(unrelated)
     db.commit()
     unrelated_id = unrelated.id
-    payload = '{"formVersion":"12","cliente":"Cliente Erro Sintético","potenciaKwp":1.0}'.encode("utf-8")
+    payload = '{"formVersion":"12","cliente":"Cliente Erro Sintético","potenciaKwp":1.0}'.encode()
     batch = preview_notes_import(db, filename="apply-error-dirty.json", content=payload, uploaded_by_person_id=None)
     db.commit()
 
@@ -1672,7 +1672,7 @@ def test_password_and_secret_input_types_are_omitted_from_legacy_payload():
           <input name="potenciaKwp" value="1.0" />
           <input type="{input_type}" name="arbitrary-field" value="{marker}" />
         </form>
-        """.encode("utf-8")
+        """.encode()
 
         payload = extract_payload(filename="legacy.html", content=html)
 
@@ -1696,7 +1696,7 @@ def test_legacy_void_controls_finalize_without_xhtml_end_tags_and_never_execute_
       </form>
       <script>window.{marker} = true;</script>
     </body></html>
-    """.encode("utf-8")
+    """.encode()
 
     payload = extract_payload(filename="legado-sem-xhtml.html", content=html)
 

@@ -5,7 +5,7 @@ import threading
 
 import pytest
 from sqlalchemy import event
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from app.db import engine
 from app.models.identity import User

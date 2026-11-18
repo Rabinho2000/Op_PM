@@ -42,13 +42,13 @@ class UserRequest(UUIDPk, TimestampMixin, Base):
         GUID(), ForeignKey("users.id"), nullable=True
     )
 
-    created_by_user: Mapped["User"] = relationship(
+    created_by_user: Mapped[User] = relationship(
         foreign_keys=[created_by_user_id]
     )
-    resolved_by_user: Mapped["User | None"] = relationship(
+    resolved_by_user: Mapped[User | None] = relationship(
         foreign_keys=[resolved_by_user_id]
     )
-    messages: Mapped[list["UserRequestMessage"]] = relationship(
+    messages: Mapped[list[UserRequestMessage]] = relationship(
         back_populates="request",
         cascade="all, delete-orphan",
         passive_deletes=True,
@@ -81,7 +81,7 @@ class UserRequestMessage(UUIDPk, Base):
     )
 
     request: Mapped[UserRequest] = relationship(back_populates="messages")
-    author_user: Mapped["User"] = relationship(foreign_keys=[author_user_id])
+    author_user: Mapped[User] = relationship(foreign_keys=[author_user_id])
 
 
 from typing import TYPE_CHECKING

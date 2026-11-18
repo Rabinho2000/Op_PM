@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -28,6 +29,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
 from app.utils.timezones import today_lisbon
+
+if TYPE_CHECKING:
+    from app.models.project import Project
+    from app.models.people import Person
 
 # Tipos de tarefa padrão criados automaticamente para cada projeto — a
 # ordem aqui é a ordem de execução esperada (ver seed/services/tasks.py).
@@ -130,8 +135,8 @@ class Task(UUIDPk, TimestampMixin, Base):
         GUID(), ForeignKey("people.id"), nullable=True
     )
 
-    project: Mapped["Project"] = relationship()
-    assigned_to: Mapped["Person | None"] = relationship(foreign_keys=[assigned_to_person_id])
+    project: Mapped[Project] = relationship()
+    assigned_to: Mapped[Person | None] = relationship(foreign_keys=[assigned_to_person_id])
 
     @property
     def is_overdue(self) -> bool:

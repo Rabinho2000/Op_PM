@@ -14,7 +14,6 @@ from app.schemas.time_bank import (
     AdjustmentPage,
     AdjustmentRead,
     AdjustmentReverse,
-    AppliedCounts,
     EntryCreate,
     EntryPage,
     EntryRead,

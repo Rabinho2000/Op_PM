@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, field_validator, model_validator
 
@@ -110,7 +109,7 @@ class ProjectListFilters(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def validate_date_range(self) -> "ProjectListFilters":
+    def validate_date_range(self) -> ProjectListFilters:
         if self.startFrom and self.startTo and self.startFrom > self.startTo:
             raise ValueError("O intervalo de datas dos filtros é inválido.")
         return self

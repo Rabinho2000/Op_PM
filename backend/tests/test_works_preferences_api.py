@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import uuid
 
-import pytest
 from sqlalchemy.exc import OperationalError
 
 from app.models.identity import User

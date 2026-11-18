@@ -133,7 +133,7 @@ def test_reverse_is_single_compensation_and_second_attempt_conflicts(db_session,
 
     assert first.status_code == 201, first.text
     assert second.status_code == 409, second.text
-    assert db_session.query(InventoryMovement).filter(getattr(InventoryMovement, "reversal_of_movement_id") == original_id).count() == 1
+    assert db_session.query(InventoryMovement).filter(InventoryMovement.reversal_of_movement_id == original_id).count() == 1
 
 
 def test_reverse_rejects_reservation_with_dependent_consumption(db_session, api_client):
@@ -161,7 +161,7 @@ def test_reverse_rejects_reservation_with_dependent_consumption(db_session, api_
 
     assert response.status_code == 400, response.text
     assert "saldo" in response.json()["detail"].lower() or "depend" in response.json()["detail"].lower()
-    assert db_session.query(InventoryMovement).filter(getattr(InventoryMovement, "reversal_of_movement_id") == reserve.json()["id"]).count() == 0
+    assert db_session.query(InventoryMovement).filter(InventoryMovement.reversal_of_movement_id == reserve.json()["id"]).count() == 0
 
 
 def test_reverse_rejects_release_that_would_make_available_stock_negative(db_session, api_client):
@@ -276,7 +276,7 @@ def test_concurrent_reversals_have_one_compensation_on_sqlite(tmp_path):
     check = Session()
     try:
         assert sorted(outcomes) == ["MovementAlreadyReversedError", "created"]
-        assert check.query(InventoryMovement).filter(getattr(InventoryMovement, "reversal_of_movement_id") == original_id).count() == 1
+        assert check.query(InventoryMovement).filter(InventoryMovement.reversal_of_movement_id == original_id).count() == 1
     finally:
         check.close()
         engine.dispose()

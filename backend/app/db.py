@@ -9,7 +9,7 @@ os motores; `GUID` abaixo é o único ponto de adaptação necessário.
 from __future__ import annotations
 
 import uuid
-from typing import Generator
+from collections.abc import Generator
 
 from fastapi import Request
 from sqlalchemy import create_engine, event

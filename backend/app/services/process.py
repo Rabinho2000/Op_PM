@@ -39,7 +39,7 @@ from app.schemas.process import (
     ProcessSubtaskRead,
     ProcessSummary,
 )
-from app.security.permissions import AuthContext, PermissionDenied, can_update_process, can_update_process_stage
+from app.security.permissions import AuthContext, PermissionDenied, can_update_process_stage
 from app.services.installers import business_day
 from app.services.process_alerts import notify_stage_completed_if_transitioned, stage_completion_snapshot
 

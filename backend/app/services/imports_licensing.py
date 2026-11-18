@@ -31,7 +31,7 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session
 
 from app.audit.log import record_project_change
-from app.config import Settings, get_settings
+from app.config import Settings
 from app.models.imports import (
     BATCH_STATUS_APPLIED,
     BATCH_STATUS_PENDING_CONFIRMATION,
@@ -61,7 +61,6 @@ from app.services.project_data import (
     SECRET_HISTORY_MARKER,
     create_sim_card,
     update_sim_card,
-    upsert_communication_data,
     upsert_installation_data,
     upsert_licensing_data,
 )
@@ -832,7 +831,7 @@ def _preflight_licensing_rollback(db: Session, *, batch: FieldImportBatch, note_
         for entry in data_entries
         if entry.field_name == _ROLLBACK_GUARD_FIELD
     }
-    for key, guard in data_guards.items():
+    for _key, guard in data_guards.items():
         if guard.entity_type in _SIM_CREATED_MODELS:
             model_cls = _SIM_CREATED_MODELS[guard.entity_type]
             instance = db.get(model_cls, guard.record_id)
@@ -1593,7 +1592,7 @@ def _parse_sim_surplus(ws, invalid: list, field_issues: list) -> list[dict]:
         if all(_sim_clean(_cell(raw, idx)) is None for idx in cols.values()):
             continue
 
-        def bad(key: str, reason: str) -> None:
+        def bad(key: str, reason: str, row_number: int = row_number) -> None:
             invalid.append({"linha": row_number, "coluna": get_column_letter(cols[key] + 1), "motivo": reason})
             field_issues.append(
                 {
@@ -1677,7 +1676,7 @@ def parse_sim_layout(content: bytes) -> SimLayoutParsed:
         for row in rows:
             if row.project_number is not None:
                 by_number.setdefault(row.project_number, []).append(row.row_number)
-        for number, linhas in sorted(by_number.items()):
+        for _number, linhas in sorted(by_number.items()):
             if len(linhas) > 1:
                 warnings.append({"linhas": linhas, "aviso": "nº de projeto repetido no ficheiro"})
 

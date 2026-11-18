@@ -20,7 +20,7 @@ class UserProjectListPreference(UUIDPk, TimestampMixin, Base):
     )
     config: Mapped[dict] = mapped_column(JSON, nullable=False)
 
-    user: Mapped["User"] = relationship()
+    user: Mapped[User] = relationship()
 
 
 class ProjectListView(UUIDPk, TimestampMixin, Base):
@@ -50,7 +50,7 @@ class ProjectListView(UUIDPk, TimestampMixin, Base):
     config: Mapped[dict] = mapped_column(JSON, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    user: Mapped["User"] = relationship()
+    user: Mapped[User] = relationship()
 
 
 # Explicit aliases keep the domain names easy to discover for callers while

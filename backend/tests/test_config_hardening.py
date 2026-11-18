@@ -9,7 +9,6 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import DEFAULT_DEV_SECRET_KEY, Settings
-from app.db import SessionLocal
 from app.models.identity import User
 from app.security.current_user import get_current_user
 

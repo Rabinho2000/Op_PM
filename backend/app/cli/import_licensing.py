@@ -49,7 +49,7 @@ def _print_summary(summary, *, applied: bool) -> None:
         if summary.total_conflicts:
             print(
                 "Alguns registos ficaram pendentes por terem conflitos — resolva-os via "
-                f"POST /api/imports/conflicts/{{id}}/resolve e volte a correr --apply com o mesmo "
+                "POST /api/imports/conflicts/{id}/resolve e volte a correr --apply com o mesmo "
                 "ficheiro (o hash garante que não duplica)."
             )
 

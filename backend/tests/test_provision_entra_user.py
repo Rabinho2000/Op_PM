@@ -6,6 +6,7 @@ comportamento de negócio é o que importa auditar aqui.
 from __future__ import annotations
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.cli.provision_entra_user import ProvisioningError, link_user_to_entra_object_id
 from app.models.identity import AuthAuditLog, User
@@ -144,7 +145,7 @@ def test_database_unique_constraint_is_the_final_backstop(db_session):
     db.commit()
 
     user_b.entra_object_id = "shared-oid-sintetico"
-    with pytest.raises(Exception):  # IntegrityError concreta depende do dialect
+    with pytest.raises(IntegrityError):
         db.commit()
     db.rollback()
 

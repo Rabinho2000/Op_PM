@@ -1,0 +1,26 @@
+# Lint conservador do backend (M9). Só regras de baixo ruído que apanham
+# erros reais; alargar gradualmente. Corre-se a partir de backend/:
+#   ruff check .
+target-version = "py312"
+line-length = 100
+extend-exclude = ["alembic/versions"]
+
+[lint]
+select = [
+    "E9",   # erros de sintaxe / E/S em tempo de parse
+    "F",    # pyflakes: imports e variáveis por usar, nomes indefinidos
+    "B",    # flake8-bugbear: armadilhas comuns
+    # pyupgrade: só o subconjunto que não toca em semântica.
+    "UP006", "UP007", "UP012", "UP035", "UP037",
+]
+ignore = [
+    "B008",  # Depends()/Query() em argumentos por omissão é o idioma do FastAPI
+    # Dívida conhecida, a tratar em PR próprio (mexe no encadeamento de
+    # excepções em ~135 sítios): `raise X from exc` / `from None`.
+    "B904",
+    "B905",  # zip(strict=...) — exigiria decidir caso a caso
+]
+
+[lint.per-file-ignores]
+# Reexportações deliberadas (registo dos modelos no metadata).
+"__init__.py" = ["F401"]

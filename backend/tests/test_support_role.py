@@ -17,7 +17,7 @@ from app.security.permissions import (
 from app.services.projects import visible_projects_query
 from app.services.tasks import visible_tasks_query
 from app.services.my_process import list_my_process_stages
-from app.models.workflow import Phase, SupportDelegation, SupportDelegationHistory, WorkflowStage, WorkflowSubtask
+from app.models.workflow import Phase, SupportDelegationHistory, WorkflowStage, WorkflowSubtask
 from app.services.support_delegations import delete_delegation, upsert_delegation
 
 
