@@ -1,0 +1,33 @@
+# Configuração do gitleaks (M9). Estende as regras por omissão e só permite
+# valores sintéticos JÁ CONFIRMADOS à mão como falsos positivos. O
+# repositório é público: nunca alargar isto com um caminho/regex genérico
+# (por exemplo "tests/") — cada exceção tem de ser um valor ou ficheiro
+# concreto, com o motivo ao lado.
+title = "Op_PM gitleaks"
+
+[extend]
+useDefault = true
+
+# Chave RSA de teste do mock Entra (gera tokens de teste assinados
+# localmente; o módulo documenta que não é uma credencial real e que o
+# validador real só aceita chaves do JWKS da Microsoft).
+[[allowlists]]
+description = "Chave RSA de teste do mock Entra (backend/app/security/entra_auth.py)"
+condition = "AND"
+targetRules = ["private-key"]
+paths = ['''backend/app/security/entra_auth\.py''']
+
+# Passwords/valores sintéticos de testes, confirmados um a um:
+#  - Pw-Segredo-7f3QzLk-unico: SECRET em backend/tests/test_project_credentials.py
+#  - Sup3r-Segredo-Teste: SECRET em frontend/src/components/ProjectLicensingPanel.test.tsx
+#  - idem-central-equivalence-1: idempotency_key em backend/tests/test_inventory_blockers.py
+#  - q=disjuntores: query string de pesquisa em backend/tests/test_suppliers.py
+[[allowlists]]
+description = "Valores sintéticos de testes (confirmados manualmente)"
+targetRules = ["generic-api-key"]
+regexes = [
+  '''Pw-Segredo-7f3QzLk-unico''',
+  '''Sup3r-Segredo-Teste''',
+  '''idem-central-equivalence-1''',
+  '''q=disjuntores''',
+]
