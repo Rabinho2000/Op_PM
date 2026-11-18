@@ -445,3 +445,52 @@ def test_manual_body_validation_rejects_missing_value_atomically(db_session, api
     assert response.status_code == 422
     assert db_session.query(TimeBankEntry).count() == 0
     assert db_session.query(TimeBankAudit).count() == 0
+
+
+def test_include_annulled_filters_entries_and_adjustments_before_pagination(db_session, api_client):
+    own = _person(db_session, "PM Sintético Um")
+    other = _person(db_session, "Chefe Sintético")
+    made = api_client.post("/api/time-bank/entries", headers=ADMIN, json={
+        "person_id": str(own.id), "work_date": "2025-12-31", "start_minute": 540,
+        "end_minute": 840, "lunch_taken": False, "calculation_mode": "standard",
+    })
+    entry_id = made.json()["id"]
+    assert made.status_code == 201
+    assert api_client.post(f"/api/time-bank/entries/{entry_id}/reverse", headers=ADMIN, json={"reason": "Anulação teste"}).status_code == 200
+    original_entry_comp = db_session.query(TimeBankEntry).filter(TimeBankEntry.reversal_of_id == uuid.UUID(entry_id)).one()
+    original_entry_comp.work_date = dt.date(2026, 1, 1)
+
+    made_adj = api_client.post("/api/time-bank/adjustments", headers=ADMIN, json={
+        "person_id": str(own.id), "effective_date": "2025-12-31", "delta_seconds": 60,
+        "kind": "correction", "reason": "Ajuste teste",
+    })
+    adj_id = made_adj.json()["id"]
+    assert made_adj.status_code == 201
+    assert api_client.post(f"/api/time-bank/adjustments/{adj_id}/reverse", headers=ADMIN, json={"reason": "Anulação teste"}).status_code == 200
+    from app.models.time_bank import TimeBankAdjustment
+    original_adj_comp = db_session.query(TimeBankAdjustment).filter(TimeBankAdjustment.reversal_of_id == uuid.UUID(adj_id)).one()
+    original_adj_comp.effective_date = dt.date(2026, 1, 1)
+    db_session.commit()
+    before_summary = api_client.get(f"/api/time-bank/summary?person_id={own.id}&year=2025", headers=ADMIN).json()
+
+    params = "from_date=2025-12-31&to_date=2025-12-31&limit=1&offset=0"
+    for resource, original_id in (("entries", entry_id), ("adjustments", adj_id)):
+        default = api_client.get(f"/api/time-bank/{resource}?{params}", headers=ADMIN)
+        assert default.status_code == 200
+        assert default.json()["total"] == 1
+        assert default.json()["items"][0]["id"] == original_id
+        assert default.json()["items"][0]["is_reversed"] is True
+        hidden = api_client.get(f"/api/time-bank/{resource}?{params}&include_annulled=false", headers=ADMIN)
+        assert hidden.json() == {"items": [], "total": 0}
+        history = api_client.get(f"/api/time-bank/{resource}?include_annulled=true&limit=1&offset=1", headers=ADMIN)
+        assert history.json()["total"] == 2
+        assert len(history.json()["items"]) == 1
+
+    after_summary = api_client.get(f"/api/time-bank/summary?person_id={own.id}&year=2025", headers=ADMIN).json()
+    assert after_summary == before_summary
+    own_hidden = api_client.get("/api/time-bank/entries?include_annulled=false", headers={"X-Dev-User-Email": "pm.um.sintetico@example.invalid"})
+    assert own_hidden.status_code == 200
+    assert all(item["person_id"] == str(own.id) for item in own_hidden.json()["items"])
+    other_hidden = api_client.get(f"/api/time-bank/entries?person_id={other.id}&include_annulled=false", headers={"X-Dev-User-Email": "pm.um.sintetico@example.invalid"})
+    assert other_hidden.status_code == 403
+    assert db_session.query(TimeBankAudit).count() == 4

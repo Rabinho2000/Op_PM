@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./IsolatedTimeBank.css";
 import Icon from "../components/Icon";
+import TimeBankNotes from "../components/TimeBankNotes";
 import { useToast } from "../components/Toast";
 import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHeader } from "../components/ui";
 import { useSession } from "../session/SessionContext";
@@ -444,6 +445,7 @@ function ImportPanel({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [batch, setBatch] = useState<TimeBankImportRead | null>(null);
   const [mapping, setMapping] = useState<Record<string, string>>({});
+  const [importOpen, setImportOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [savingMapping, setSavingMapping] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -513,112 +515,124 @@ function ImportPanel({
   const blocked = batch ? hasBlockingTimeBankImportIssues(batch, mapping) : true;
   const applied = batch?.status === "applied";
 
+  function closeImportPanel() {
+    setImportOpen(false);
+    setConfirmOpen(false);
+  }
+
   return (
-    <Card
-      title="Importar Excel"
-      icon="database"
-      className="time-bank-import"
-      actions={
-        <>
-          <button type="button" className="btn btn--sm btn--primary" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-            <Icon name="database" size={14} /> {uploading ? "A processar…" : "Importar Excel"}
-          </button>
-          <input
-            ref={fileInputRef}
-            key={inputKey}
-            className="time-bank-file-input"
-            type="file"
-            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            aria-label="Ficheiro Excel"
-            onChange={(event) => void handleFile(event.target.files?.[0])}
-            disabled={uploading}
-          />
-        </>
-      }
-    >
-      {error && <Alert tone="danger">{error}</Alert>}
-      {!batch && <p className="muted">O upload abre sempre uma pré-visualização. Nenhuma linha é aplicada automaticamente.</p>}
-      {batch && (
-        <div className="time-bank-import__body">
-          <div className="time-bank-import__meta">
-            <span>Hash: <code>{batch.sha256.slice(0, 16)}…</code></span>
-            <span>Ano da fonte: {batch.source_year ?? "não identificado"}</span>
-            <span>{importCountsLabel(batch.counts)}</span>
-          </div>
-          {batch.people.length > 0 && (
-            <div>
-              <h3>Mapeamento explícito de pessoas</h3>
-              <p className="small muted">Não são criadas pessoas automaticamente. Pessoas ambíguas ou sem correspondência bloqueiam a aplicação até serem mapeadas.</p>
-              <div className="time-bank-mapping-list">
-                {batch.people.map((source) => {
-                  const selected = mapping[source.source_label] ?? source.person_id ?? "";
-                  return (
-                    <div className="time-bank-mapping-row" key={source.source_label}>
-                      <label htmlFor={`time-bank-map-${source.source_label}`}>{source.source_label}</label>
-                      <select
-                        id={`time-bank-map-${source.source_label}`}
-                        aria-label={`Pessoa do Excel: ${source.source_label}`}
-                        className="select"
-                        value={selected}
-                        onChange={(event) => setMapping((current) => ({ ...current, [source.source_label]: event.target.value }))}
-                      >
-                        <option value="">Escolher pessoa…</option>
-                        {people.filter((person) => person.is_active).map((person) => <option key={person.id} value={person.id}>{person.display_name}</option>)}
-                      </select>
-                      {source.candidates.length > 0 && <span className="small muted">Candidatos sugeridos: {source.candidates.map((candidate) => candidate.display_name).join(", ")}</span>}
-                    </div>
-                  );
-                })}
-              </div>
-              <button type="button" className="btn btn--sm" onClick={() => void saveMapping()} disabled={savingMapping}>
-                {savingMapping ? "A guardar…" : "Guardar mapeamento"}
-              </button>
-            </div>
-          )}
-          <div>
-            <h3>Anomalias e validações</h3>
-            {batch.issues.length === 0 ? (
-              <p className="muted">Não foram detetadas anomalias no preview.</p>
-            ) : (
-              <ul className="time-bank-issues">
-                {batch.issues.map((issue, index) => (
-                  <li key={`${issue.code}-${index}`}>
-                    <Badge tone={issue.blocking ? "danger" : "warning"}>{issue.blocking ? "Bloqueante" : "needs_review"}</Badge>
-                    <span>{issue.message}</span>
-                    {(issue.sheet || issue.row) && <span className="small muted">{issue.sheet ? `Folha ${issue.sheet}` : ""}{issue.row ? ` · linha ${issue.row}` : ""}</span>}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <p className="small muted">Anomalias preserváveis ficam marcadas para revisão e não são apresentadas como validação jurídica.</p>
-          </div>
-          {applied ? (
-            <Alert tone="success" title="Importação aplicada">{batch.applied_counts?.entries ?? batch.counts.entries} lançamentos foram lidos de volta após a aplicação.</Alert>
-          ) : (
-            <div className="time-bank-import__actions">
-              {blocked && <span className="small muted">A aplicação fica bloqueada enquanto houver uma pessoa por mapear ou uma issue bloqueante.</span>}
-              <button type="button" className="btn btn--primary" onClick={() => setConfirmOpen(true)} disabled={blocked || applying}>
-                {applying ? "A aplicar…" : "Aplicar importação"}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-      {confirmOpen && (
+    <>
+      <button type="button" className="btn" onClick={() => setImportOpen(true)}>
+        Importar Excel
+      </button>
+      {importOpen && (
         <Modal
-          title="Confirmar aplicação do Excel"
-          onClose={() => setConfirmOpen(false)}
-          footer={
-            <>
-              <button type="button" className="btn" onClick={() => setConfirmOpen(false)}>Cancelar</button>
-              <button type="button" className="btn btn--primary" onClick={() => void applyImport()} disabled={applying}>Confirmar aplicação</button>
-            </>
-          }
+          title="Importar Excel"
+          onClose={closeImportPanel}
+          footer={<button type="button" className="btn" onClick={closeImportPanel}>Fechar</button>}
         >
-          <p>As linhas serão preservadas como lançamentos append-only. Confirme apenas depois de rever o mapeamento e as anomalias.</p>
+          <div className="time-bank-import">
+            {error && <Alert tone="danger">{error}</Alert>}
+            {!batch && <p className="muted">O upload abre sempre uma pré-visualização. Nenhuma linha é aplicada automaticamente.</p>}
+            <div className="time-bank-import__upload">
+              <button type="button" className="btn" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+                <Icon name="database" size={14} /> {uploading ? "A processar…" : "Escolher ficheiro Excel"}
+              </button>
+              <input
+                ref={fileInputRef}
+                key={inputKey}
+                className="time-bank-file-input"
+                type="file"
+                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                aria-label="Ficheiro Excel"
+                onChange={(event) => void handleFile(event.target.files?.[0])}
+                disabled={uploading}
+              />
+            </div>
+            {batch && (
+              <div className="time-bank-import__body">
+                <div className="time-bank-import__meta">
+                  <span>Hash: <code>{batch.sha256.slice(0, 16)}…</code></span>
+                  <span>Ano da fonte: {batch.source_year ?? "não identificado"}</span>
+                  <span>{importCountsLabel(batch.counts)}</span>
+                </div>
+                {batch.people.length > 0 && (
+                  <div>
+                    <h3>Mapeamento explícito de pessoas</h3>
+                    <p className="small muted">Não são criadas pessoas automaticamente. Pessoas ambíguas ou sem correspondência bloqueiam a aplicação até serem mapeadas.</p>
+                    <div className="time-bank-mapping-list">
+                      {batch.people.map((source) => {
+                        const selected = mapping[source.source_label] ?? source.person_id ?? "";
+                        return (
+                          <div className="time-bank-mapping-row" key={source.source_label}>
+                            <label htmlFor={`time-bank-map-${source.source_label}`}>{source.source_label}</label>
+                            <select
+                              id={`time-bank-map-${source.source_label}`}
+                              aria-label={`Pessoa do Excel: ${source.source_label}`}
+                              className="select"
+                              value={selected}
+                              onChange={(event) => setMapping((current) => ({ ...current, [source.source_label]: event.target.value }))}
+                            >
+                              <option value="">Escolher pessoa…</option>
+                              {people.filter((person) => person.is_active).map((person) => <option key={person.id} value={person.id}>{person.display_name}</option>)}
+                            </select>
+                            {source.candidates.length > 0 && <span className="small muted">Candidatos sugeridos: {source.candidates.map((candidate) => candidate.display_name).join(", ")}</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <button type="button" className="btn btn--sm" onClick={() => void saveMapping()} disabled={savingMapping}>
+                      {savingMapping ? "A guardar…" : "Guardar mapeamento"}
+                    </button>
+                  </div>
+                )}
+                <div>
+                  <h3>Anomalias e validações</h3>
+                  {batch.issues.length === 0 ? (
+                    <p className="muted">Não foram detetadas anomalias no preview.</p>
+                  ) : (
+                    <ul className="time-bank-issues">
+                      {batch.issues.map((issue, index) => (
+                        <li key={`${issue.code}-${index}`}>
+                          <Badge tone={issue.blocking ? "danger" : "warning"}>{issue.blocking ? "Bloqueante" : "needs_review"}</Badge>
+                          <span>{issue.message}</span>
+                          {(issue.sheet || issue.row) && <span className="small muted">{issue.sheet ? `Folha ${issue.sheet}` : ""}{issue.row ? ` · linha ${issue.row}` : ""}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="small muted">Anomalias preserváveis ficam marcadas para revisão e não são apresentadas como validação jurídica.</p>
+                </div>
+                {applied ? (
+                  <Alert tone="success" title="Importação aplicada">{batch.applied_counts?.entries ?? batch.counts.entries} lançamentos foram lidos de volta após a aplicação.</Alert>
+                ) : (
+                  <div className="time-bank-import__actions">
+                    {blocked && <span className="small muted">A aplicação fica bloqueada enquanto houver uma pessoa por mapear ou uma issue bloqueante.</span>}
+                    <button type="button" className="btn btn--primary" onClick={() => setConfirmOpen(true)} disabled={blocked || applying}>
+                      {applying ? "A aplicar…" : "Aplicar importação"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          {confirmOpen && (
+            <Modal
+              title="Confirmar aplicação do Excel"
+              onClose={() => setConfirmOpen(false)}
+              footer={
+                <>
+                  <button type="button" className="btn" onClick={() => setConfirmOpen(false)}>Cancelar</button>
+                  <button type="button" className="btn btn--primary" onClick={() => void applyImport()} disabled={applying}>Confirmar aplicação</button>
+                </>
+              }
+            >
+              <p>As linhas serão preservadas como lançamentos append-only. Confirme apenas depois de rever o mapeamento e as anomalias.</p>
+            </Modal>
+          )}
         </Modal>
       )}
-    </Card>
+    </>
   );
 }
 
@@ -670,10 +684,10 @@ function EntryTable({
   return (
     <div className="table-wrap time-bank-table-wrap">
       <table className="table time-bank-table">
-        <thead><tr><th>Data</th><th>Pessoa</th><th>Horário</th><th>Modo</th><th>Saldo</th><th>Calculado</th><th>Estado</th><th>Ações</th></tr></thead>
+        <thead><tr><th>Data</th><th>Pessoa</th><th>Horário</th><th>Modo</th><th>Saldo</th><th>Calculado</th><th>Motivo</th><th>Estado</th><th>Ações</th></tr></thead>
         <tbody>
           {entries.map((entry) => {
-            const reversed = reversedIds.has(entry.id);
+            const reversed = entry.is_reversed || reversedIds.has(entry.id);
             const person = people.find((candidate) => candidate.id === entry.person_id);
             const difference = entry.calculated_seconds !== null && entry.calculated_seconds !== entry.balance_seconds;
             return (
@@ -684,6 +698,7 @@ function EntryTable({
                 <td data-label="Modo">{calculationModeLabel(entry.calculation_mode)}</td>
                 <td data-label="Saldo"><strong>{formatSignedTimeBankDuration(entry.balance_seconds)}</strong></td>
                 <td data-label="Calculado">{entry.calculated_seconds === null ? "—" : <span className={difference ? "time-bank-diff" : undefined}>{formatSignedTimeBankDuration(entry.calculated_seconds)}{difference && " · diferente"}</span>}</td>
+                <td data-label="Motivo">{entry.reason ?? "—"}</td>
                 <td data-label="Estado">
                   {reversed && <Badge tone="neutral">Original anulada</Badge>}
                   {entry.reversal_of_id && <Badge tone="info">Compensação</Badge>}
@@ -728,7 +743,7 @@ function AdjustmentTable({
         <thead><tr><th>Data</th><th>Pessoa</th><th>Tipo</th><th>Delta</th><th>Motivo</th><th>Estado</th><th>Ações</th></tr></thead>
         <tbody>
           {adjustments.map((adjustment) => {
-            const reversed = reversedIds.has(adjustment.id);
+            const reversed = adjustment.is_reversed || reversedIds.has(adjustment.id);
             const person = people.find((candidate) => candidate.id === adjustment.person_id);
             return (
               <tr key={adjustment.id}>
@@ -827,6 +842,7 @@ export default function IsolatedTimeBank() {
   const [error, setError] = useState<string | null>(null);
   const [peopleError, setPeopleError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [showAnnulled, setShowAnnulled] = useState(false);
   const [entryModalOpen, setEntryModalOpen] = useState(false);
   const [adjustmentModalOpen, setAdjustmentModalOpen] = useState(false);
   const [reverseTarget, setReverseTarget] = useState<{ kind: "entry" | "adjustment"; id: string; label: string } | null>(null);
@@ -851,7 +867,7 @@ export default function IsolatedTimeBank() {
   useEffect(() => {
     setEntryPage(0);
     setAdjustmentPage(0);
-  }, [selectedPersonId, year, month, range.fromDate, range.toDate]);
+  }, [selectedPersonId, year, month, range.fromDate, range.toDate, showAnnulled]);
 
   useEffect(() => {
     if (!manager) {
@@ -879,23 +895,18 @@ export default function IsolatedTimeBank() {
     setLoading(!hasLastKnown);
     setRefreshing(hasLastKnown);
     setError(null);
-    const entryFilters = {
+    const ledgerFilters = {
       personId: selectedPersonId,
       fromDate: range.fromDate,
       toDate: range.toDate,
       limit: TIME_BANK_PAGE_SIZE,
       offset: entryPage * TIME_BANK_PAGE_SIZE,
+      includeAnnulled: showAnnulled,
     };
-    const adjustmentFilters = {
-      personId: selectedPersonId,
-      fromDate: range.fromDate,
-      toDate: range.toDate,
-      limit: TIME_BANK_PAGE_SIZE,
-      offset: adjustmentPage * TIME_BANK_PAGE_SIZE,
-    };
+    const adjustmentFilters = { ...ledgerFilters, offset: adjustmentPage * TIME_BANK_PAGE_SIZE };
     Promise.all([
       getTimeBankSummary({ personId: selectedPersonId, year, month: month ? Number(month) : null }),
-      listTimeBankEntries(entryFilters),
+      listTimeBankEntries(ledgerFilters),
       listTimeBankAdjustments(adjustmentFilters),
     ])
       .then(([summaryResult, entriesResult, adjustmentsResult]) => {
@@ -917,7 +928,12 @@ export default function IsolatedTimeBank() {
     };
     // The reload key intentionally causes a fresh read while preserving last-known rows.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adjustmentPage, canViewAll, canViewOwn, entryPage, hasReadAccess, selectedPersonId, year, month, range.fromDate, range.toDate, reloadKey]);
+  }, [adjustmentPage, canViewAll, canViewOwn, entryPage, hasReadAccess, selectedPersonId, year, month, range.fromDate, range.toDate, reloadKey, showAnnulled]);
+
+  const visibleEntries = entries ?? [];
+  const visibleAdjustments = adjustments ?? [];
+  const visibleEntryTotal = totalEntries;
+  const visibleAdjustmentTotal = totalAdjustments;
 
   const visiblePeople = manager ? people : me?.person_id ? [{ id: me.person_id, display_name: me.display_name ?? "A minha conta", is_active: true }] : [];
   const initialPersonForForm = manager ? personId || people[0]?.id : me?.person_id;
@@ -958,19 +974,19 @@ export default function IsolatedTimeBank() {
 
   if (!hasReadAccess) {
     return (
-      <>
+      <div className="time-bank-page">
         <PageHeader title="Banco de Horas" subtitle="Consulta de saldo e lançamentos." />
         <Alert tone="danger" title="Sem permissão">A sua conta não tem uma capability de consulta do Banco de Horas.</Alert>
-      </>
+      </div>
     );
   }
 
   if (loading && !summary && !entries && !adjustments) {
-    return <LoadingState label="A carregar o Banco de Horas…" rows={8} />;
+    return <div className="time-bank-page"><LoadingState label="A carregar o Banco de Horas…" rows={8} /></div>;
   }
 
   return (
-    <>
+    <div className="time-bank-page">
       <PageHeader
         title="Banco de Horas"
         subtitle={manager ? "Consulta e gestão append-only de jornadas, saldos, ajustes e importações." : "Consulte os seus lançamentos e saldo acumulado."}
@@ -979,6 +995,7 @@ export default function IsolatedTimeBank() {
             <div className="page-header__actions">
               <button type="button" className="btn btn--primary" onClick={() => setEntryModalOpen(true)} disabled={visiblePeople.length === 0}><Icon name="plus" size={16} /> Registar jornada</button>
               <button type="button" className="btn" onClick={() => setAdjustmentModalOpen(true)} disabled={visiblePeople.length === 0}><Icon name="plus" size={16} /> Registar ajuste</button>
+              {canViewAll && <ImportPanel people={people} onApplied={async () => { reload(); }} />}
             </div>
           )
         }
@@ -1009,6 +1026,7 @@ export default function IsolatedTimeBank() {
           )}
         </div>
         <div className="small muted time-bank-filter-caption">Período: {formatDatePt(range.fromDate)} a {formatDatePt(range.toDate)} · datas inclusivas · horas locais, sem conversão de fuso horário.</div>
+        <label className="checkbox time-bank-annulled-toggle" htmlFor="time-bank-show-annulled"><input id="time-bank-show-annulled" type="checkbox" checked={showAnnulled} onChange={(event) => setShowAnnulled(event.target.checked)} /> Mostrar anulados</label>
         {peopleError && <Alert tone="danger" action={<button type="button" className="btn btn--sm" onClick={reload}>Tentar novamente</button>}>{peopleError}</Alert>}
       </Card>
 
@@ -1025,22 +1043,21 @@ export default function IsolatedTimeBank() {
         <SummaryCards summary={summary} />
       </section>
 
-      <Card title={`Lançamentos (${totalEntries})`} icon="clock" className="time-bank-ledger-card">
-        <EntryTable entries={entries} people={visiblePeople} canManage={canManage} reversedIds={entryReversedIds} onReverse={(entry) => setReverseTarget({ kind: "entry", id: entry.id, label: "lançamento" })} onProvenance={(title, provenance) => setProvenanceTarget({ title, provenance })} />
-        <LedgerPagination label="lançamentos" page={entryPage} total={totalEntries} itemCount={entries?.length ?? 0} onPageChange={setEntryPage} />
+      <Card title={`Lançamentos (${visibleEntryTotal})`} icon="clock" className="time-bank-ledger-card">
+        <EntryTable entries={visibleEntries} people={visiblePeople} canManage={canManage} reversedIds={entryReversedIds} onReverse={(entry) => setReverseTarget({ kind: "entry", id: entry.id, label: "lançamento" })} onProvenance={(title, provenance) => setProvenanceTarget({ title, provenance })} />
+        <LedgerPagination label="lançamentos" page={entryPage} total={visibleEntryTotal} itemCount={visibleEntries.length} onPageChange={setEntryPage} />
       </Card>
 
-      <Card title={`Ajustes (${totalAdjustments})`} icon="history" className="time-bank-ledger-card">
-        <AdjustmentTable adjustments={adjustments} people={visiblePeople} canManage={canManage} reversedIds={adjustmentReversedIds} onReverse={(adjustment) => setReverseTarget({ kind: "adjustment", id: adjustment.id, label: "ajuste" })} onProvenance={(title, provenance) => setProvenanceTarget({ title, provenance })} />
-        <LedgerPagination label="ajustes" page={adjustmentPage} total={totalAdjustments} itemCount={adjustments?.length ?? 0} onPageChange={setAdjustmentPage} />
+      <Card title={`Ajustes (${visibleAdjustmentTotal})`} icon="history" className="time-bank-ledger-card">
+        <AdjustmentTable adjustments={visibleAdjustments} people={visiblePeople} canManage={canManage} reversedIds={adjustmentReversedIds} onReverse={(adjustment) => setReverseTarget({ kind: "adjustment", id: adjustment.id, label: "ajuste" })} onProvenance={(title, provenance) => setProvenanceTarget({ title, provenance })} />
+        <LedgerPagination label="ajustes" page={adjustmentPage} total={visibleAdjustmentTotal} itemCount={visibleAdjustments.length} onPageChange={setAdjustmentPage} />
       </Card>
-
-      {canManage && canViewAll && <ImportPanel people={people} onApplied={async () => { reload(); }} />}
+      <TimeBankNotes personId={selectedPersonId} accountId={me?.user_id} canManage={canManage && Boolean(selectedPersonId)} />
 
       {entryModalOpen && <EntryModal people={visiblePeople} defaultPersonId={initialPersonForForm} onClose={() => setEntryModalOpen(false)} onSaved={() => void afterWrite("Jornada registada. O saldo foi recarregado a partir da API.")} />}
       {adjustmentModalOpen && <AdjustmentModal people={visiblePeople} defaultPersonId={initialPersonForForm} onClose={() => setAdjustmentModalOpen(false)} onSaved={() => void afterWrite("Ajuste registado. O saldo foi recarregado a partir da API.")} />}
       {reverseTarget && <ReverseModal title={`Anular ${reverseTarget.label}`} onClose={() => setReverseTarget(null)} onConfirm={handleReverse} saving={reverseSaving} />}
       {provenanceTarget && <ProvenanceModal title={provenanceTarget.title} provenance={provenanceTarget.provenance} onClose={() => setProvenanceTarget(null)} />}
-    </>
+    </div>
   );
 }

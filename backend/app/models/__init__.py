@@ -3,6 +3,7 @@ estão registadas em `Base.metadata` antes de `create_all`/Alembic correrem.
 """
 from app.models.client_report import ClientReportConfig, ClientReportSend  # noqa: F401
 from app.models.absence import Absence  # noqa: F401
+from app.models.holiday import Holiday  # noqa: F401
 from app.models.ai import AiAuditLog  # noqa: F401
 from app.models.calendar import CalendarEvent, Visit  # noqa: F401
 from app.models.cable_designs import (  # noqa: F401
@@ -49,10 +50,12 @@ from app.models.migration import (  # noqa: F401
     StagingProjectRecord,
 )
 from app.models.notification import Notification  # noqa: F401
+from app.models.process_alerts import ProcessStageSubscription  # noqa: F401
 from app.models.people import Person  # noqa: F401
 from app.models.planning import UserPlanningPreference  # noqa: F401
 from app.models.works_preferences import UserWorksPreference  # noqa: F401
 from app.models.works_saved_views import WorksCalendarSavedView  # noqa: F401
+from app.models.user_requests import UserRequest, UserRequestMessage  # noqa: F401
 from app.models.performance import GoalPeriod, GoalPeriodHistory  # noqa: F401
 from app.models.project import (  # noqa: F401
     Project,
@@ -62,11 +65,19 @@ from app.models.project import (  # noqa: F401
     ProjectSubtaskProgress,
     ProjectTeamAssignment,
 )
+from app.models.project_payments import ProjectPaymentMilestone  # noqa: F401
+from app.models.safety_sheet import (
+    ProjectSafetySheet,
+    ProjectSafetySheetHistory,
+    ProjectSafetySheetWorker,
+)  # noqa: F401
 from app.models.project_data import (
     ProjectCommunicationData,
     ProjectDataHistory,
     ProjectInstallationData,
     ProjectLicensingData,
+    ProjectPortalCredential,
+    ProjectSurplusContract,
 )
 from app.models.project_list_views import (  # noqa: F401
     ProjectListView,

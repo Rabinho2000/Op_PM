@@ -18,8 +18,10 @@ import MapPage from "./pages/Map";
 import Performance from "./pages/Performance";
 import Planning from "./pages/Planning";
 import ProjectDetail from "./pages/ProjectDetail";
+import CableDesignEditor from "./pages/CableDesignEditor";
 import ClientReports from "./pages/ClientReports";
 import ProjectsList from "./pages/ProjectsList";
+import DeletedProjects from "./pages/DeletedProjects";
 import ReconciliationQueue from "./pages/ReconciliationQueue";
 import SystemStatus from "./pages/SystemStatus";
 import Tasks from "./pages/Tasks";
@@ -27,6 +29,9 @@ import Vacations from "./pages/Vacations";
 import MyProcess from "./pages/MyProcess";
 import SupportOperations from "./pages/SupportOperations";
 import IsolatedTimeBank from "./pages/IsolatedTimeBank";
+import MyTimeBank from "./pages/MyTimeBank";
+import Requests from "./pages/Requests";
+import ProcessAlerts from "./pages/ProcessAlerts";
 import {
   InstallerCapabilityGate,
   InstallerInventoryPage,
@@ -34,7 +39,6 @@ import {
   InstallerProjectsPage,
   InstallerTasksPage,
   InstallerTeamsPage,
-  InstallerTimeBankPage,
   InstallerWorksPage,
 } from "./pages/InstallerAccessPages";
 import { isInstallerCollaborator } from "./session/installerAccess";
@@ -147,6 +151,18 @@ function ScopedOrStaff({
   return <InstallerCapabilityGate capability={capability}>{scoped}</InstallerCapabilityGate>;
 }
 
+function TimeBankRoute() {
+  const { me } = useSession();
+  const hasManagementScope = Boolean(me?.permissions.includes("time_bank.manage_all") || me?.permissions.includes("time_bank.view_all"));
+  if (hasManagementScope) return <IsolatedTimeBank />;
+  if (isInstallerCollaborator(me)) {
+    return <InstallerCapabilityGate capability="time_bank.view_own"><MyTimeBank /></InstallerCapabilityGate>;
+  }
+  return <MyTimeBank />;
+}
+
+export { TimeBankRoute };
+
 function ProjectsRoute() {
   const { me } = useSession();
   return isInstallerCollaborator(me) ? <InstallerProjectsPage /> : <ProjectsList />;
@@ -167,6 +183,17 @@ function StaffOnly({ children }: { children: ReactNode }) {
   return isInstallerCollaborator(me) ? <Navigate to="/projects" replace /> : <>{children}</>;
 }
 
+function AlertsRoute() {
+  const { can, me } = useSession();
+  const allowed = can("process_alert.use") && !isInstallerCollaborator(me);
+  return allowed ? <ProcessAlerts /> : <Navigate to="/" replace />;
+}
+
+function RequestsRoute() {
+  const { can } = useSession();
+  return can("requests.manage") ? <Requests /> : <Navigate to="/" replace />;
+}
+
 function AppRoutes() {
   const location = useLocation();
   const backgroundLocation = (location.state as { backgroundLocation?: Location } | null)?.backgroundLocation;
@@ -178,8 +205,10 @@ function AppRoutes() {
         <Route element={<AuthedShell />}>
           <Route path="/" element={<HomeRoute />} />
           <Route path="/projects" element={<ProjectsRoute />} />
+          <Route path="/projects/deleted" element={<DeletedProjects />} />
           <Route path="/client-reports" element={<StaffOnly><ClientReports /></StaffOnly>} />
           <Route path="/projects/import" element={<StaffOnly><ImportNotes /></StaffOnly>} />
+          <Route path="/projects/:projectId/cables/:designId" element={<StaffOnly><CableDesignEditor /></StaffOnly>} />
           <Route path="/projects/:projectId" element={<ProjectDetailRoute />} />
           <Route path="/tasks" element={<ScopedOrStaff capability="task.view_assigned_installer" scoped={<InstallerTasksPage />} staff={<Tasks />} />} />
           <Route path="/inventory" element={<ScopedOrStaff capability="inventory.view_assigned_installer" scoped={<InstallerInventoryPage />} staff={<Inventory />} />} />
@@ -193,7 +222,9 @@ function AppRoutes() {
           <Route path="/vacations" element={<StaffOnly><Vacations /></StaffOnly>} />
           <Route path="/my-process" element={<StaffOnly><MyProcess /></StaffOnly>} />
           <Route path="/support" element={<StaffOnly><SupportOperations /></StaffOnly>} />
-          <Route path="/time-bank" element={<ScopedOrStaff capability="time_bank.view_own" scoped={<InstallerTimeBankPage />} staff={<IsolatedTimeBank />} />} />
+          <Route path="/time-bank" element={<TimeBankRoute />} />
+          <Route path="/requests" element={<RequestsRoute />} />
+          <Route path="/alerts" element={<AlertsRoute />} />
           <Route path="/reconciliation" element={<StaffOnly><ReconciliationQueue /></StaffOnly>} />
           <Route path="/status" element={<StaffOnly><SystemStatus /></StaffOnly>} />
         </Route>

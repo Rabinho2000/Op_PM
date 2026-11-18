@@ -35,6 +35,7 @@ from app.security.permissions import (
 )
 from app.services.installers import business_day
 from app.services.process import build_project_process
+from app.services.projects import visible_projects_query
 
 
 # Catálogo fechado: os códigos são estáveis e independentes dos títulos do
@@ -111,15 +112,22 @@ def _project_scope_condition(ctx: AuthContext):
 
 
 def visible_events_query(db: Session, ctx: AuthContext) -> Query:
-    """A visibilidade dos eventos é a união aditiva dos âmbitos de projeto.
+    """Apply the project scopes plus the Planning-only PM read capability.
 
     Um participante adicional nunca transforma um evento de projeto fora do
     âmbito num evento visível a Suporte. Só eventos sem projeto podem ser
     vistos por um perfil exclusivamente delegado quando esse perfil participa.
+    ``calendar.view_all_pm`` expands only the calendar rows; the serializer
+    removes linked project/task/Process detail outside the caller's project
+    scope, and the event permission check excludes deleted projects.
     """
-    if not (ctx.has_permission("calendar.view") or ctx.has_permission("works_calendar.view_assigned_installer")):
+    if not (
+        ctx.has_permission("calendar.view")
+        or ctx.has_permission("calendar.view_all_pm")
+        or ctx.has_permission("works_calendar.view_assigned_installer")
+    ):
         return db.query(CalendarEvent).filter(False)
-    if ctx.has_permission("project.view_all"):
+    if ctx.has_permission("project.view_all") or ctx.has_permission("calendar.view_all_pm"):
         return db.query(CalendarEvent)
 
     project_conditions = _project_scope_condition(ctx)
@@ -678,23 +686,13 @@ def _stage_responsible(
 def _projection_projects(
     db: Session, ctx: AuthContext, project_id: uuid.UUID | None
 ) -> list[Project]:
-    query = (
-        db.query(Project)
-        .filter(Project.start_date.is_not(None))
-        .options(
-            joinedload(Project.pm),
-            joinedload(Project.installer),
-            joinedload(Project.installer_team),
-            selectinload(Project.team_assignments).joinedload(ProjectTeamAssignment.team),
-        )
+    query = visible_projects_query(db, ctx).filter(Project.start_date.is_not(None)).options(
+        joinedload(Project.pm),
+        joinedload(Project.installer),
+        joinedload(Project.installer_team),
+        selectinload(Project.team_assignments).joinedload(ProjectTeamAssignment.team),
     )
-    # Reuse the same SQL project scope without querying each project through
-    # build_project_process. A requested hidden project becomes an empty read.
-    if not ctx.has_permission("project.view_all"):
-        conditions = _project_scope_condition(ctx)
-        if not conditions:
-            return []
-        query = query.filter(or_(*conditions))
+    # A requested hidden project becomes an empty read.
     if project_id is not None:
         query = query.filter(Project.id == project_id)
     return query.order_by(Project.start_date, Project.id).all()

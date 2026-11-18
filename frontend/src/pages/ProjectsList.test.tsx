@@ -1,14 +1,37 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Link, Route, Routes, useLocation } from "react-router-dom";
 import { makeMe, makeProject } from "../test/fixtures";
+import { ApiError } from "../api/client";
 import type { ProjectListConfig } from "../api/projectListViews";
 import { renderWithProviders } from "../test/render";
+import ProjectDetail from "./ProjectDetail";
 import ProjectsList, { toApiFilters } from "./ProjectsList";
 
-const { listProjects, listPeople, getLifecycleStatuses } = vi.hoisted(() => ({
+const {
+  listProjects,
+  listPeople,
+  listEligibleProjectManagers,
+  getLifecycleStatuses,
+  changeProjectStatus,
+  deleteProject,
+  getProject,
+  getProjectHistory,
+  listTasks,
+  checkProjectName,
+  createProject,
+} = vi.hoisted(() => ({
   listProjects: vi.fn(),
   listPeople: vi.fn(),
+  listEligibleProjectManagers: vi.fn(),
   getLifecycleStatuses: vi.fn(),
+  changeProjectStatus: vi.fn(),
+  deleteProject: vi.fn(),
+  getProject: vi.fn(),
+  getProjectHistory: vi.fn(),
+  listTasks: vi.fn(),
+  checkProjectName: vi.fn(),
+  createProject: vi.fn(),
 }));
 
 const {
@@ -29,7 +52,20 @@ const {
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
-  return { ...actual, listProjects, listPeople, getLifecycleStatuses };
+  return {
+    ...actual,
+    listProjects,
+    listPeople,
+    listEligibleProjectManagers,
+    getLifecycleStatuses,
+    changeProjectStatus,
+    deleteProject,
+    getProject,
+    getProjectHistory,
+    listTasks,
+    checkProjectName,
+    createProject,
+  };
 });
 
 vi.mock("../api/projectListViews", async () => {
@@ -55,6 +91,11 @@ const DEFAULT_CONFIG: ProjectListConfig = {
   columns: ["project", "pm", "lifecycle", "progress", "next_task", "overdue", "warnings"],
   sort_by: "name",
   sort_direction: "asc",
+  row_options: {
+    show_row_actions: true,
+    show_warning_tags: true,
+    inline_controls: true,
+  },
   filters: {
     search: "",
     status: "",
@@ -80,11 +121,28 @@ const SAVED_VIEW = {
   updated_at: "2026-10-16T09:00:00Z",
 };
 
+function CurrentLocation() {
+  const { pathname, search, hash } = useLocation();
+  return <output data-testid="current-location">{`${pathname}${search}${hash}`}</output>;
+}
+
+function ProjectLinkWithState({ state }: { state: unknown }) {
+  return <Link to="/projects/proj-1" state={state}>Abrir projeto</Link>;
+}
+
 describe("ProjectsList (filtros)", () => {
   beforeEach(() => {
     listProjects.mockReset();
     listPeople.mockReset();
+    listEligibleProjectManagers.mockReset();
     getLifecycleStatuses.mockReset();
+    changeProjectStatus.mockReset();
+    deleteProject.mockReset();
+    getProject.mockReset();
+    getProjectHistory.mockReset();
+    listTasks.mockReset();
+    checkProjectName.mockReset();
+    createProject.mockReset();
     getProjectListPreferences.mockReset();
     updateProjectListPreferences.mockReset();
     listProjectListViews.mockReset();
@@ -95,7 +153,13 @@ describe("ProjectsList (filtros)", () => {
     listProjectListViews.mockResolvedValue([]);
     updateProjectListPreferences.mockResolvedValue({ config: structuredClone(DEFAULT_CONFIG) });
     getLifecycleStatuses.mockResolvedValue(LIFECYCLE);
+    getProject.mockResolvedValue(makeProject());
+    getProjectHistory.mockResolvedValue([]);
+    listTasks.mockResolvedValue([]);
+    checkProjectName.mockResolvedValue([]);
+    createProject.mockResolvedValue(makeProject({ id: "created-project", name: "Projeto Manual" }));
     listPeople.mockResolvedValue([{ id: "p-pm", display_name: "PM Sintético Um", email: null, is_active: true }]);
+    listEligibleProjectManagers.mockResolvedValue([{ id: "p-pm", display_name: "PM Sintético Um" }]);
     listProjects.mockResolvedValue([
       makeProject(),
       makeProject({
@@ -111,6 +175,73 @@ describe("ProjectsList (filtros)", () => {
     ]);
   });
 
+  it("preserva o URL filtrado da lista ao abrir e regressar do detalhe pelo link Projetos", async () => {
+    const origin = "/projects?search=Fotos+Pendentes&status=em_curso&estado=todos&pm=p-pm&active=all&startFrom=2026-01-10&startTo=2026-02-20&sort_by=created_at&sort_direction=desc&page=4#results";
+    renderWithProviders(
+      <>
+        <Routes>
+          <Route path="/projects" element={<ProjectsList />} />
+          <Route path="/projects/:projectId" element={<ProjectDetail />} />
+        </Routes>
+        <CurrentLocation />
+      </>,
+      { me: makeMe({ permissions: ["project.view_all"] }), route: origin },
+    );
+
+    const projectLink = await screen.findByRole("link", { name: makeProject().name });
+    expect(projectLink).toHaveAttribute("href", "/projects/proj-1");
+    fireEvent.click(projectLink);
+    await screen.findByRole("heading", { level: 1, name: makeProject().name });
+    fireEvent.click(screen.getByRole("link", { name: /projetos/i }));
+
+    await waitFor(() => expect(screen.getByTestId("current-location")).toHaveTextContent(origin));
+    expect(screen.getByLabelText("Pesquisar")).toHaveValue("Fotos Pendentes");
+    expect(screen.getByLabelText("Ordenar por")).toHaveValue("created_at");
+    expect(screen.getByLabelText("Direção")).toHaveValue("desc");
+  });
+
+  it("usa /projects ao regressar de um detalhe aberto diretamente sem origem de lista", async () => {
+    renderWithProviders(
+      <>
+        <Routes>
+          <Route path="/projects" element={<ProjectsList />} />
+          <Route path="/projects/:projectId" element={<ProjectDetail />} />
+        </Routes>
+        <CurrentLocation />
+      </>,
+      { me: makeMe({ permissions: ["project.view_all"] }), route: "/projects/proj-1?tab=cliente" },
+    );
+
+    await screen.findByRole("heading", { level: 1, name: makeProject().name });
+    const projectsLink = screen.getByRole("link", { name: /projetos/i });
+    expect(projectsLink).toHaveAttribute("href", "/projects");
+    fireEvent.click(projectsLink);
+
+    await waitFor(() => expect(screen.getByTestId("current-location")).toHaveTextContent("/projects"));
+    expect(screen.getByLabelText("Pesquisar")).toHaveValue("");
+  });
+
+  it.each([
+    ["destino externo", { from: { pathname: "https://evil.example/path", search: "?next=/projects", hash: "#x" } }],
+    ["rota que não é a lista", { from: { pathname: "/projects/proj-2", search: "?search=Fotos", hash: "#results" } }],
+    ["sufixo de pesquisa inválido", { from: { pathname: "/projects", search: "//evil.example", hash: "" } }],
+  ])("ignora origem inválida (%s)", async (_description, state) => {
+    renderWithProviders(
+      <>
+        <Routes>
+          <Route path="/projects" element={<ProjectLinkWithState state={state} />} />
+          <Route path="/projects/:projectId" element={<ProjectDetail />} />
+        </Routes>
+        <CurrentLocation />
+      </>,
+      { me: makeMe({ permissions: ["project.view_all"] }), route: "/projects" },
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "Abrir projeto" }));
+    await screen.findByRole("heading", { level: 1, name: makeProject().name });
+    expect(screen.getByRole("link", { name: /projetos/i })).toHaveAttribute("href", "/projects");
+  });
+
   it("carrega só projetos ativos por omissão e mostra os avisos de cada projeto", async () => {
     renderWithProviders(<ProjectsList />, { me: makeMe() });
 
@@ -120,6 +251,14 @@ describe("ProjectsList (filtros)", () => {
     expect(screen.getByText("Fotos pendentes")).toBeInTheDocument();
     expect(screen.getByText("sem email")).toBeInTheDocument();
     expect(screen.getAllByRole("progressbar")).toHaveLength(2);
+  });
+
+  it("identifica a região como lista de projetos sem prometer deslize em cartões", async () => {
+    const { container } = renderWithProviders(<ProjectsList />, { me: makeMe() });
+
+    expect(await screen.findByText("Projeto Sintético Sem PM")).toBeInTheDocument();
+    expect(container.querySelector(".projects-page")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Lista de projetos" })).toHaveAttribute("tabindex", "0");
   });
 
   it("envia os filtros de estado, PM e datas ao servidor", async () => {
@@ -233,6 +372,46 @@ describe("ProjectsList (filtros)", () => {
     );
   });
 
+  it("mostra o controlo de estado autorizado na lista e atualiza a linha após guardar", async () => {
+    const project = makeProject({ id: "proj-status", name: "Projeto com estado editável", lifecycle_status: "preparacao", can_change_status: true });
+    const changed = makeProject({ ...project, lifecycle_status: "construcao" });
+    listProjects.mockResolvedValue([project]);
+    changeProjectStatus.mockResolvedValue({ project: changed, warning: null });
+
+    renderWithProviders(<ProjectsList />, { me: makeMe() });
+    expect(await screen.findByText("Projeto com estado editável")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Estado do projeto" })).toHaveValue("preparacao");
+    fireEvent.change(screen.getByRole("combobox", { name: "Estado do projeto" }), { target: { value: "construcao" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar estado" }));
+
+    await waitFor(() => expect(changeProjectStatus).toHaveBeenCalledWith("proj-status", "construcao", ""));
+    expect((await screen.findAllByText("Construção")).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("não mostra o controlo de estado sem a flag do servidor", async () => {
+    listProjects.mockResolvedValue([makeProject({ id: "proj-status-readonly", name: "Projeto sem estado editável", can_change_status: false })]);
+
+    renderWithProviders(<ProjectsList />, { me: makeMe() });
+    await screen.findByText("Projeto sem estado editável");
+    expect(screen.queryByRole("button", { name: "Alterar estado" })).not.toBeInTheDocument();
+  });
+
+  it("mostra o erro ao alterar o estado na lista e mantém a confirmação aberta", async () => {
+    const project = makeProject({ id: "proj-status-error", name: "Projeto com erro de estado", lifecycle_status: "preparacao", can_change_status: true });
+    listProjects.mockResolvedValue([project]);
+    const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
+    changeProjectStatus.mockRejectedValue(new actual.ApiError(403, "Sem permissão para alterar o estado deste projeto."));
+
+    renderWithProviders(<ProjectsList />, { me: makeMe() });
+    await screen.findByText("Projeto com erro de estado");
+    fireEvent.change(screen.getByRole("combobox", { name: "Estado do projeto" }), { target: { value: "construcao" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar estado" }));
+
+    expect(await screen.findByText("Sem permissão para alterar o estado deste projeto.")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
   it("abre nos projetos em curso e o botão Todos tira o filtro de estado (fica no URL)", async () => {
     renderWithProviders(<ProjectsList />, { me: makeMe() });
     await screen.findByText("Projeto Sintético Sem PM");
@@ -293,8 +472,12 @@ describe("ProjectsList (filtros)", () => {
     const headings = () => [...table.querySelectorAll("thead th")].map((cell) => cell.textContent);
 
     expect(headings()).toEqual(["Projeto", "PM", "Estado", "Tarefas e progresso", "Próxima tarefa", "Atrasadas", "Avisos"]);
-    fireEvent.click(screen.getByRole("button", { name: "Colunas" }));
-    expect(screen.getByRole("dialog", { name: "Configurar colunas" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Personalizar lista" }));
+    expect(screen.getByRole("dialog", { name: "Personalizar lista" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Descer coluna Projeto" }));
+    expect(headings()).toEqual(["PM", "Projeto", "Estado", "Tarefas e progresso", "Próxima tarefa", "Atrasadas", "Avisos"]);
+    fireEvent.click(screen.getByRole("button", { name: "Subir coluna Projeto" }));
+    expect(headings()).toEqual(["Projeto", "PM", "Estado", "Tarefas e progresso", "Próxima tarefa", "Atrasadas", "Avisos"]);
     fireEvent.click(screen.getByRole("checkbox", { name: "Mostrar PM" }));
     expect(headings()).toEqual(["Projeto", "Estado", "Tarefas e progresso", "Próxima tarefa", "Atrasadas", "Avisos"]);
     fireEvent.click(screen.getByRole("button", { name: "Subir coluna Tarefas e progresso" }));
@@ -302,7 +485,67 @@ describe("ProjectsList (filtros)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Restaurar colunas padrão" }));
     expect(headings()).toEqual(["Projeto", "PM", "Estado", "Tarefas e progresso", "Próxima tarefa", "Atrasadas", "Avisos"]);
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "Configurar colunas" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Personalizar lista" })).not.toBeInTheDocument();
+  });
+
+  it("renderiza as colunas pela ordem da preferência guardada", async () => {
+    getProjectListPreferences.mockResolvedValue({
+      config: { ...DEFAULT_CONFIG, columns: ["notes", "client", "project", "contact"] },
+    });
+    renderWithProviders(<ProjectsList />, { me: makeMe() });
+
+    await screen.findByRole("columnheader", { name: "Notas" });
+    const headings = [...screen.getByRole("table").querySelectorAll("thead th")].map((cell) => cell.textContent);
+    expect(headings).toEqual(["Notas", "Cliente", "Projeto", "Contacto e email"]);
+  });
+
+  it("aplica opções de linha sem ultrapassar as permissões devolvidas pela API", async () => {
+    const project = makeProject({
+      can_delete: true,
+      can_change_status: true,
+      editable_fields: ["pm_person_id"],
+      has_email: false,
+      has_contact: false,
+      has_coordinates: false,
+    });
+    listProjects.mockResolvedValue([project]);
+    renderWithProviders(<ProjectsList />, { me: makeMe(), route: "/projects?estado=todos" });
+
+    await screen.findByRole("button", { name: "Apagar projeto" });
+    expect(screen.getByText("sem email")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: `PM do projeto ${project.name}` })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Estado do projeto" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Personalizar lista" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Mostrar ações na linha" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Mostrar etiquetas de aviso" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Controlos editáveis inline" }));
+
+    expect(screen.queryByRole("button", { name: "Apagar projeto" })).not.toBeInTheDocument();
+    expect(screen.queryByText("sem email")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: `PM do projeto ${project.name}` })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Estado do projeto" })).not.toBeInTheDocument();
+    expect(screen.getByText("PM Sintético Um", { selector: "span" })).toBeInTheDocument();
+    expect(screen.getAllByText("Construção").length).toBeGreaterThan(1);
+  });
+
+  it("mostra um traço para campos nulos nas novas colunas", async () => {
+    const project = makeProject({
+      client_name: null,
+      address: null,
+      client_contact: null,
+      client_email: null,
+      notes: null as never,
+    });
+    getProjectListPreferences.mockResolvedValue({
+      config: { ...DEFAULT_CONFIG, columns: ["client", "address", "contact", "notes"] },
+    });
+    listProjects.mockResolvedValue([project]);
+    renderWithProviders(<ProjectsList />, { me: makeMe() });
+
+    await screen.findByRole("columnheader", { name: "Notas" });
+    const row = screen.getByRole("table").querySelector("tbody.projects-list__group-body tr");
+    expect([...row!.querySelectorAll("td")].map((cell) => cell.textContent?.trim())).toEqual(["—", "—", "—", "—"]);
   });
 
   it("aplica uma vista pessoal e só confirma atualizar, renomear e remover após a API responder", async () => {
@@ -342,9 +585,9 @@ describe("ProjectsList (filtros)", () => {
     renderWithProviders(<ProjectsList />, { me: makeMe() });
     await screen.findByText("Projeto Sintético Sem PM");
     fireEvent.change(screen.getByLabelText("Tarefas"), { target: { value: "concluido" } });
-    fireEvent.click(screen.getByRole("button", { name: "Colunas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Personalizar lista" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Mostrar PM" }));
-    fireEvent.click(screen.getByRole("button", { name: "Fechar configuração de colunas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fechar personalização da lista" }));
     fireEvent.click(screen.getByRole("button", { name: "Guardar preferência de abertura" }));
 
     await waitFor(() =>
@@ -388,6 +631,68 @@ describe("ProjectsList (filtros)", () => {
     expect(screen.getByRole("columnheader", { name: "PM" })).toBeInTheDocument();
   });
 
+  it("mostra o acesso a projetos apagados apenas com project.restore", async () => {
+    const withoutPermission = renderWithProviders(<ProjectsList />, { me: makeMe(), route: "/projects?estado=todos" });
+    expect(await screen.findByText("Projeto Sintético Sem PM")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Projetos apagados" })).not.toBeInTheDocument();
+    withoutPermission.unmount();
+
+    renderWithProviders(<ProjectsList />, {
+      me: makeMe({ permissions: ["project.view_all", "project.restore"] }),
+      route: "/projects?estado=todos",
+    });
+    expect(await screen.findByRole("link", { name: "Projetos apagados" })).toHaveAttribute("href", "/projects/deleted");
+  });
+
+  it("mostra apagar apenas quando can_delete vem ativo e exige motivo antes de refrescar a lista", async () => {
+    const deletable = Object.assign(makeProject(), { can_delete: true });
+    listProjects.mockResolvedValueOnce([deletable]).mockResolvedValueOnce([]);
+    deleteProject.mockResolvedValue(undefined);
+    renderWithProviders(<ProjectsList />, { me: makeMe(), route: "/projects?estado=todos" });
+
+    await screen.findByText(deletable.name);
+    fireEvent.click(screen.getByRole("button", { name: "Apagar projeto" }));
+    const dialog = screen.getByRole("dialog", { name: "Apagar projeto" });
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByLabelText("Motivo da remoção")).toBeRequired();
+    expect(deleteProject).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Motivo da remoção"), { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar remoção" }));
+    expect(await screen.findByText("Indique o motivo da remoção.")).toBeInTheDocument();
+    expect(deleteProject).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Motivo da remoção"), { target: { value: "  Projeto duplicado  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar remoção" }));
+    await waitFor(() => expect(deleteProject).toHaveBeenCalledWith(deletable.id, "Projeto duplicado"));
+    await screen.findByText("Nenhum projeto encontrado");
+    expect(listProjects).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("dialog", { name: "Apagar projeto" })).not.toBeInTheDocument();
+  });
+
+  it("mantém o diálogo e apresenta erro quando o servidor recusa a remoção", async () => {
+    const deletable = Object.assign(makeProject(), { can_delete: true });
+    listProjects.mockResolvedValue([deletable]);
+    deleteProject.mockRejectedValue(new Error("Sem permissão para apagar projetos."));
+    renderWithProviders(<ProjectsList />, { me: makeMe(), route: "/projects?estado=todos" });
+
+    await screen.findByText(deletable.name);
+    fireEvent.click(screen.getByRole("button", { name: "Apagar projeto" }));
+    fireEvent.change(screen.getByLabelText("Motivo da remoção"), { target: { value: "Duplicado" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar remoção" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Sem permissão para apagar projetos.");
+    expect(screen.getByRole("dialog", { name: "Apagar projeto" })).toBeInTheDocument();
+  });
+
+  it("não mostra o botão de apagar quando can_delete está falso", async () => {
+    listProjects.mockResolvedValue([Object.assign(makeProject(), { can_delete: false })]);
+    renderWithProviders(<ProjectsList />, { me: makeMe(), route: "/projects?estado=todos" });
+
+    await screen.findByText(makeProject().name);
+    expect(screen.queryByRole("button", { name: "Apagar projeto" })).not.toBeInTheDocument();
+  });
+
   it("mostra erros de carregar e gravar vistas sem falso sucesso", async () => {
     listProjectListViews.mockRejectedValue(new Error("Vistas indisponíveis"));
     updateProjectListPreferences.mockRejectedValue(new Error("Preferência recusada"));
@@ -397,5 +702,251 @@ describe("ProjectsList (filtros)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Guardar preferência de abertura" }));
     expect(await screen.findByText("Preferência recusada")).toBeInTheDocument();
     expect(screen.queryByText("Preferência de abertura guardada.")).not.toBeInTheDocument();
+  });
+
+  it("mostra os quatro indicadores de pagamentos por ordem com nomes acessíveis e tooltip", async () => {
+    listProjects.mockResolvedValue([
+      makeProject({
+        payments: {
+          adjudicacao: true,
+          entrada_obra: false,
+          fim_obra: true,
+          certificado_final: false,
+        },
+      }),
+    ]);
+    const { container } = renderWithProviders(<ProjectsList />, {
+      me: makeMe({ permissions: ["project.view_all", "payment.view"] }),
+      route: "/projects?estado=todos",
+    });
+
+    await screen.findByRole("columnheader", { name: "Pagamentos" });
+    const header = screen.getByRole("columnheader", { name: "Pagamentos" });
+    expect(header).toHaveAttribute("title", "FT Adj | EO | FO | Ct");
+    const indicators = Array.from(container.querySelectorAll(".payment-indicators__item"));
+    expect(indicators.map((item) => item.getAttribute("aria-label"))).toEqual([
+      "Adjudicação: recebido",
+      "Entrada de Obra: não recebido",
+      "Fim de Obra: recebido",
+      "Certificado final: não recebido",
+    ]);
+    expect(indicators.map((item) => item.textContent)).toEqual(["✓", "○", "✓", "○"]);
+  });
+
+  it("não mostra nem oferece a coluna Pagamentos sem payment.view", async () => {
+    listProjects.mockResolvedValue([makeProject({ payments: null })]);
+    renderWithProviders(<ProjectsList />, {
+      me: makeMe({ permissions: ["project.view_all"] }),
+      route: "/projects?estado=todos",
+    });
+
+    await screen.findByText(makeProject().name);
+    expect(screen.queryByRole("columnheader", { name: "Pagamentos" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Personalizar lista" }));
+    expect(screen.queryByLabelText("Mostrar Pagamentos")).not.toBeInTheDocument();
+  });
+
+  it("usa Projeto como fallback visual quando a preferência só tem Pagamentos sem permissão", async () => {
+    const project = makeProject({
+      payments: {
+        adjudicacao: true,
+        entrada_obra: true,
+        fim_obra: false,
+        certificado_final: true,
+      },
+    });
+    getProjectListPreferences.mockResolvedValue({
+      config: { ...DEFAULT_CONFIG, columns: ["payments"] },
+    });
+    listProjects.mockResolvedValue([project]);
+
+    renderWithProviders(<ProjectsList />, {
+      me: makeMe({ permissions: ["project.view_all"] }),
+      route: "/projects?estado=todos",
+    });
+
+    expect(await screen.findByRole("columnheader", { name: "Projeto" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: project.name })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Pagamentos" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Adjudicação|Entrada de Obra|Fim de Obra|Certificado final/)).not.toBeInTheDocument();
+    expect(updateProjectListPreferences).not.toHaveBeenCalled();
+  });
+
+  it("mostra o botão de criação manual apenas com project.edit_all", async () => {
+    const result = renderWithProviders(<ProjectsList />, {
+      me: makeMe({ permissions: ["project.view_all"] }),
+    });
+    await screen.findByLabelText("Pesquisar");
+    expect(screen.queryByRole("button", { name: "Novo projeto" })).not.toBeInTheDocument();
+    result.unmount();
+
+    renderWithProviders(<ProjectsList />, {
+      me: makeMe({ permissions: ["project.view_all", "project.edit_all"] }),
+    });
+    const createButton = await screen.findByRole("button", { name: "Novo projeto" });
+    expect(createButton).toBeInTheDocument();
+    expect(createButton).toHaveClass("btn");
+    expect(createButton).not.toHaveClass("btn--sm");
+  });
+
+  it("valida o nome e impede submeter um projeto duplicado", async () => {
+    checkProjectName.mockResolvedValue([{ id: "existing-project", name: "Instalação Solar" }]);
+    renderWithProviders(<ProjectsList />, {
+      me: makeMe({ permissions: ["project.view_all", "project.edit_all"] }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Novo projeto" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Criar projeto" }));
+    expect(await screen.findByText("Indique o nome do projeto.")).toBeInTheDocument();
+    expect(createProject).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Nome do projeto *"), { target: { value: "  INSTALACAO   SOLAR " } });
+    expect(await screen.findByText(/Já existe um projeto com este nome:/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Criar projeto" })).toBeDisabled();
+    expect(screen.getByLabelText("Nome do projeto *").getAttribute("aria-describedby")).toContain("create-project-name-duplicate");
+    expect(createProject).not.toHaveBeenCalled();
+  });
+
+  it("avisa sobre um prefixo repetido sem bloquear outra fase", async () => {
+    checkProjectName.mockResolvedValue([{ id: "existing-phase", name: "4821_Fase A" }]);
+    renderWithProviders(<ProjectsList />, {
+      me: makeMe({ permissions: ["project.view_all", "project.edit_all"] }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Novo projeto" }));
+    fireEvent.change(screen.getByLabelText("Nome do projeto *"), { target: { value: "4821 Fase B" } });
+
+    expect(await screen.findByText(/Pode continuar se for outra fase/)).toBeInTheDocument();
+    expect(checkProjectName).toHaveBeenCalledWith("4821 Fase B");
+    expect(screen.getByRole("button", { name: "Criar projeto" })).toBeEnabled();
+    expect(screen.getByLabelText("Nome do projeto *").getAttribute("aria-describedby")).toContain("create-project-name-prefix");
+  });
+
+  it("cria o projeto pela API e navega para o detalhe", async () => {
+    renderWithProviders(
+      <>
+        <Routes>
+          <Route path="/projects" element={<ProjectsList />} />
+          <Route path="/projects/:projectId" element={<p>Detalhe do projeto</p>} />
+        </Routes>
+        <CurrentLocation />
+      </>,
+      {
+        me: makeMe({ permissions: ["project.view_all", "project.edit_all"] }),
+        route: "/projects?estado=todos",
+      },
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Novo projeto" }));
+    fireEvent.change(screen.getByLabelText("Nome do projeto *"), { target: { value: "  Projeto Manual  " } });
+    fireEvent.change(screen.getByLabelText("Cliente"), { target: { value: "  Cliente Sintético  " } });
+    fireEvent.change(screen.getByLabelText("Contacto"), { target: { value: "  Pessoa Cliente  " } });
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: " cliente@example.invalid " } });
+    fireEvent.change(screen.getByLabelText("Morada"), { target: { value: "  Rua Sintética  " } });
+    fireEvent.change(screen.getByLabelText("Potência original"), { target: { value: " 12,5 kWp " } });
+    fireEvent.change(screen.getByLabelText("Função"), { target: { value: "  instalador  " } });
+    fireEvent.change(screen.getByLabelText("Equipamento"), { target: { value: "  Painéis  " } });
+    fireEvent.change(screen.getByLabelText("Injeção"), { target: { value: "  Rede  " } });
+    fireEvent.change(screen.getByLabelText("Operação e manutenção"), { target: { value: "  Plano O&M  " } });
+    fireEvent.change(screen.getByLabelText("Pressupostos comerciais"), { target: { value: "  Pressuposto  " } });
+    fireEvent.change(screen.getByLabelText("Ano de adjudicação"), { target: { value: " 2026 " } });
+    fireEvent.change(screen.getByLabelText("Notas gerais"), { target: { value: "  Nota geral  " } });
+    await waitFor(() => expect(checkProjectName).toHaveBeenCalledWith("Projeto Manual"));
+    fireEvent.click(screen.getByRole("button", { name: "Criar projeto" }));
+
+    await screen.findByText("Detalhe do projeto");
+    expect(createProject).toHaveBeenCalledWith({
+      name: "Projeto Manual",
+      client_name: "Cliente Sintético",
+      client_contact: "Pessoa Cliente",
+      client_email: "cliente@example.invalid",
+      address: "Rua Sintética",
+      power_raw: "12,5 kWp",
+      role: "instalador",
+      equipment_notes: "Painéis",
+      injection_notes: "Rede",
+      om_notes: "Plano O&M",
+      commercial_assumptions: "Pressuposto",
+      award_year_raw: "2026",
+      notes: "Nota geral",
+      lifecycle_status: "on_hold_cliente",
+    });
+    expect(screen.getByTestId("current-location")).toHaveTextContent("/projects/created-project");
+  });
+
+  it("oferece apenas gestores elegíveis no seletor de PM", async () => {
+    listPeople.mockResolvedValue([
+      { id: "p-pm", display_name: "PM Sintético Um", is_active: true },
+      { id: "p-other", display_name: "Pessoa Ativa sem papel PM", is_active: true },
+    ]);
+    listEligibleProjectManagers.mockResolvedValue([{ id: "p-pm", display_name: "PM Sintético Um" }]);
+    renderWithProviders(<ProjectsList />, { me: makeMe({ permissions: ["project.view_all", "project.edit_all"] }) });
+    fireEvent.click(await screen.findByRole("button", { name: "Novo projeto" }));
+    const dialog = screen.getByRole("dialog", { name: "Novo projeto" });
+    const dialogQueries = within(dialog);
+    await dialogQueries.findByLabelText("PM");
+    expect(await dialogQueries.findByRole("option", { name: "PM Sintético Um" })).toBeInTheDocument();
+    expect(dialogQueries.queryByRole("option", { name: "Pessoa Ativa sem papel PM" })).not.toBeInTheDocument();
+    expect(listEligibleProjectManagers).toHaveBeenCalledOnce();
+  });
+
+  it("mostra loading e erro do catálogo de gestores elegíveis", async () => {
+    let rejectManagers: ((error: Error) => void) | undefined;
+    listEligibleProjectManagers.mockImplementation(() => new Promise((_, reject) => { rejectManagers = reject; }));
+    renderWithProviders(<ProjectsList />, { me: makeMe({ permissions: ["project.view_all", "project.edit_all"] }) });
+    fireEvent.click(await screen.findByRole("button", { name: "Novo projeto" }));
+    const dialog = screen.getByRole("dialog", { name: "Novo projeto" });
+    const dialogQueries = within(dialog);
+    expect(dialogQueries.getByRole("status")).toHaveTextContent("A carregar gestores de projeto");
+    rejectManagers?.(new Error("indisponível"));
+    expect(await dialogQueries.findByRole("alert")).toHaveTextContent("Não foi possível carregar os gestores de projeto.");
+    expect(dialogQueries.getByLabelText("PM")).toBeDisabled();
+  });
+
+  it("mostra erros de latitude inválida sem a descartar", async () => {
+    renderWithProviders(<ProjectsList />, {
+      me: makeMe({ permissions: ["project.view_all", "project.edit_all"] }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Novo projeto" }));
+    fireEvent.change(screen.getByLabelText("Nome do projeto *"), { target: { value: "Projeto Coordenadas" } });
+    fireEvent.change(screen.getByLabelText("Latitude"), { target: { value: "91" } });
+    await waitFor(() => expect(checkProjectName).toHaveBeenCalledWith("Projeto Coordenadas"));
+    fireEvent.click(screen.getByRole("button", { name: "Criar projeto" }));
+
+    expect(await screen.findByText("Latitude deve estar entre -90 e 90.")).toBeInTheDocument();
+    expect(createProject).not.toHaveBeenCalled();
+  });
+
+  it("mostra o detalhe devolvido por uma resposta 422 da API", async () => {
+    createProject.mockRejectedValue(new ApiError(422, "A potência tem de ser igual ou superior a zero."));
+    renderWithProviders(<ProjectsList />, {
+      me: makeMe({ permissions: ["project.view_all", "project.edit_all"] }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Novo projeto" }));
+    fireEvent.change(screen.getByLabelText("Nome do projeto *"), { target: { value: "Projeto Potência" } });
+    await waitFor(() => expect(checkProjectName).toHaveBeenCalledWith("Projeto Potência"));
+    fireEvent.change(screen.getByLabelText("Potência (kWp)"), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Criar projeto" }));
+
+    expect(await screen.findByText("A potência tem de ser igual ou superior a zero.")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Novo projeto" })).toBeInTheDocument();
+  });
+
+  it("não fecha com Escape enquanto a criação está em curso", async () => {
+    let finishCreate: ((project: ReturnType<typeof makeProject>) => void) | undefined;
+    createProject.mockImplementation(() => new Promise((resolve) => {
+      finishCreate = resolve;
+    }));
+    renderWithProviders(<ProjectsList />, {
+      me: makeMe({ permissions: ["project.view_all", "project.edit_all"] }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Novo projeto" }));
+    fireEvent.change(screen.getByLabelText("Nome do projeto *"), { target: { value: "Projeto Em Curso" } });
+    await waitFor(() => expect(checkProjectName).toHaveBeenCalledWith("Projeto Em Curso"));
+    fireEvent.click(screen.getByRole("button", { name: "Criar projeto" }));
+    await waitFor(() => expect(createProject).toHaveBeenCalled());
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(screen.getByRole("dialog", { name: "Novo projeto" })).toBeInTheDocument();
+    finishCreate?.(makeProject({ id: "created-project" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Novo projeto" })).not.toBeInTheDocument());
   });
 });

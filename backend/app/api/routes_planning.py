@@ -30,6 +30,7 @@ from app.security.current_user import get_auth_context
 from app.security.permissions import (
     AuthContext,
     can_manage_calendar_event,
+    can_view_project,
     is_installer_readonly_scope,
 )
 from app.services.planning import (
@@ -54,7 +55,11 @@ preferences_router = APIRouter(prefix="/api/me", tags=["planning"])
 
 
 def _require_calendar_view(ctx: AuthContext) -> None:
-    if not (ctx.has_permission("calendar.view") or ctx.has_permission("works_calendar.view_assigned_installer")):
+    if not (
+        ctx.has_permission("calendar.view")
+        or ctx.has_permission("calendar.view_all_pm")
+        or ctx.has_permission("works_calendar.view_assigned_installer")
+    ):
         raise HTTPException(status_code=403, detail="Sem permissão para ver o planeamento.")
 
 
@@ -112,6 +117,7 @@ def _manual_process_responsible(db: Session, event: CalendarEvent) -> tuple[list
 
 def _to_read(db: Session, event: CalendarEvent, ctx: AuthContext) -> CalendarEventRead:
     data = CalendarEventRead.model_validate(event)
+    project_details_visible = event.project_id is None
     participant_ids = event_assignee_ids(event)
     people_by_id = {person.id: person for person in (event.assignees or [])}
     if event.assigned_to is not None:
@@ -140,6 +146,7 @@ def _to_read(db: Session, event: CalendarEvent, ctx: AuthContext) -> CalendarEve
         project = event.project or db.get(Project, event.project_id)
         data.project_name = project.name if project else None
         data.project_url = f"/projects/{event.project_id}?tab=processo" if event.process_stage_id else f"/projects/{event.project_id}"
+        project_details_visible = project is not None and can_view_project(ctx, project)
     if event.task_id:
         task = event.task or db.get(Task, event.task_id)
         data.task_title = task.title if task else None
@@ -160,6 +167,29 @@ def _to_read(db: Session, event: CalendarEvent, ctx: AuthContext) -> CalendarEve
     data.category_label = label
     data.category_color = color
     data.can_manage = can_manage_calendar_event(ctx, event.project if event.project_id else None)
+    if (
+        (event.project_id is not None and not project_details_visible)
+        or (event.project_id is None and ctx.has_permission("calendar.view_all_pm"))
+    ):
+        # Cross-PM visibility is limited to scheduling context. Keep the
+        # event title, dates, category, and participants, but do not expose
+        # project identity, task, visit, Process, or project links.
+        data.project_context_hidden = event.project_id is not None
+        data.project_id = None
+        data.project_name = None
+        data.project_url = None
+        data.task_id = None
+        data.task_title = None
+        data.visit_id = None
+        data.graph_event_id = None
+        data.process_stage_id = None
+        data.process_stage_code = None
+        data.process_stage_title = None
+        data.process_subtask_id = None
+        data.process_subtask_code = None
+        data.process_subtask_title = None
+        data.responsible_person_ids = []
+        data.responsible_display_names = []
     if is_installer_readonly_scope(ctx):
         # Only the authenticated person's participation is meaningful in the
         # scoped channel; hide foreign people and process responsibility rows.

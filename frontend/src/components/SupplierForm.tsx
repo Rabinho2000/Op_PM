@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { ApiError, createSupplier, Supplier, SupplierContact, SupplierInput, updateSupplier } from "../api/client";
+import { ApiError, createSupplier, Supplier, SupplierCompanyCode, SupplierContact, SupplierInput, updateSupplier } from "../api/client";
 import { Alert, Modal } from "./ui";
 
 // Mesmas regras do servidor (app/schemas/suppliers.py) — só para dar resposta
@@ -58,6 +58,7 @@ export default function SupplierFormModal({
     is_active: supplier?.is_active ?? true,
   });
   const [types, setTypes] = useState<string[]>(supplier?.material_types ?? []);
+  const [companyCodes, setCompanyCodes] = useState<SupplierCompanyCode[]>(supplier?.company_codes ?? []);
   const [contacts, setContacts] = useState<SupplierContact[]>(supplier?.contacts ?? []);
   const [typeDraft, setTypeDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -105,6 +106,7 @@ export default function SupplierFormModal({
       contact: form.contact.trim() || null,
       notes: form.notes.trim(),
       material_types: finalTypes,
+      company_codes: companyCodes,
     };
     setSaving(true);
     setError(null);
@@ -147,6 +149,13 @@ export default function SupplierFormModal({
           <label htmlFor="sf-name">Nome *</label>
           <input id="sf-name" className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
         </div>
+
+        <fieldset className="field span-2 supplier-company-field">
+          <legend className="field__label">Empresas</legend>
+          <label><input type="checkbox" checked={companyCodes.includes("solcor")} onChange={(e) => setCompanyCodes(e.target.checked ? [...companyCodes, "solcor"] : companyCodes.filter((code) => code !== "solcor"))} /> Solcor</label>
+          <label><input type="checkbox" checked={companyCodes.includes("verde_milenar")} onChange={(e) => setCompanyCodes(e.target.checked ? [...companyCodes, "verde_milenar"] : companyCodes.filter((code) => code !== "verde_milenar"))} /> Verde Milenar</label>
+          <span className="small muted">Pode selecionar nenhuma, uma ou ambas.</span>
+        </fieldset>
 
         <div className="field span-2">
           <label htmlFor="sf-type">Tipos de material</label>

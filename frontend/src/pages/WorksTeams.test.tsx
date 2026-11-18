@@ -29,6 +29,7 @@ const INSTALLERS: Installer[] = [
       { id: "team-invisivel", name: "Equipa Reservada", leader_name: null, leader_phone: null, is_active: true, project_count: 0 },
     ],
   },
+  { id: "installer-secundario", name: "Instalador Secundário", is_active: true, project_count: 0, teams: [] },
 ];
 
 const visibleAssignment: TeamLocationAssignment = {
@@ -79,7 +80,7 @@ describe("WorksTeams", () => {
       path: "/works/teams",
     });
 
-    await waitFor(() => expect(getWorksTeams).toHaveBeenLastCalledWith({ date: "2026-10-05", days: 14, installer_id: "installer-sintetico" }));
+    await waitFor(() => expect(getWorksTeams).toHaveBeenLastCalledWith({ date: "2026-10-05", days: 14, installer_ids: ["installer-sintetico"] }));
     expect(await screen.findByRole("heading", { name: "Instalador Sintético" })).toBeInTheDocument();
     expect(screen.getByRole("row", { name: /Equipa Livre.*Livre/ })).toBeInTheDocument();
     expect(screen.getAllByText("Ocupada noutra obra").length).toBeGreaterThanOrEqual(2);
@@ -103,7 +104,29 @@ describe("WorksTeams", () => {
 
     fireEvent.change(screen.getByLabelText("Data"), { target: { value: "2026-10-06" } });
     fireEvent.click(screen.getByRole("button", { name: "2 semanas" }));
-    fireEvent.change(screen.getByLabelText("Instalador"), { target: { value: "installer-sintetico" } });
-    await waitFor(() => expect(getWorksTeams).toHaveBeenLastCalledWith({ date: "2026-10-06", days: 14, installer_id: "installer-sintetico" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Instalador:/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Instalador Sintético" }));
+    await waitFor(() => expect(getWorksTeams).toHaveBeenLastCalledWith({
+      date: "2026-10-06",
+      days: 14,
+      installer_ids: ["installer-sintetico"],
+    }));
+  });
+
+  it("envia vários instaladores da URL repetida ao endpoint de equipas", async () => {
+    renderWithProviders(<WorksTeams />, {
+      me: ME,
+      route: "/works/teams?date=2026-10-05&days=14&inst=installer-sintetico&inst=installer-secundario",
+      path: "/works/teams",
+    });
+
+    await waitFor(() => expect(getWorksTeams).toHaveBeenLastCalledWith({
+      date: "2026-10-05",
+      days: 14,
+      installer_ids: ["installer-sintetico", "installer-secundario"],
+    }));
+    fireEvent.click(screen.getByRole("button", { name: /^Instalador:/ }));
+    expect(await screen.findByRole("checkbox", { name: "Instalador Sintético" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Instalador Secundário" })).toBeChecked();
   });
 });

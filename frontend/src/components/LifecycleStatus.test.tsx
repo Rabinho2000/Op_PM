@@ -29,6 +29,33 @@ describe("LifecycleStatusControl", () => {
 
     expect(screen.getByText("Construção")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Alterar estado" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Estado do projeto" })).not.toBeInTheDocument();
+  });
+
+  it("offers statuses immediately in a native dropdown and preselects the chosen state in the audit dialog", () => {
+    const project = makeProject({ lifecycle_status: "preparacao", can_change_status: true });
+    renderWithProviders(<LifecycleStatusControl project={project} statuses={STATUSES} onChanged={vi.fn()} />);
+
+    const select = screen.getByRole("combobox", { name: "Estado do projeto" });
+    expect(select).toHaveValue("preparacao");
+    fireEvent.change(select, { target: { value: "construcao" } });
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByLabelText("Novo estado *")).toHaveValue("construcao");
+  });
+
+  it("shows an honest placeholder for an unknown current state and disables an empty catalog", () => {
+    const project = makeProject({ lifecycle_status: "legacy_state", can_change_status: true });
+    const { rerender } = renderWithProviders(<LifecycleStatusControl project={project} statuses={STATUSES} onChanged={vi.fn()} />);
+
+    expect(screen.getByRole("combobox", { name: "Estado do projeto" })).toHaveValue("legacy_state");
+    expect(screen.getByRole("option", { name: "Estado atual: legacy_state (desconhecido)" })).toBeDisabled();
+
+    rerender(<LifecycleStatusControl project={{ ...project, lifecycle_status: null }} statuses={[]} onChanged={vi.fn()} />);
+    const select = screen.getByRole("combobox", { name: "Estado do projeto" });
+    expect(select).toBeDisabled();
+    expect(select).toHaveValue("");
+    expect(screen.getByRole("option", { name: "— estado atual: sem estado —" })).toBeDisabled();
   });
 
   it("altera o estado com nota e avisa quando salta estados", async () => {
@@ -38,8 +65,7 @@ describe("LifecycleStatusControl", () => {
     const onChanged = vi.fn();
     renderWithProviders(<LifecycleStatusControl project={project} statuses={STATUSES} onChanged={onChanged} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Alterar estado" }));
-    fireEvent.change(screen.getByLabelText("Novo estado *"), { target: { value: "entregue_cliente" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Estado do projeto" }), { target: { value: "entregue_cliente" } });
     fireEvent.change(screen.getByLabelText("Nota (opcional)"), { target: { value: "  Entrega antecipada. " } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar estado" }));
 
@@ -53,10 +79,9 @@ describe("LifecycleStatusControl", () => {
     const project = makeProject({ lifecycle_status: "preparacao", can_change_status: true });
     renderWithProviders(<LifecycleStatusControl project={project} statuses={STATUSES} onChanged={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Alterar estado" }));
-    fireEvent.click(screen.getByRole("button", { name: "Guardar estado" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Estado do projeto" }), { target: { value: "preparacao" } });
 
-    expect(screen.getByText("Escolha um estado diferente do atual.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(changeProjectStatus).not.toHaveBeenCalled();
   });
 
@@ -65,8 +90,7 @@ describe("LifecycleStatusControl", () => {
     const onChanged = vi.fn();
     renderWithProviders(<LifecycleStatusControl project={project} statuses={STATUSES} onChanged={onChanged} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Alterar estado" }));
-    fireEvent.change(screen.getByLabelText("Novo estado *"), { target: { value: "construcao" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Estado do projeto" }), { target: { value: "construcao" } });
     const { ApiError } = await vi.importActual<typeof import("../api/client")>("../api/client");
     changeProjectStatus.mockRejectedValue(new ApiError(403, "Sem permissão para alterar o estado deste projeto."));
     fireEvent.click(screen.getByRole("button", { name: "Guardar estado" }));

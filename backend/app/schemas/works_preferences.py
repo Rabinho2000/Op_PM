@@ -14,6 +14,7 @@ class WorksPreferenceRead(BaseModel):
     lifecycle_status: list[str]
     pm_person_id: uuid.UUID | None
     installer_id: uuid.UUID | None
+    installer_ids: list[uuid.UUID]
     team_id: uuid.UUID | None
     show_idle: bool
 
@@ -28,5 +29,6 @@ class WorksPreferencePatch(BaseModel):
     lifecycle_status: list[StrictStr] | None = None
     pm_person_id: uuid.UUID | None = None
     installer_id: uuid.UUID | None = None
+    installer_ids: list[uuid.UUID] | None = None
     team_id: uuid.UUID | None = None
     show_idle: StrictBool | None = None

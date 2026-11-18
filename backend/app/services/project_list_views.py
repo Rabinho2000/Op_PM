@@ -26,6 +26,11 @@ PROJECT_LIST_DEFAULT_CONFIG: dict[str, object] = {
     "columns": list(PROJECT_LIST_DEFAULT_COLUMNS),
     "sort_by": "name",
     "sort_direction": "asc",
+    "row_options": {
+        "show_row_actions": True,
+        "show_warning_tags": True,
+        "inline_controls": True,
+    },
     "filters": {
         "search": "",
         "status": "",

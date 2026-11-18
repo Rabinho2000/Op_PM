@@ -46,9 +46,13 @@ def _headers() -> dict[str, str]:
     return {"X-Dev-User-Email": CHEFE_EMAIL}
 
 
-def test_database_rejects_second_active_central_location(db_session):
-    central = db_session.query(InventoryLocation).filter_by(location_type="central", is_active=True).one()
-    duplicate = InventoryLocation(code="CENTRAL-RACE", name="Central concorrente", location_type="central")
+def test_database_rejects_second_active_central_for_same_owner(db_session):
+    central = db_session.query(InventoryLocation).filter_by(
+        location_type="central", owner="solcor", is_active=True
+    ).one()
+    duplicate = InventoryLocation(
+        code="CENTRAL-RACE", name="Central concorrente", location_type="central", owner="solcor"
+    )
     db_session.add(duplicate)
 
     with pytest.raises(IntegrityError):
@@ -56,16 +60,36 @@ def test_database_rejects_second_active_central_location(db_session):
 
     db_session.rollback()
     assert db_session.get(InventoryLocation, central.id) is not None
-    indexes = {index["name"] for index in inspect(db_session.connection()).get_indexes("inventory_locations")}
-    assert "uq_inventory_locations_one_active_central" in indexes
+    indexes = inspect(db_session.connection()).get_indexes("inventory_locations")
+    owner_index = next(index for index in indexes if index["name"] == "uq_inventory_locations_one_active_central_per_owner")
+    assert owner_index["column_names"] == ["owner"]
+
+
+def test_different_owners_can_each_have_an_active_central(db_session, api_client):
+    response = api_client.post(
+        "/api/inventory/locations",
+        json={
+            "code": "CENTRAL-VERDE-MILENAR",
+            "name": "Central Verde Milenar",
+            "location_type": "central",
+            "owner": "verde_milenar",
+        },
+        headers=_headers(),
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["owner"] == "verde_milenar"
+    assert db_session.query(InventoryLocation).filter_by(
+        location_type="central", is_active=True
+    ).count() == 2
 
 
 def test_active_central_unique_race_is_translated_to_conflict(db_session, api_client, monkeypatch):
-    monkeypatch.setattr(inventory_catalog_service, "_active_central_locations", lambda db: [])
+    monkeypatch.setattr(inventory_catalog_service, "_active_central_locations", lambda db, owner: [])
 
     response = api_client.post(
         "/api/inventory/locations",
-        json={"code": "CENTRAL-RACE-API", "name": "Central concorrente", "location_type": "central"},
+        json={"code": f"CENTRAL-RACE-API-{uuid.uuid4().hex}", "name": "Central concorrente", "location_type": "central"},
         headers=_headers(),
     )
 
@@ -103,8 +127,8 @@ def test_concurrent_central_creation_leaves_one_row_and_translates_unique_race(d
     outcomes: list[str] = []
     original_active_centrals = inventory_catalog_service._active_central_locations
 
-    def gated_active_centrals(db):
-        locations = original_active_centrals(db)
+    def gated_active_centrals(db, owner):
+        locations = original_active_centrals(db, owner)
         barrier.wait(timeout=10)
         return locations
 
@@ -550,7 +574,7 @@ def test_catalog_migration_backfills_explicit_location_without_central(tmp_path)
             {"id": str(movement_id), "item_id": str(item_id), "location_id": str(location_id)},
         )
 
-    run_alembic("upgrade", "head")
+    run_alembic("upgrade", "8a1d3f4c6b90")
     with local_engine.connect() as connection:
         assert connection.execute(text("SELECT COUNT(*) FROM inventory_locations WHERE location_type = 'central'")).scalar_one() == 0
         stored_fingerprint = connection.execute(
@@ -648,6 +672,8 @@ def test_concurrent_reservations_serialize_per_item_and_never_overreserve(db_ses
     item = db_session.query(InventoryItem).filter_by(sku="CABO-DC-6MM").one()
     project = db_session.query(Project).filter(Project.is_active.is_(True)).first()
     assert project is not None
+    item_id = item.id
+    project_id = project.id
     db_session.rollback()
 
     source = Path(str(engine.url.database))
@@ -670,13 +696,13 @@ def test_concurrent_reservations_serialize_per_item_and_never_overreserve(db_ses
     def attempt(quantity: str) -> None:
         session = LocalSession()
         try:
-            candidate = session.get(InventoryItem, item.id)
+            candidate = session.get(InventoryItem, item_id)
             assert candidate is not None
             barrier.wait(timeout=10)
             reserve_for_project(
                 session,
                 item=candidate,
-                project_id=project.id,
+                project_id=project_id,
                 quantity=Decimal(quantity),
                 created_by_person_id=None,
                 idempotency_key=None,
@@ -702,7 +728,7 @@ def test_concurrent_reservations_serialize_per_item_and_never_overreserve(db_ses
 
         check = LocalSession()
         try:
-            rows = check.query(InventoryMovement).filter_by(item_id=item.id, movement_type="reserva").all()
+            rows = check.query(InventoryMovement).filter_by(item_id=item_id, movement_type="reserva").all()
             assert sum((Decimal(row.quantity) for row in rows), Decimal(0)) <= Decimal(80)
         finally:
             check.close()

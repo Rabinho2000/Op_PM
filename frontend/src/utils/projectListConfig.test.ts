@@ -13,6 +13,11 @@ describe("configuração da lista de projetos", () => {
       columns: [...DEFAULT_PROJECT_LIST_COLUMNS],
       sort_by: "name",
       sort_direction: "asc",
+      row_options: {
+        show_row_actions: true,
+        show_warning_tags: true,
+        inline_controls: true,
+      },
       filters: {
         search: "",
         status: "",
@@ -25,7 +30,7 @@ describe("configuração da lista de projetos", () => {
     });
   });
 
-  it("normaliza colunas desconhecidas, repetidas e a posição obrigatória do projeto", () => {
+  it("normaliza colunas desconhecidas e repetidas sem alterar a ordem guardada", () => {
     const normalized = normalizeProjectListConfig({
       columns: ["warnings", "project", "warnings", "made_up" as never, "pm"],
       sort_by: "power_kwp",
@@ -41,10 +46,23 @@ describe("configuração da lista de projetos", () => {
       },
     });
 
-    expect(normalized.columns).toEqual(["project", "warnings", "pm"]);
+    expect(normalized.columns).toEqual(["warnings", "project", "pm"]);
     expect(normalized.sort_by).toBe("power_kwp");
     expect(normalized.sort_direction).toBe("desc");
     expect(normalized.filters.search).toBe(" cliente ");
+  });
+
+  it("usa padrões seguros para uma configuração persistida inválida", () => {
+    const normalized = normalizeProjectListConfig({
+      columns: ["inventada", "inventada"] as never,
+      row_options: {
+        show_row_actions: "sim",
+        show_warning_tags: "false",
+        inline_controls: 1,
+      } as never,
+    });
+
+    expect(normalized).toEqual(defaultProjectListConfig());
   });
 
   it("ordena nomes numericamente e deixa nulos no fim com desempate estável", () => {

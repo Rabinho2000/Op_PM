@@ -7,15 +7,20 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import re
 import uuid
 
-from sqlalchemy import case, func, or_
+from sqlalchemy import case, func, or_, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Query, Session
 
 from app.audit.log import record_project_change
+from app.models.identity import Role, User, UserRole
+from app.models.people import Person
 from app.models.project import Project
 from app.models.task import DEFAULT_TASK_TYPES, OPEN_TASK_STATUSES, STATUS_DONE, TASK_TYPE_FOTOS_DRIVE, TASK_TYPES_REQUIRE_PHOTOS, Task
-from app.schemas.projects import ProjectUpdate
+from app.schemas.projects import ProjectCreate, ProjectUpdate
+from app.security.catalog import ROLE_PM
 from app.security.permissions import (
     AuthContext,
     PermissionDenied,
@@ -30,9 +35,177 @@ from app.services.project_lifecycle import (
     LIFECYCLE_STATUS_CODES,
     status_change_warning,
 )
+from app.services.installers import derive_work_window
 from app.security.project_fields import PM_EDITABLE_PROJECT_FIELDS
+from app.utils.text import normalize_key
 
 _STANDARD_TASK_TYPES = frozenset(code for code, _ in DEFAULT_TASK_TYPES)
+_NUMERIC_PROJECT_PREFIX = re.compile(r"^\s*(\d+)_")
+
+
+class DuplicateProjectName(ValueError):
+    """A normalized project name is already used by a non-deleted project."""
+
+
+def _normalize_project_name(value: str) -> str:
+    return normalize_key(value)
+
+
+def _project_numeric_prefix(value: str) -> str | None:
+    match = _NUMERIC_PROJECT_PREFIX.match(value)
+    return match.group(1) if match else None
+
+
+def _query_numeric_prefix(value: str) -> str | None:
+    # A pesquisa aceita o separador visual usado pela pessoa ou o `_`
+    # canónico usado nos nomes guardados; candidatos continuam estritos.
+    match = re.match(r"^\s*(\d+)(?:_|\s+)", value)
+    return match.group(1) if match else None
+
+
+def eligible_project_managers(db: Session) -> list[tuple[uuid.UUID, str]]:
+    """People who can be assigned as PM on a manually created project."""
+    return (
+        db.query(Person.id, Person.display_name)
+        .join(User, User.person_id == Person.id)
+        .join(UserRole, UserRole.user_id == User.id)
+        .join(Role, Role.id == UserRole.role_id)
+        .filter(
+            Person.is_active.is_(True),
+            User.is_active.is_(True),
+            Role.code == ROLE_PM,
+        )
+        .distinct()
+        .order_by(Person.display_name, Person.id)
+        .all()
+    )
+
+
+def check_project_name(db: Session, *, name: str, ctx: AuthContext) -> list[Project]:
+    """Return active project candidates sharing a normalized name or numeric prefix."""
+    if is_installer_readonly_scope(ctx):
+        raise PermissionDenied("installer.read_only")
+    ctx.require("project.edit_all")
+
+    normalized = _normalize_project_name(name)
+    prefix = _query_numeric_prefix(name)
+    projects = db.query(Project).filter(Project.deleted_at.is_(None)).order_by(Project.name).all()
+    return [
+        project
+        for project in projects
+        if _normalize_project_name(project.name) == normalized
+        or (prefix is not None and _project_numeric_prefix(project.name) == prefix)
+    ]
+
+
+def create_project(db: Session, *, body: ProjectCreate, ctx: AuthContext, commit: bool = True) -> Project:
+    """Create a project and its audit trail atomically. Permission is checked
+    here as well as by the route so no alternate caller can bypass RBAC.
+    With the default ``commit=True`` the service commits and returns the ORM
+    object; ``commit=False`` leaves the flushed project and audit rows in the
+    caller's transaction, without refreshing or committing, so a route can
+    build its response before deciding to commit."""
+    if is_installer_readonly_scope(ctx):
+        raise PermissionDenied("installer.read_only")
+    ctx.require("project.edit_all")
+
+    name = body.name
+    normalized_name = _normalize_project_name(name)
+    if db.get_bind().dialect.name == "postgresql":
+        # Uma colisão de hash só serializa nomes diferentes em conjunto.
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:normalized_name))"),
+            {"normalized_name": normalized_name},
+        )
+    candidates = db.query(Project).filter(Project.deleted_at.is_(None)).all()
+    if any(_normalize_project_name(project.name) == normalized_name for project in candidates):
+        raise DuplicateProjectName("Já existe um projeto com este nome.")
+
+    pm_person_id = body.pm_person_id
+    if pm_person_id is not None:
+        if pm_person_id not in {person_id for person_id, _ in eligible_project_managers(db)}:
+            raise ValueError("O PM selecionado não existe, está inativo ou não tem o papel de PM.")
+
+    provided_fields = body.model_dump(exclude_unset=True)
+    provided_fields.pop("name", None)
+    provided_fields.pop("pm_person_id", None)
+    try:
+        project = Project(
+            name=name,
+            is_active=True,
+            pm_person_id=pm_person_id,
+            lifecycle_status=body.lifecycle_status,
+        )
+        for field_name, value in provided_fields.items():
+            # `notes` is non-nullable in the model; null means leave its
+            # normal empty-string default in place.
+            if value is not None:
+                setattr(project, field_name, value)
+
+        # A criação pela UI entra no programa agora. A promoção de staging
+        # mantém a data de início do ClickUp, que representa o legado.
+        project.entered_at = dt.datetime.now(dt.timezone.utc)
+        work_window = derive_work_window(project.start_date)
+        if work_window is not None:
+            project.work_start_date, project.work_end_date = work_window
+            project.work_dates_estimated = True
+
+        db.add(project)
+        db.flush()
+
+        audit_values = {"name": name, "lifecycle_status": project.lifecycle_status, **provided_fields}
+        if pm_person_id is not None:
+            audit_values["pm_person_id"] = pm_person_id
+        for field_name, value in audit_values.items():
+            if value is None:
+                continue
+            record_project_change(
+                db,
+                project_id=project.id,
+                field_name=field_name,
+                old_value=None,
+                new_value=str(value),
+                source="ui",
+                changed_by_person_id=ctx.person_id,
+                note="Criação manual via API.",
+            )
+        record_project_change(
+            db,
+            project_id=project.id,
+            field_name="project_created",
+            old_value=None,
+            new_value=str(project.id),
+            source="ui",
+            changed_by_person_id=ctx.person_id,
+            note="Criação manual via API.",
+        )
+
+        if commit:
+            db.commit()
+        return project
+    except IntegrityError as exc:
+        db.rollback()
+        duplicate = any(
+            _normalize_project_name(existing_name) == normalized_name
+            for (existing_name,) in db.query(Project.name)
+            .filter(Project.deleted_at.is_(None))
+            .all()
+        )
+        if duplicate:
+            raise DuplicateProjectName("Já existe um projeto com este nome.") from exc
+        raise
+    except Exception:
+        db.rollback()
+        raise
+
+
+def _utc_isoformat(value: dt.datetime) -> str:
+    """Serializa datas em UTC também quando SQLite remove o tzinfo ao ler."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=dt.timezone.utc)
+    else:
+        value = value.astimezone(dt.timezone.utc)
+    return value.isoformat()
 
 
 @dataclasses.dataclass
@@ -131,8 +304,9 @@ PROJECT_LIST_ORDER = (
 def visible_projects_query(db: Session, ctx: AuthContext) -> Query:
     """Restringe a query à visibilidade do utilizador — nunca devolve tudo
     e filtra depois em Python (evita esquecer o filtro nalgum sítio)."""
+    query = db.query(Project).filter(Project.deleted_at.is_(None))
     if ctx.has_permission("project.view_all"):
-        return db.query(Project)
+        return query
 
     conditions = []
     if ctx.has_permission("project.view_own"):
@@ -141,9 +315,9 @@ def visible_projects_query(db: Session, ctx: AuthContext) -> Query:
         conditions.append(Project.pm_person_id.in_(ctx.delegating_pm_ids))
     conditions.extend(installer_project_scope_conditions(ctx))
     if conditions:
-        return db.query(Project).filter(or_(*conditions))
+        return query.filter(or_(*conditions))
     # Sem nenhuma das permissões, ou sem delegações/associações atribuídas: nada visível.
-    return db.query(Project).filter(False)
+    return query.filter(False)
 
 
 def list_projects(
@@ -183,6 +357,60 @@ def list_projects(
 def get_visible_project(db: Session, ctx: AuthContext, project_id: uuid.UUID) -> Project | None:
     """Read a project through the same SQL scope used by list endpoints."""
     return visible_projects_query(db, ctx).filter(Project.id == project_id).one_or_none()
+
+
+def delete_project(db: Session, *, project: Project, reason: str, ctx: AuthContext) -> Project:
+    """Remove um projeto da operação sem apagar os seus dados nem o histórico."""
+    ctx.require("project.delete")
+    note = reason.strip()
+    if not note:
+        raise ValueError("Indique o motivo da remoção.")
+    if project.deleted_at is not None:
+        raise ValueError("O projeto já está apagado.")
+    deleted_at = dt.datetime.now(dt.timezone.utc)
+    record_project_change(
+        db,
+        project_id=project.id,
+        field_name="deleted_at",
+        old_value=None,
+        new_value=deleted_at.isoformat(),
+        source="ui",
+        changed_by_person_id=ctx.person_id,
+        note=note,
+    )
+    project.deleted_at = deleted_at
+    project.deleted_by_person_id = ctx.person_id
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+def restore_project(db: Session, *, project: Project, ctx: AuthContext) -> Project:
+    """Restaura um projeto apagado, preservando a auditoria de ambas ações."""
+    ctx.require("project.restore")
+    if project.deleted_at is None:
+        raise ValueError("O projeto não está apagado.")
+    deleted_at = project.deleted_at
+    deleted_by_person_id = project.deleted_by_person_id
+    for field_name, old_value in (
+        ("deleted_at", _utc_isoformat(deleted_at)),
+        ("deleted_by_person_id", str(deleted_by_person_id) if deleted_by_person_id else None),
+    ):
+        record_project_change(
+            db,
+            project_id=project.id,
+            field_name=field_name,
+            old_value=old_value,
+            new_value=None,
+            source="ui",
+            changed_by_person_id=ctx.person_id,
+            note="Restauro do projeto via API.",
+        )
+    project.deleted_at = None
+    project.deleted_by_person_id = None
+    db.commit()
+    db.refresh(project)
+    return project
 
 
 def update_project(

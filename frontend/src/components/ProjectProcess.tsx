@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import {
   ApiError,
@@ -7,6 +7,7 @@ import {
   ProcessResponsible,
   ProcessStage,
   setProcessContactDone,
+  setProcessStageSubtasksDone,
   setProcessSubtaskDone,
 } from "../api/client";
 import { formatDatePt } from "../utils/dates";
@@ -54,6 +55,7 @@ export default function ProjectProcess({ projectId }: { projectId: string }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [closedOnly, setClosedOnly] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
@@ -100,6 +102,9 @@ export default function ProjectProcess({ projectId }: { projectId: string }) {
   }
 
   const { summary } = process;
+  const visiblePhases = process.phases
+    .map((phase) => ({ ...phase, stages: closedOnly ? phase.stages.filter((stage) => stage.status === "done") : phase.stages }))
+    .filter((phase) => phase.stages.length > 0);
   return (
     <div className="process">
       <Card title="Progresso do processo" icon="tasks">
@@ -128,9 +133,13 @@ export default function ProjectProcess({ projectId }: { projectId: string }) {
             <Alert tone="danger">{actionError}</Alert>
           </div>
         )}
+        <label className="process__closed-filter" style={{ display: "inline-flex", gap: 8, marginTop: 12 }}>
+          <input type="checkbox" checked={closedOnly} onChange={(event) => setClosedOnly(event.target.checked)} />
+          <span>Etapas fechadas</span>
+        </label>
       </Card>
 
-      {process.phases.map((phase) => (
+      {visiblePhases.map((phase) => (
         <section key={phase.id} className="process__phase" aria-label={phase.name}>
           <h3 className="process__phase-title">
             <span className="process__phase-swatch" style={phaseSwatchStyle(phase.color)} aria-hidden="true" />
@@ -146,6 +155,7 @@ export default function ProjectProcess({ projectId }: { projectId: string }) {
               canUpdate={process.can_update}
               pending={pending}
               onSubtask={(subtaskId, done) => run(`s:${subtaskId}`, () => setProcessSubtaskDone(projectId, subtaskId, done))}
+              onStageSubtasks={(done) => run(`stage:${stage.id}`, () => setProcessStageSubtasksDone(projectId, stage.id, done))}
               onContact={(done) => run(`c:${stage.id}`, () => setProcessContactDone(projectId, stage.id, done))}
             />
           ))}
@@ -162,6 +172,7 @@ function StageCard({
   canUpdate,
   pending,
   onSubtask,
+  onStageSubtasks,
   onContact,
 }: {
   stage: ProcessStage;
@@ -170,10 +181,21 @@ function StageCard({
   canUpdate: boolean;
   pending: string | null;
   onSubtask: (subtaskId: string, done: boolean) => void;
+  onStageSubtasks: (done: boolean) => void;
   onContact: (done: boolean) => void;
 }) {
   const bodyId = `stage-${stage.code}`;
+  const stageActionKey = `stage:${stage.id}`;
+  const stageCanUpdate = stage.can_update ?? canUpdate;
+  const allDone = stage.total_count > 0 && stage.done_count === stage.total_count;
+  const partiallyDone = stage.done_count > 0 && !allDone;
+  const stageCheckboxRef = useRef<HTMLInputElement>(null);
   const r = stage.responsible;
+
+  useEffect(() => {
+    if (stageCheckboxRef.current) stageCheckboxRef.current.indeterminate = partiallyDone;
+  }, [partiallyDone, pending, stage.done_count, stage.id]);
+
   return (
     <div className={`process__stage process__stage--${stage.status}`}>
       <button type="button" className="process__stage-head" aria-expanded={expanded} aria-controls={bodyId} onClick={onToggle}>
@@ -183,12 +205,26 @@ function StageCard({
         <span className="process__stage-title">{stage.title}</span>
         <span className="process__stage-meta">
           <Badge tone={STATUS_TONES[stage.status] ?? "neutral"}>{STATUS_LABELS[stage.status] ?? stage.status}</Badge>
+          {stage.status === "done" && stage.completed_at && <span className="small muted">Concluída em {formatDatePt(stage.completed_at.slice(0, 10))}</span>}
           <span className="small muted">
             {stage.done_count}/{stage.total_count}
           </span>
         </span>
       </button>
       <div className="process__stage-sub small muted">
+        {stage.total_count > 0 && (
+          <label className="process__stage-bulk">
+            <input
+              ref={stageCheckboxRef}
+              type="checkbox"
+              checked={allDone}
+              aria-label={`Marcar todas as subtarefas de ${stage.title}`}
+              disabled={!stageCanUpdate || pending === stageActionKey}
+              onChange={(e) => stageCanUpdate && onStageSubtasks(e.target.checked)}
+            />
+            <span>Concluir etapa</span>
+          </label>
+        )}
         <span className={r.unresolved ? "text-danger" : undefined}>{responsibleText(r)}</span>
         {r.delegated && <> · <Badge tone="info">delegado</Badge></>}
         {stage.planned_start && stage.planned_end && (
@@ -206,8 +242,8 @@ function StageCard({
               <input
                 type="checkbox"
                 checked={stage.contact.done}
-                disabled={!canUpdate || pending === `c:${stage.id}`}
-                onChange={(e) => canUpdate && onContact(e.target.checked)}
+                disabled={!stageCanUpdate || pending === `c:${stage.id}` || pending === stageActionKey}
+                onChange={(e) => stageCanUpdate && onContact(e.target.checked)}
               />
               <span>
                 <strong>{CONTACT_LABELS[stage.contact.kind] ?? stage.contact.kind}</strong>
@@ -226,8 +262,8 @@ function StageCard({
                   <input
                     type="checkbox"
                     checked={t.done}
-                    disabled={!canUpdate || pending === `s:${t.id}`}
-                    onChange={(e) => canUpdate && onSubtask(t.id, e.target.checked)}
+                    disabled={!stageCanUpdate || pending === `s:${t.id}` || pending === stageActionKey}
+                    onChange={(e) => stageCanUpdate && onSubtask(t.id, e.target.checked)}
                   />
                   <span className={t.done ? "process__done" : undefined}>{t.title}</span>
                 </label>

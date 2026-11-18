@@ -1,0 +1,107 @@
+name: op-pm-tailscale
+
+# Instância interna no Tailscale (https://media.tail00ca9b.ts.net:8444).
+# Login real Microsoft Entra ID (Authorization Code + PKCE, SPA pública —
+# sem client secret). Só IDs públicos, nunca segredos.
+
+x-entra: &entra
+  ENTRA_TENANT_ID: af3a3e0b-c5b6-433c-80a6-3e95d9d0be73
+  ENTRA_CLIENT_ID: 9a0e4acc-fb01-4655-9e76-72523a03a2c3
+  # O claim 'scp' do access token traz só o nome curto do scope (sem o
+  # prefixo api://...). O frontend pede o URI completo (VITE_ENTRA_API_SCOPE).
+  ENTRA_REQUIRED_SCOPE: access_as_user
+  ENTRA_VALIDATION_MODE: real
+
+services:
+  demo-setup:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.cli.demo", "setup"]
+    environment: &backend-env
+      <<: *entra
+      APP_ENV: local
+      AUTH_ENABLED: "true"
+      CLAUDE_ENABLED: "false"
+      CLICKUP_ENABLED: "false"
+      CORS_ALLOWED_ORIGINS: https://media.tail00ca9b.ts.net:8444
+      DATABASE_URL: sqlite:////app/data/op_pm_demo.db
+      DEMO_APP_URL: https://media.tail00ca9b.ts.net:8444
+      DEMO_MODE: "true"
+      # Esta instância contém dados reais de clientes (só afeta o aviso de /health e da UI).
+      DEMO_REAL_DATA: "true"
+      FINANCIAL_ENABLED: "false"
+      GRAPH_ENABLED: "false"
+      GRAPH_FALLBACK_DIR: /app/data/outbox
+      # Mapa interno: tiles públicos sem chave. Atribuição obrigatória ao
+      # OpenStreetMap; manter separado das restantes integrações externas.
+      MAP_PROVIDER_ENABLED: "true"
+      MAP_TILE_URL: https://tile.openstreetmap.org/{z}/{x}/{y}.png
+      MAP_TILE_ATTRIBUTION: "&copy; OpenStreetMap contributors"
+      # Ferramenta de dimensionamento de cabos (privada, fora do Git; D-102).
+      CABLE_TOOL_FILE: /run/cable_tool/cabos-engine.js
+    volumes:
+      - op_pm_tailscale_data:/app/data
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: *backend-env
+      OPPM_SECRETS_KEY_FILE: /run/secrets/op_pm/oppm_secrets.key
+    depends_on:
+      demo-setup:
+        condition: service_completed_successfully
+    volumes:
+      - op_pm_tailscale_data:/app/data
+      - /home/stavares/.hermes/private/op_pm_real/cable_design/engine:/run/cable_tool:ro
+      - /home/stavares/.hermes/private/op_pm_secrets/oppm_secrets.key:/run/secrets/op_pm/oppm_secrets.key:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      timeout: 5s
+      interval: 5s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.cli.client_reports", "loop", "--interval", "300"]
+    environment: *backend-env
+    depends_on:
+      demo-setup:
+        condition: service_completed_successfully
+    volumes:
+      - op_pm_tailscale_data:/app/data
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      # Dockerfile de produção (VITE_ENABLE_DEV_LOGIN=false) com o nginx da
+      # demo, que encaminha /api, /me e /health para o backend (mesma origem).
+      dockerfile: Dockerfile.tailscale
+      args:
+        VITE_API_BASE_URL: /
+        VITE_ENTRA_TENANT_ID: af3a3e0b-c5b6-433c-80a6-3e95d9d0be73
+        VITE_ENTRA_CLIENT_ID: 59639867-5d30-4aa9-93ba-32c3ad390a38
+        VITE_ENTRA_API_SCOPE: api://9a0e4acc-fb01-4655-9e76-72523a03a2c3/access_as_user
+        VITE_ENTRA_REDIRECT_URI: https://media.tail00ca9b.ts.net:8444
+        VITE_REAL_DATA_INSTANCE: "true"
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18080:80"
+    restart: unless-stopped
+
+volumes:
+  op_pm_tailscale_data:
+    name: op-pm-tailscale_data

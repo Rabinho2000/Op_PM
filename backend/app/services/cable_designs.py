@@ -4,13 +4,12 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import math
 import string
 import uuid
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import Any, NoReturn
 
-from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models.cable_designs import (
@@ -60,6 +59,15 @@ class CableDesignStorageError(RuntimeError):
 
 _DEFAULT_INPUT: dict[str, Any] = {"format": 1}
 _DEFAULT_RESULT: dict[str, Any] = {}
+
+# The browser engine remains the source of calculations for now.  These limits
+# only bound the shape accepted as approvable content; they are not a claim
+# that the backend independently reproduced the electrical calculation.
+_MAX_APPROVABLE_CIRCUITS = 10_000
+_MAX_APPROVABLE_TEXT = 256
+_MAX_APPROVABLE_NOTE = 2_048
+_MAX_APPROVABLE_KW_AC = 1_000_000.0
+_APPROVABLE_RESULT_FAILURE = "O resultado guardado não está pronto para aprovação."
 
 
 def require_cable_design_view_permission(ctx: AuthContext) -> None:
@@ -170,6 +178,163 @@ def _content_values(
         else 0
     )
     return input_text, result_text, digest, unresolved
+
+
+def _approval_failure() -> NoReturn:
+    raise CableDesignConflictError(_APPROVABLE_RESULT_FAILURE)
+
+
+def _approval_text(value: object, *, max_length: int, allow_empty: bool = False) -> str:
+    if type(value) is not str:
+        _approval_failure()
+    assert isinstance(value, str)  # narrowed for type checkers; JSON is exact
+    if any(ord(char) < 0x20 for char in value):
+        _approval_failure()
+    normalised = value.strip()
+    if not allow_empty and not normalised:
+        _approval_failure()
+    if len(normalised) > max_length:
+        _approval_failure()
+    return normalised
+
+
+def _approval_nonnegative_int(value: object) -> int:
+    if type(value) is not int or value < 0:
+        _approval_failure()
+    assert type(value) is int
+    return value
+
+
+def _approval_input_inverter_count(input_object: dict[str, Any]) -> int | None:
+    """Return native-state inverter count, or None for the D-100 legacy shape.
+
+    D-100 predates the native editor and used a non-empty ``input.circuits``
+    marker.  Keep that shape readable/approvable when the result is otherwise
+    canonical, while rejecting the empty ``{"format": 1}`` placeholder.
+    """
+    state = input_object.get("state")
+    if state is not None:
+        if type(state) is not dict or not state:
+            _approval_failure()
+        invs = state.get("invs")
+        percs = state.get("percs")
+        if type(invs) is not list or type(percs) is not list:
+            _approval_failure()
+        if not invs and not percs:
+            _approval_failure()
+        if not all(isinstance(item, Mapping) for item in [*invs, *percs]):
+            _approval_failure()
+        return len(invs)
+
+    legacy_circuits = input_object.get("circuits")
+    if (
+        type(legacy_circuits) is list
+        and legacy_circuits
+        and all(isinstance(item, Mapping) for item in legacy_circuits)
+    ):
+        return None
+    _approval_failure()
+
+
+def _validate_approvable_result(
+    input_object: dict[str, Any],
+    result_object: dict[str, Any],
+    *,
+    revision_engine_version: str,
+) -> int:
+    """Validate the browser persisted-result envelope before approval.
+
+    This is deliberately a confidence boundary, not a calculation verifier:
+    the browser engine still supplies the numerical result until an
+    authoritative server-side runtime is introduced.
+    """
+    if type(result_object.get("format")) is not int or result_object.get("format") != 1:
+        _approval_failure()
+    result_engine_version = _approval_text(
+        result_object.get("engine_version"), max_length=_MAX_APPROVABLE_TEXT
+    )
+    if result_engine_version != revision_engine_version:
+        _approval_failure()
+
+    circuits = result_object.get("circuits")
+    if type(circuits) is not list or not circuits:
+        _approval_failure()
+    if len(circuits) > _MAX_APPROVABLE_CIRCUITS:
+        _approval_failure()
+
+    review_count = 0
+    for circuit in circuits:
+        if type(circuit) is not dict:
+            _approval_failure()
+        _approval_text(circuit.get("code"), max_length=_MAX_APPROVABLE_TEXT)
+        _approval_text(circuit.get("name"), max_length=_MAX_APPROVABLE_TEXT)
+        if type(circuit.get("review")) is not bool:
+            _approval_failure()
+        if circuit["review"] is True:
+            review_count += 1
+        if "note" in circuit:
+            _approval_text(
+                circuit["note"], max_length=_MAX_APPROVABLE_NOTE, allow_empty=True
+            )
+
+    totals = result_object.get("totals")
+    if type(totals) is not dict:
+        _approval_failure()
+    circuits_total = _approval_nonnegative_int(totals.get("circuits"))
+    review_total = _approval_nonnegative_int(totals.get("review"))
+    inverters_total = _approval_nonnegative_int(totals.get("inverters"))
+    if circuits_total != len(circuits) or review_total != review_count:
+        _approval_failure()
+    if inverters_total > circuits_total or inverters_total > _MAX_APPROVABLE_CIRCUITS:
+        _approval_failure()
+    if "kw_ac" in totals:
+        kw_ac = totals["kw_ac"]
+        if isinstance(kw_ac, bool):
+            _approval_failure()
+        elif type(kw_ac) is int:
+            if kw_ac < 0 or kw_ac > _MAX_APPROVABLE_KW_AC:
+                _approval_failure()
+        elif type(kw_ac) is float:
+            if (
+                not math.isfinite(kw_ac)
+                or kw_ac < 0
+                or kw_ac > _MAX_APPROVABLE_KW_AC
+            ):
+                _approval_failure()
+        else:
+            _approval_failure()
+
+    state_inverters = _approval_input_inverter_count(input_object)
+    if state_inverters is not None and inverters_total != state_inverters:
+        _approval_failure()
+    return review_count
+
+
+def _validate_persisted_revision_for_approval(
+    revision: CableDesignRevision,
+) -> int:
+    """Re-read and validate persisted content; never trust the counter alone."""
+    try:
+        input_object = _decode_object(revision.input_json, field_name="input_json")
+        result_object = _decode_object(revision.result_json, field_name="result_json")
+        review_count = _validate_approvable_result(
+            input_object,
+            result_object,
+            revision_engine_version=revision.engine_version,
+        )
+        input_text = _canonical_json(input_object, field_name="input", require_format=True)
+        result_text = _canonical_json(result_object, field_name="result")
+    except CableDesignConflictError:
+        raise
+    except (CableDesignPayloadTooLargeError, CableDesignStorageError, CableDesignValidationError) as exc:
+        raise CableDesignConflictError(_APPROVABLE_RESULT_FAILURE) from exc
+
+    digest = hashlib.sha256((input_text + result_text).encode("utf-8")).hexdigest()
+    if digest != revision.content_sha256:
+        raise CableDesignConflictError(_APPROVABLE_RESULT_FAILURE)
+    if type(revision.unresolved_circuits) is not int or revision.unresolved_circuits != review_count:
+        raise CableDesignConflictError(_APPROVABLE_RESULT_FAILURE)
+    return review_count
 
 
 def _decode_object(value: str, *, field_name: str) -> dict[str, Any]:
@@ -486,7 +651,8 @@ def approve_cable_design(
     revision = _current_revision(db, design)
     if design.status == CABLE_DESIGN_STATUS_APPROVED or revision.status == CABLE_REVISION_STATUS_APPROVED:
         raise CableDesignLockedError("A revisão aprovada é imutável.")
-    if revision.unresolved_circuits > 0:
+    review_count = _validate_persisted_revision_for_approval(revision)
+    if review_count > 0:
         raise CableDesignConflictError("O estudo tem circuitos a rever.")
 
     old_value = _short_state(design, revision)

@@ -1,0 +1,168 @@
+.requests-page {
+  display: grid;
+  gap: 20px;
+}
+
+.requests-page__layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.9fr) minmax(0, 1.4fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.requests-page__filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.requests-page__list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.requests-page__item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.requests-page__item:hover,
+.requests-page__item--selected {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.requests-page__item-main,
+.requests-page__item-aside {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.requests-page__item-main {
+  flex: 1;
+}
+
+.requests-page__item-main strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.requests-page__item-aside {
+  flex: 0 0 auto;
+  justify-items: end;
+}
+
+.requests-page__conversation {
+  display: grid;
+  gap: 16px;
+}
+
+.requests-page__conversation-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.requests-page__conversation-head > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.requests-page__messages {
+  display: grid;
+  gap: 10px;
+  max-height: min(52vh, 560px);
+  overflow: auto;
+  margin: 0;
+  padding: 0 2px 0 0;
+  list-style: none;
+}
+
+.requests-page__message {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.requests-page__message--staff {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+}
+
+.requests-page__message-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 5px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.requests-page__message p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.requests-page__reply {
+  display: grid;
+  gap: 12px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.requests-page__action-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.88rem;
+}
+
+@media (max-width: 1000px) {
+  .requests-page__layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .requests-page__messages {
+    max-height: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .requests-page__item,
+  .requests-page__conversation-head {
+    flex-wrap: wrap;
+  }
+
+  .requests-page__filter {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .requests-page__filter .select {
+    flex: 1;
+  }
+}

@@ -5,7 +5,7 @@ import datetime as dt
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, field_validator, model_validator
 
 from app.services.project_lifecycle import LIFECYCLE_STATUS_CODES
 
@@ -17,11 +17,25 @@ PROJECT_LIST_COLUMNS: tuple[str, ...] = (
     "next_task",
     "overdue",
     "warnings",
+    "payments",
     "installer",
     "start_date",
     "power_kwp",
+    "client",
+    "address",
+    "contact",
+    "notes",
 )
-PROJECT_LIST_DEFAULT_COLUMNS: tuple[str, ...] = PROJECT_LIST_COLUMNS[:7]
+PROJECT_LIST_DEFAULT_COLUMNS: tuple[str, ...] = (
+    "project",
+    "pm",
+    "lifecycle",
+    "payments",
+    "progress",
+    "next_task",
+    "overdue",
+    "warnings",
+)
 PROJECT_LIST_SORT_FIELDS = frozenset({"name", "start_date", "power_kwp", "created_at"})
 PROJECT_LIST_SORT_DIRECTIONS = frozenset({"asc", "desc"})
 PROJECT_LIST_STATUSES = frozenset({"", "nao_iniciado", "em_curso", "concluido"})
@@ -29,6 +43,14 @@ PROJECT_LIST_ACTIVE_FILTERS = frozenset({"active", "inactive", "all"})
 PROJECT_LIST_MAX_SEARCH_LENGTH = 200
 PROJECT_LIST_MAX_COLUMNS = len(PROJECT_LIST_COLUMNS)
 PROJECT_LIST_MAX_LIFECYCLE = len(LIFECYCLE_STATUS_CODES)
+
+
+class ProjectListRowOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    show_row_actions: StrictBool = True
+    show_warning_tags: StrictBool = True
+    inline_controls: StrictBool = True
 
 
 class ProjectListFilters(BaseModel):
@@ -101,6 +123,7 @@ class ProjectListConfig(BaseModel):
     sort_by: StrictStr
     sort_direction: StrictStr
     filters: ProjectListFilters
+    row_options: ProjectListRowOptions = Field(default_factory=ProjectListRowOptions)
 
     @field_validator("columns")
     @classmethod
@@ -109,8 +132,6 @@ class ProjectListConfig(BaseModel):
             raise ValueError("A lista de colunas não pode conter valores repetidos.")
         if any(value not in PROJECT_LIST_COLUMNS for value in values):
             raise ValueError("A lista de colunas contém um valor desconhecido.")
-        if values[0] != "project":
-            raise ValueError("A coluna project tem de ser a primeira.")
         return values
 
     @field_validator("sort_by")

@@ -26,6 +26,8 @@ class UserWorksPreference(UUIDPk, TimestampMixin, Base):
     installer_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("installers.id"), nullable=True
     )
+    # NULL means a pre-multi-select row; reads fall back to installer_id.
+    installer_ids: Mapped[list[str] | None] = mapped_column(JSON, default=list, nullable=True)
     team_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("installer_teams.id"), nullable=True
     )

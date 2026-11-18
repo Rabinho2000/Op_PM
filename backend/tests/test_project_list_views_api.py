@@ -6,9 +6,14 @@ import uuid
 from sqlalchemy import text
 
 DEFAULT_CONFIG = {
-    "columns": ["project", "pm", "lifecycle", "progress", "next_task", "overdue", "warnings"],
+    "columns": ["project", "pm", "lifecycle", "payments", "progress", "next_task", "overdue", "warnings"],
     "sort_by": "name",
     "sort_direction": "asc",
+    "row_options": {
+        "show_row_actions": True,
+        "show_warning_tags": True,
+        "inline_controls": True,
+    },
     "filters": {
         "search": "",
         "status": "",
@@ -85,6 +90,71 @@ def test_project_list_preferences_put_is_an_account_owned_upsert_and_replays(db_
     ).scalar_one() == 1
 
 
+def test_preferences_accept_custom_column_order_new_columns_and_strict_row_options(api_client):
+    custom = _config()
+    custom["columns"] = ["notes", "client", "address", "contact", "project", "pm"]
+    custom["row_options"] = {
+        "show_row_actions": False,
+        "show_warning_tags": False,
+        "inline_controls": False,
+    }
+
+    written = api_client.put(
+        "/api/me/project-list-preferences",
+        json={"config": custom},
+        headers=_headers(PM_UM),
+    )
+    assert written.status_code == 200, written.text
+    assert written.json() == {"config": custom}
+
+    replay = api_client.get(
+        "/api/me/project-list-preferences", headers=_headers(PM_UM)
+    )
+    assert replay.status_code == 200
+    assert replay.json() == {"config": custom}
+
+    other = api_client.get(
+        "/api/me/project-list-preferences", headers=_headers(CHEFE)
+    )
+    assert other.status_code == 200
+    assert other.json() == {"config": DEFAULT_CONFIG}
+
+    invalid_configs = [
+        {**custom, "columns": ["notes", "unknown"]},
+        {**custom, "columns": ["notes", "client", "notes"]},
+        {**custom, "row_options": {**custom["row_options"], "unexpected": True}},
+        {**custom, "row_options": {**custom["row_options"], "show_row_actions": 1}},
+        {**custom, "row_options": {**custom["row_options"], "inline_controls": "false"}},
+        {**custom, "row_options": None},
+    ]
+    for invalid in invalid_configs:
+        response = api_client.put(
+            "/api/me/project-list-preferences",
+            json={"config": invalid},
+            headers=_headers(PM_UM),
+        )
+        assert response.status_code == 422, (invalid, response.text)
+
+    # The rejected writes must not replace the successfully saved config.
+    assert api_client.get(
+        "/api/me/project-list-preferences", headers=_headers(PM_UM)
+    ).json() == {"config": custom}
+
+
+def test_legacy_config_without_row_options_uses_current_behavior_defaults(api_client):
+    legacy = _config()
+    legacy.pop("row_options")
+    response = api_client.put(
+        "/api/me/project-list-preferences",
+        json={"config": legacy},
+        headers=_headers(PM_UM),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["config"]["columns"] == legacy["columns"]
+    assert response.json()["config"]["row_options"] == DEFAULT_CONFIG["row_options"]
+
+
 def test_project_list_preferences_reject_invalid_config_without_mutation(api_client):
     before = _config()
     created = api_client.put(
@@ -97,7 +167,6 @@ def test_project_list_preferences_reject_invalid_config_without_mutation(api_cli
     invalid_configs = [
         {**before, "unexpected": True},
         {**before, "columns": ["project", "project"]},
-        {**before, "columns": ["pm", "project"]},
         {**before, "columns": ["project", "unknown"]},
         {**before, "sort_by": "unknown"},
         {**before, "sort_direction": None},
@@ -261,6 +330,39 @@ def test_project_list_views_patch_replaces_config_duplicate_is_409_and_delete_is
     )
     assert reused.status_code == 201, reused.text
     assert db_session.query(ProjectListView).filter(ProjectListView.name == "Vista Atualizada").count() == 2
+
+
+def test_saved_view_round_trips_personal_order_row_options_and_new_columns(api_client):
+    config = _config()
+    config["columns"] = ["contact", "notes", "address", "client", "project"]
+    config["row_options"] = {
+        "show_row_actions": True,
+        "show_warning_tags": False,
+        "inline_controls": False,
+    }
+    created = api_client.post(
+        "/api/me/project-list-views",
+        json={"name": "Vista personalizada", "config": config},
+        headers=_headers(PM_UM),
+    )
+    assert created.status_code == 201, created.text
+    view_id = created.json()["id"]
+    assert created.json()["config"] == config
+
+    listed = api_client.get(
+        "/api/me/project-list-views", headers=_headers(PM_UM)
+    )
+    assert listed.status_code == 200
+    assert listed.json()[0]["config"] == config
+
+    patched_config = {**config, "columns": ["project", "notes", "contact"]}
+    patched = api_client.patch(
+        f"/api/me/project-list-views/{view_id}",
+        json={"config": patched_config},
+        headers=_headers(PM_UM),
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["config"] == patched_config
 
 
 def test_installer_readonly_scope_cannot_use_new_project_list_settings_surface(db_session, api_client):

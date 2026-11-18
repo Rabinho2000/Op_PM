@@ -1,5 +1,6 @@
+import { readFileSync } from "node:fs";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type Installer, type WorkItem, type WorksCalendar } from "../api/client";
 import { ToastProvider } from "../components/Toast";
@@ -154,6 +155,34 @@ function renderWorksForAccount(me: ReturnType<typeof makeMe>) {
   );
 }
 
+function MemoryHistoryControls() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  return (
+    <>
+      <output data-testid="current-url">{location.pathname}{location.search}</output>
+      <button type="button" onClick={() => navigate(-1)}>Voltar no histórico</button>
+      <button type="button" onClick={() => navigate(1)}>Avançar no histórico</button>
+      <button type="button" onClick={() => navigate("/works?zoom=months&inst=i-gps&equipa=t-2")}>Mudar diretamente para Instalador B</button>
+    </>
+  );
+}
+
+function renderWorksWithHistory(initialEntry: string) {
+  return render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <StaticSessionProvider me={manager()}>
+        <ToastProvider>
+          <MemoryHistoryControls />
+          <Routes>
+            <Route path="/works" element={<Works />} />
+          </Routes>
+        </ToastProvider>
+      </StaticSessionProvider>
+    </MemoryRouter>
+  );
+}
+
 describe("Works (calendário de obras)", () => {
   it("aplica uma vista nomeada, atualiza filtros e recarrega sem perder a data escolhida", async () => {
     listSavedWorksViews.mockResolvedValue([
@@ -194,7 +223,7 @@ describe("Works (calendário de obras)", () => {
       from: windowFrom("quarters", "2026-10-05").from,
       pm_person_id: "p-pm",
       lifecycle_status: ["construcao"],
-      installer_id: "i-vm",
+      installer_ids: ["i-vm"],
       team_id: "t-1",
     });
   });
@@ -267,7 +296,7 @@ describe("Works (calendário de obras)", () => {
         zoom: "month_days",
         lifecycle_status: ["construcao"],
         pm_person_id: "p-pm",
-        installer_id: "i-vm",
+        installer_ids: ["i-vm"],
         team_id: "t-1",
         show_idle: true,
       })
@@ -349,6 +378,7 @@ describe("Works (calendário de obras)", () => {
   });
 
   beforeEach(() => {
+    localStorage.removeItem("op:works-density:u-chefe");
     [
       getWorksCalendar,
       listInstallers,
@@ -389,6 +419,98 @@ describe("Works (calendário de obras)", () => {
     );
   });
 
+  it("desenha o foco visível dentro do viewport sem alargar o foco a elementos filhos", () => {
+    const css = readFileSync("src/pages/Works.css", "utf8");
+    const focusRule = css.match(/\.works__timeline-viewport:focus-visible\s*\{([^}]*)\}/)?.[1];
+    expect(focusRule).toBeDefined();
+    expect(focusRule).toMatch(/var\(--focus-color\)/);
+
+    const hasInsetFocusRing = /box-shadow\s*:\s*inset\b[^;]*var\(--focus-color\)/.test(focusRule!);
+    const negativeOutlineOffset = focusRule!.match(/outline-offset\s*:\s*(-[\d.]+)(?:px|rem|em)\s*;/)?.[1];
+    expect(hasInsetFocusRing || (negativeOutlineOffset !== undefined && Number(negativeOutlineOffset) < 0)).toBe(true);
+    expect(css).not.toMatch(/\.works__timeline-viewport:focus-within\b/);
+  });
+
+  it("mantém os controlos agrupados e permite deslocar a linha do tempo pelo teclado", async () => {
+    renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+    await screen.findByRole("link", { name: /Obra Alfa/ });
+
+    expect(screen.getByRole("region", { name: "Controlos do calendário de obras" })).toBeInTheDocument();
+    expect(screen.getByRole("search", { name: "Filtros do calendário de obras" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Meses" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Normal" })).toHaveAttribute("aria-pressed", "true");
+
+    const viewport = screen.getByRole("group", { name: "Linha do tempo. Use as setas esquerda e direita para deslocar horizontalmente." });
+    expect(viewport).toHaveAttribute("tabindex", "0");
+    expect(viewport.parentElement).toHaveStyle({ overflow: "hidden" });
+    const scroller = document.querySelector<HTMLElement>(".works__scroll");
+    expect(scroller).toBeTruthy();
+    Object.defineProperty(scroller, "clientWidth", { configurable: true, value: 400 });
+    scroller!.scrollLeft = 0;
+
+    fireEvent.keyDown(viewport, { key: "ArrowRight" });
+    expect(scroller!.scrollLeft).toBe(320);
+    fireEvent.keyDown(viewport, { key: "ArrowLeft" });
+    expect(scroller!.scrollLeft).toBe(0);
+
+    const workLink = screen.getByRole("link", { name: /Obra Alfa/ });
+    workLink.focus();
+    fireEvent.keyDown(workLink, { key: "ArrowRight" });
+    expect(workLink).toHaveFocus();
+    expect(scroller!.scrollLeft).toBe(0);
+  });
+
+  it("aplica e persiste a densidade local por utilizador", async () => {
+    const rendered = renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+    await screen.findByText("Obra Alfa");
+
+    const page = document.querySelector(".works-page");
+    const bar = screen.getByRole("link", { name: /Obra Alfa/ });
+    expect(page).toHaveClass("works-page--density-normal");
+    expect(bar).toHaveStyle({ height: "38px", width: "7px" });
+    expect(screen.getByRole("button", { name: "Normal" })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Grande" }));
+
+    expect(page).toHaveClass("works-page--density-grande");
+    expect(bar).toHaveStyle({ height: "46px", width: "9px" });
+    expect(screen.getByRole("button", { name: "Grande" })).toHaveAttribute("aria-pressed", "true");
+    expect(updateWorksPreferences).not.toHaveBeenCalled();
+    expect(localStorage.getItem("op:works-density:u-chefe")).toBe("grande");
+
+    rendered.unmount();
+    renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+    await screen.findByText("Obra Alfa");
+    expect(document.querySelector(".works-page")).toHaveClass("works-page--density-grande");
+    expect(screen.getByRole("button", { name: "Grande" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("mantém a densidade isolada por utilizador ao trocar de conta", async () => {
+    const userA = makeMe({ user_id: "u-density-a" });
+    const userB = makeMe({ user_id: "u-density-b" });
+    localStorage.setItem("op:works-density:u-density-b", "compacto");
+    const rendered = renderWorksForAccount(userA);
+    await screen.findByText("Obra Alfa");
+    fireEvent.click(screen.getByRole("button", { name: "Grande" }));
+    expect(localStorage.getItem("op:works-density:u-density-a")).toBe("grande");
+
+    rendered.rerender(
+      <MemoryRouter initialEntries={["/works"]}>
+        <StaticSessionProvider me={userB}>
+          <ToastProvider>
+            <Routes>
+              <Route path="/works" element={<Works />} />
+            </Routes>
+          </ToastProvider>
+        </StaticSessionProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(document.querySelector(".works-page")).toHaveClass("works-page--density-compacto"));
+    expect(screen.getByRole("button", { name: "Compacto" })).toHaveAttribute("aria-pressed", "true");
+    expect(localStorage.getItem("op:works-density:u-density-a")).toBe("grande");
+  });
+
   it("pede a janela por omissão (-3/+6 meses, D10) e mostra o resumo", async () => {
     renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
     expect(await screen.findByText("Obra Alfa")).toBeInTheDocument();
@@ -422,6 +544,7 @@ describe("Works (calendário de obras)", () => {
     expect(alfa.getAttribute("aria-label")).toMatch(/Instalador A \/ Equipa 1/);
     expect(alfa.getAttribute("aria-label")).toMatch(/Conflito: a equipa tem outra obra sobreposta/);
     expect(alfa.getAttribute("aria-label")).toMatch(/PM PM Um/);
+    expect(alfa.querySelector(".works__barname")).toHaveAttribute("title", "Obra Alfa");
 
     const gama = screen.getByRole("link", { name: /Obra Gama/ });
     expect(gama).toHaveClass("works__bar--estimated");
@@ -440,6 +563,32 @@ describe("Works (calendário de obras)", () => {
     expect(a).not.toBe(b);
   });
 
+  it("não mostra equipas idle de instaladores fora da seleção", async () => {
+    const installersWithIdleBeta = INSTALLERS.map((installer) => installer.id === "i-gps"
+      ? {
+          ...installer,
+          teams: [{
+            id: "t-beta-idle",
+            name: "Equipa Beta ociosa",
+            leader_name: null,
+            leader_phone: null,
+            is_active: true,
+            project_count: 0,
+          }],
+        }
+      : installer);
+    listInstallers.mockResolvedValueOnce(installersWithIdleBeta);
+    const today = todayIsoLisbon();
+    getWorksCalendar.mockResolvedValueOnce(calendar([work("a", today, today, { name: "Obra Alfa" })]));
+
+    renderWithProviders(<Works />, { me: manager(), route: "/works?zoom=months&inst=i-vm&idle=1", path: "/works" });
+
+    expect(await screen.findByText("Obra Alfa")).toBeInTheDocument();
+    const timeline = screen.getByRole("group", { name: "Linha do tempo. Use as setas esquerda e direita para deslocar horizontalmente." });
+    expect(within(timeline).getByText("Equipa 2")).toBeInTheDocument();
+    expect(within(timeline).queryByText("Equipa Beta ociosa")).not.toBeInTheDocument();
+  });
+
   it("filtra por PM, instalador e estados (vários) no servidor", async () => {
     renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
     await screen.findByText("Obra Alfa");
@@ -448,7 +597,8 @@ describe("Works (calendário de obras)", () => {
     fireEvent.change(screen.getByLabelText("PM"), { target: { value: "p-pm" } });
     await waitFor(() => expect(lastParams().pm_person_id).toBe("p-pm"));
 
-    fireEvent.click(screen.getByText("Todos", { selector: "summary" }));
+    const lifecycleFilter = screen.getByText("Estado da obra").parentElement;
+    fireEvent.click(within(lifecycleFilter!).getByText("Todos", { selector: "summary" }));
     fireEvent.click(await screen.findByLabelText("Construção"));
     fireEvent.click(screen.getByLabelText("On hold pelo cliente"));
     await waitFor(() => expect(lastParams().lifecycle_status).toEqual(["construcao", "on_hold_cliente"]));
@@ -456,22 +606,121 @@ describe("Works (calendário de obras)", () => {
     fireEvent.click(screen.getByLabelText("Construção")); // desmarcar
     await waitFor(() => expect(lastParams().lifecycle_status).toEqual(["on_hold_cliente"]));
 
-    fireEvent.change(screen.getByLabelText("Instalador"), { target: { value: "i-vm" } });
-    await waitFor(() => expect(lastParams().installer_id).toBe("i-vm"));
+    fireEvent.click(screen.getByRole("button", { name: /^Instalador:/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Instalador A" }));
+    await waitFor(() => expect(lastParams().installer_ids).toEqual(["i-vm"]));
     // Com um instalador escolhido só se oferecem as equipas dele.
     const team = screen.getByLabelText("Equipa") as HTMLSelectElement;
     expect([...team.options].map((o) => o.text)).toEqual(["Todas as equipas", "Equipa 1", "Equipa 2"]);
     fireEvent.change(team, { target: { value: "t-2" } });
     await waitFor(() => expect(lastParams().team_id).toBe("t-2"));
 
-    // Mudar de instalador limpa a equipa.
-    fireEvent.change(screen.getByLabelText("Instalador"), { target: { value: "i-gps" } });
-    await waitFor(() => expect(lastParams().team_id).toBeUndefined());
+    // Manter A e B selecionados não invalida a equipa de A; remover A
+    // enquanto B continua selecionado tem de a limpar.
+    fireEvent.click(screen.getByRole("checkbox", { name: "Instalador B" }));
+    await waitFor(() => expect(lastParams().installer_ids).toEqual(["i-vm", "i-gps"]));
+    expect(lastParams().team_id).toBe("t-2");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Instalador A" }));
+    await waitFor(() => {
+      expect(lastParams().installer_ids).toEqual(["i-gps"]);
+      expect(lastParams().team_id).toBeUndefined();
+    });
 
     fireEvent.click(screen.getByRole("button", { name: /Limpar filtros/ }));
     await waitFor(() =>
-      expect(lastParams()).toMatchObject({ pm_person_id: undefined, lifecycle_status: undefined, installer_id: undefined, team_id: undefined })
+      expect(lastParams()).toMatchObject({ pm_person_id: undefined, lifecycle_status: undefined, installer_ids: undefined, team_id: undefined })
     );
+  });
+
+  it("limpa a equipa de A ao trocar diretamente a seleção de A para B", async () => {
+    renderWorksWithHistory("/works?zoom=months&inst=i-vm&equipa=t-2");
+    await screen.findByText("Obra Alfa");
+    await waitFor(() => expect(lastParams()).toMatchObject({ installer_ids: ["i-vm"], team_id: "t-2" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Mudar diretamente para Instalador B" }));
+
+    await waitFor(() => expect(lastParams()).toMatchObject({ installer_ids: ["i-gps"], team_id: undefined }));
+    expect(new URLSearchParams(screen.getByTestId("current-url").textContent?.split("?")[1]).has("equipa")).toBe(false);
+  });
+
+  it("seleciona vários instaladores, preserva-os no URL e no histórico", async () => {
+    renderWorksWithHistory("/works?zoom=months&inst=i-vm");
+    await screen.findByText("Obra Alfa");
+
+    fireEvent.click(screen.getByRole("button", { name: /^Instalador:/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Instalador B" }));
+
+    await waitFor(() => expect(lastParams().installer_ids).toEqual(["i-vm", "i-gps"]));
+    expect(new URLSearchParams(screen.getByTestId("current-url").textContent?.split("?")[1]).getAll("inst")).toEqual(["i-vm", "i-gps"]);
+    expect(screen.getByRole("button", { name: /^Instalador:/ })).toHaveTextContent("2 instaladores");
+
+    fireEvent.click(screen.getByRole("button", { name: "Voltar no histórico" }));
+    await waitFor(() => expect(new URLSearchParams(screen.getByTestId("current-url").textContent?.split("?")[1]).getAll("inst")).toEqual(["i-vm"]));
+    await waitFor(() => expect(lastParams().installer_ids).toEqual(["i-vm"]));
+
+    fireEvent.click(screen.getByRole("button", { name: "Avançar no histórico" }));
+    await waitFor(() => expect(new URLSearchParams(screen.getByTestId("current-url").textContent?.split("?")[1]).getAll("inst")).toEqual(["i-vm", "i-gps"]));
+    await waitFor(() => expect(lastParams().installer_ids).toEqual(["i-vm", "i-gps"]));
+  });
+
+  it("fixa preferências e cria vista nomeada com installer_ids", async () => {
+    const prompt = vi.spyOn(window, "prompt").mockReturnValue("Dois instaladores");
+    createSavedWorksView.mockResolvedValue({
+      id: "view-multi",
+      name: "Dois instaladores",
+      zoom: "months",
+      lifecycle_status: [],
+      pm_person_id: null,
+      installer_ids: ["i-vm", "i-gps"],
+      installer_id: null,
+      team_id: null,
+      show_idle: false,
+      created_at: "2026-10-15T09:00:00Z",
+      updated_at: "2026-10-15T09:00:00Z",
+    });
+    renderWorksWithHistory("/works?zoom=months&inst=i-vm&inst=i-gps");
+    await screen.findByText("Obra Alfa");
+
+    fireEvent.click(screen.getByRole("button", { name: "Fixar vista" }));
+    await waitFor(() => expect(updateWorksPreferences).toHaveBeenCalledWith(expect.objectContaining({ installer_ids: ["i-vm", "i-gps"] })));
+    expect(updateWorksPreferences.mock.calls[0][0]).not.toHaveProperty("installer_id");
+
+    fireEvent.click(screen.getByRole("button", { name: /Guardar vista atual como/ }));
+    await waitFor(() => expect(createSavedWorksView).toHaveBeenCalledWith(expect.objectContaining({ installer_ids: ["i-vm", "i-gps"] })));
+    expect(createSavedWorksView.mock.calls[0][0]).not.toHaveProperty("installer_id");
+    prompt.mockRestore();
+  });
+
+  it("aplica vistas guardadas com installer_ids e continua a ler respostas legadas", async () => {
+    listSavedWorksViews.mockResolvedValue([{
+      id: "view-multi",
+      name: "Dois instaladores",
+      zoom: "months",
+      lifecycle_status: [],
+      pm_person_id: null,
+      installer_ids: ["i-vm", "i-gps"],
+      team_id: null,
+      show_idle: false,
+      created_at: "2026-10-15T09:00:00Z",
+      updated_at: "2026-10-15T09:00:00Z",
+    }]);
+    applySavedWorksView.mockResolvedValue({
+      zoom: "months",
+      lifecycle_status: [],
+      pm_person_id: null,
+      installer_ids: ["i-vm", "i-gps"],
+      team_id: null,
+      show_idle: false,
+    });
+    renderWithProviders(<Works />, { me: manager(), route: "/works", path: "/works" });
+    await screen.findByRole("option", { name: "Dois instaladores" });
+    fireEvent.change(screen.getByLabelText("Vistas guardadas"), { target: { value: "view-multi" } });
+    fireEvent.click(screen.getByRole("button", { name: "Aplicar vista" }));
+
+    await waitFor(() => expect(lastParams().installer_ids).toEqual(["i-vm", "i-gps"]));
+    fireEvent.click(screen.getByRole("button", { name: /^Instalador:/ }));
+    expect(await screen.findByRole("checkbox", { name: "Instalador A" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Instalador B" })).toBeChecked();
   });
 
   it("lê janela, escala e filtros do URL (vista partilhável)", async () => {
@@ -487,7 +736,7 @@ describe("Works (calendário de obras)", () => {
       to: w.to,
       pm_person_id: "p-pm",
       lifecycle_status: ["construcao", "preparacao"],
-      installer_id: "i-vm",
+      installer_ids: ["i-vm"],
       team_id: "t-1",
     });
     expect(totalDays(w)).toBe(70);
@@ -565,7 +814,7 @@ describe("Works (calendário de obras)", () => {
       zoom: "month_days",
       lifecycle_status: [],
       pm_person_id: "p-pm",
-      installer_id: null,
+      installer_ids: [],
       team_id: null,
       show_idle: false,
     });
@@ -787,7 +1036,7 @@ describe("Works (calendário de obras)", () => {
       zoom: "month_days",
       lifecycle_status: [],
       pm_person_id: null,
-      installer_id: null,
+      installer_ids: [],
       team_id: null,
       show_idle: false,
     }));

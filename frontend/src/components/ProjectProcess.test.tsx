@@ -4,15 +4,16 @@ import type { ProcessRead, ProcessStage } from "../api/client";
 import { renderWithProviders } from "../test/render";
 import ProjectProcess, { responsibleText } from "./ProjectProcess";
 
-const { getProjectProcess, setProcessSubtaskDone, setProcessContactDone } = vi.hoisted(() => ({
+const { getProjectProcess, setProcessSubtaskDone, setProcessContactDone, setProcessStageSubtasksDone } = vi.hoisted(() => ({
   getProjectProcess: vi.fn(),
   setProcessSubtaskDone: vi.fn(),
   setProcessContactDone: vi.fn(),
+  setProcessStageSubtasksDone: vi.fn(),
 }));
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
-  return { ...actual, getProjectProcess, setProcessSubtaskDone, setProcessContactDone };
+  return { ...actual, getProjectProcess, setProcessSubtaskDone, setProcessContactDone, setProcessStageSubtasksDone };
 });
 
 function stage(overrides: Partial<ProcessStage> = {}): ProcessStage {
@@ -27,6 +28,7 @@ function stage(overrides: Partial<ProcessStage> = {}): ProcessStage {
     end_day: 5,
     planned_start: "2026-05-04",
     planned_end: "2026-05-08",
+    completed_at: null,
     status: "active",
     done_count: 1,
     total_count: 2,
@@ -62,7 +64,7 @@ describe("responsibleText", () => {
 
 describe("ProjectProcess", () => {
   beforeEach(() => {
-    [getProjectProcess, setProcessSubtaskDone, setProcessContactDone].forEach((m) => m.mockReset());
+    [getProjectProcess, setProcessSubtaskDone, setProcessContactDone, setProcessStageSubtasksDone].forEach((m) => m.mockReset());
     getProjectProcess.mockResolvedValue(process());
   });
 
@@ -76,6 +78,23 @@ describe("ProjectProcess", () => {
     expect(screen.getByText(/04\/05\/2026 a 08\/05\/2026/)).toBeInTheDocument();
     expect(screen.getByText("Em curso")).toBeInTheDocument();
     expect(getProjectProcess).toHaveBeenCalledWith("p-1");
+  });
+
+  it("mostra a data de fecho e filtra a lista de etapas fechadas", async () => {
+    getProjectProcess.mockResolvedValue(
+      process({}, [
+        stage({ id: "closed", code: "etapa-fechada", title: "Etapa fechada", status: "done", completed_at: "2026-05-06T09:00:00Z" }),
+        stage({ id: "open", code: "etapa-aberta", title: "Etapa aberta", status: "active" }),
+      ])
+    );
+    renderWithProviders(<ProjectProcess projectId="p-1" />);
+    await screen.findByText("Etapa fechada");
+    expect(screen.getByText("Concluída em 06/05/2026")).toBeInTheDocument();
+    expect(screen.getByText("Etapa aberta")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Etapas fechadas"));
+    expect(screen.getByText("Etapa fechada")).toBeInTheDocument();
+    expect(screen.queryByText("Etapa aberta")).not.toBeInTheDocument();
   });
 
   it("mantém nomes e estados legíveis e usa phase.color só em swatches contrastados", async () => {
@@ -116,6 +135,71 @@ describe("ProjectProcess", () => {
     fireEvent.click(screen.getByRole("button", { name: /Futura/ }));
     expect(screen.getByText("Tarefa futura")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Futura/ })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("marca todas as subtarefas de uma etapa através do endpoint transacional", async () => {
+    const updated = process(
+      { summary: { done: 2, total: 2, percent: 100, stages_done: 1, stages_total: 1, overdue_stages: 0, overdue_contacts: 0 } },
+      [stage({ status: "done", done_count: 2, subtasks: [
+        { id: "sub-1", code: "etapa-01.0", title: "Primeira subtarefa", done: true, done_at: "2026-05-05T10:00:00Z", done_by_display_name: "Chefe", source: "ui" },
+        { id: "sub-2", code: "etapa-01.1", title: "Segunda subtarefa", done: true, done_at: "2026-05-06T09:00:00Z", done_by_display_name: "Chefe", source: "ui" },
+      ] })]
+    );
+    setProcessStageSubtasksDone.mockResolvedValue(updated);
+    renderWithProviders(<ProjectProcess projectId="p-1" />);
+    await screen.findByText("Segunda subtarefa");
+
+    const checkbox = screen.getByRole("checkbox", { name: "Marcar todas as subtarefas de Etapa 01 (exemplo)" });
+    fireEvent.click(checkbox);
+    await waitFor(() => expect(setProcessStageSubtasksDone).toHaveBeenCalledWith("p-1", "st-1", true));
+    expect(await screen.findByText(/2 de 2 subtarefas · 1 de 1 etapas concluídas/)).toBeInTheDocument();
+  });
+
+  it("mostra o checkbox da etapa indeterminado quando só parte das subtarefas está feita", async () => {
+    renderWithProviders(<ProjectProcess projectId="p-1" />);
+    await screen.findByText("Segunda subtarefa");
+
+    expect(screen.getByRole("checkbox", { name: "Marcar todas as subtarefas de Etapa 01 (exemplo)" })).toBePartiallyChecked();
+  });
+
+  it("desmarca todas as subtarefas de uma etapa", async () => {
+    const allDone = stage({
+      status: "done",
+      done_count: 2,
+      subtasks: [
+        { id: "sub-1", code: "etapa-01.0", title: "Primeira subtarefa", done: true, done_at: "2026-05-05T10:00:00Z", done_by_display_name: "Chefe", source: "ui" },
+        { id: "sub-2", code: "etapa-01.1", title: "Segunda subtarefa", done: true, done_at: "2026-05-06T09:00:00Z", done_by_display_name: "Chefe", source: "ui" },
+      ],
+    });
+    setProcessStageSubtasksDone.mockResolvedValue(process({}, [stage()]));
+    getProjectProcess.mockResolvedValue(process({}, [allDone]));
+    renderWithProviders(<ProjectProcess projectId="p-1" />);
+    const stageToggle = await screen.findByRole("button", { name: /Etapa 01 \(exemplo\)/ });
+    fireEvent.click(stageToggle);
+    await screen.findByText("Segunda subtarefa");
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Marcar todas as subtarefas de Etapa 01 (exemplo)" }));
+    await waitFor(() => expect(setProcessStageSubtasksDone).toHaveBeenCalledWith("p-1", "st-1", false));
+  });
+
+  it("mostra o erro do endpoint de etapa e mantém o estado anterior", async () => {
+    const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
+    setProcessStageSubtasksDone.mockRejectedValue(new actual.ApiError(403, "Sem permissão para marcar o progresso deste projeto."));
+    renderWithProviders(<ProjectProcess projectId="p-1" />);
+    await screen.findByText("Segunda subtarefa");
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Marcar todas as subtarefas de Etapa 01 (exemplo)" }));
+    expect(await screen.findByText("Sem permissão para marcar o progresso deste projeto.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Marcar todas as subtarefas de Etapa 01 (exemplo)" })).toBePartiallyChecked());
+  });
+
+  it("só consulta o checkbox da etapa quando o servidor não permite marcar", async () => {
+    getProjectProcess.mockResolvedValue(process({ can_update: false }, [stage({ can_update: false })]));
+    renderWithProviders(<ProjectProcess projectId="p-1" />);
+    await screen.findByText("Segunda subtarefa");
+    expect(screen.getByRole("checkbox", { name: "Marcar todas as subtarefas de Etapa 01 (exemplo)" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Marcar todas as subtarefas de Etapa 01 (exemplo)" }));
+    expect(setProcessStageSubtasksDone).not.toHaveBeenCalled();
   });
 
   it("marca uma subtarefa e mostra o resultado devolvido pelo servidor", async () => {

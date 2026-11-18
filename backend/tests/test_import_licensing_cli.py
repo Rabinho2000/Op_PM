@@ -7,6 +7,7 @@ app/cli/import_licensing.py.
 """
 from __future__ import annotations
 
+import datetime as dt
 from pathlib import Path
 
 import pytest
@@ -14,9 +15,10 @@ import pytest
 from app.cli.import_licensing import main as cli_main
 from app.models.imports import FieldImportBatch
 from app.models.project import Project, ProjectExternalId
-from app.models.project_data import ProjectCommunicationData, ProjectLicensingData
+from app.models.project_data import ProjectCommunicationData, ProjectInstallationData, ProjectLicensingData
 from app.services.imports_licensing import (
     DuplicateLicensingImportError,
+    LicensingImportError,
     apply_licensing_import,
     dry_run_licensing_import,
     find_project_by_external_reference,
@@ -86,10 +88,11 @@ def test_apply_creates_projects_with_installation_licensing_communication_data(d
     assert licensing.upac_number == "UPAC-EXCEL-001"
     assert licensing.installer == "Instalador Sintético A"
 
-    communication = (
-        db_session.query(ProjectCommunicationData).filter(ProjectCommunicationData.project_id == project.id).one()
-    )
-    assert communication.gsm_m2m_number == "912345000"
+    from app.models.project_data import ProjectSimCard
+
+    sim = db_session.query(ProjectSimCard).filter(ProjectSimCard.project_id == project.id).one()
+    assert sim.phone_number == "912345000"
+    assert sim.pin_encrypted is None and sim.puk_encrypted is None
 
     external = (
         db_session.query(ProjectExternalId)
@@ -172,3 +175,107 @@ def test_cli_dry_run_exits_zero_and_writes_nothing(db_session, capsys):
     out = capsys.readouterr().out
     assert "Dry-run" in out
     assert db_session.query(Project).filter(Project.name.like("%Excel%")).count() == 0
+
+
+def test_legacy_licensing_preview_and_apply_refuse_deleted_external_reference(db_session):
+    deleted = Project(
+        name="Projeto Sintético Apagado Licenciamento",
+        power_kwp=1.0,
+        deleted_at=dt.datetime.now(dt.timezone.utc),
+    )
+    db_session.add(deleted)
+    db_session.flush()
+    db_session.add(
+        ProjectExternalId(
+            project_id=deleted.id,
+            source_system="legacy_excel_licensing",
+            external_id="REF-EXCEL-001",
+        )
+    )
+    db_session.commit()
+    project_count_before = db_session.query(Project).count()
+    batch_count_before = db_session.query(FieldImportBatch).count()
+
+    assert find_project_by_external_reference(db_session, "REF-EXCEL-001") is None
+    with pytest.raises(LicensingImportError, match="apagado"):
+        dry_run_licensing_import(db_session, content=_content())
+
+    with pytest.raises(LicensingImportError, match="apagado"):
+        apply_licensing_import(
+            db_session,
+            filename="deleted-licensing.xlsx",
+            content=_content(),
+            applied_by_person_id=None,
+        )
+
+    db_session.refresh(deleted)
+    assert deleted.deleted_at is not None and deleted.power_kwp == 1.0
+    assert db_session.query(Project).count() == project_count_before
+    assert db_session.query(FieldImportBatch).count() == batch_count_before
+    assert db_session.query(ProjectInstallationData).filter_by(project_id=deleted.id).count() == 0
+    assert db_session.query(ProjectLicensingData).filter_by(project_id=deleted.id).count() == 0
+    assert db_session.query(ProjectCommunicationData).filter_by(project_id=deleted.id).count() == 0
+
+
+def test_pending_legacy_licensing_plan_does_not_apply_after_target_is_deleted_and_restores_cleanly(
+    db_session,
+):
+    from app.models.project_data import ProjectDataHistory
+
+    existing = Project(name="Projeto Sintético Apagar Depois", power_kwp=1.0)
+    db_session.add(existing)
+    db_session.flush()
+    db_session.add(
+        ProjectExternalId(
+            project_id=existing.id,
+            source_system="legacy_excel_licensing",
+            external_id="REF-EXCEL-001",
+        )
+    )
+    db_session.commit()
+
+    summary = apply_licensing_import(
+        db_session,
+        filename="stale-licensing.xlsx",
+        content=_content(),
+        applied_by_person_id=None,
+    )
+    batch = db_session.get(FieldImportBatch, summary.batch_id)
+    record = next(item for item in batch.records if item.target_project_id == existing.id)
+    assert record.status != "applied"
+    for conflict in record.conflicts:
+        conflict.resolution = "use_new"
+    db_session.commit()
+    installation_before = db_session.query(ProjectInstallationData).filter_by(project_id=existing.id).count()
+    licensing_before = db_session.query(ProjectLicensingData).filter_by(project_id=existing.id).count()
+    communication_before = db_session.query(ProjectCommunicationData).filter_by(project_id=existing.id).count()
+    history_before = db_session.query(ProjectDataHistory).filter_by(project_id=existing.id).count()
+
+    existing.deleted_at = dt.datetime.now(dt.timezone.utc)
+    db_session.commit()
+    apply_licensing_import(
+        db_session,
+        filename="stale-licensing.xlsx",
+        content=_content(),
+        applied_by_person_id=None,
+    )
+
+    db_session.refresh(existing)
+    assert existing.deleted_at is not None and existing.power_kwp == 1.0
+    assert record.status != "applied"
+    assert db_session.query(ProjectInstallationData).filter_by(project_id=existing.id).count() == installation_before
+    assert db_session.query(ProjectLicensingData).filter_by(project_id=existing.id).count() == licensing_before
+    assert db_session.query(ProjectCommunicationData).filter_by(project_id=existing.id).count() == communication_before
+    assert db_session.query(ProjectDataHistory).filter_by(project_id=existing.id).count() == history_before
+
+    existing.deleted_at = None
+    db_session.commit()
+    resumed = apply_licensing_import(
+        db_session,
+        filename="stale-licensing.xlsx",
+        content=_content(),
+        applied_by_person_id=None,
+    )
+    assert resumed.total_conflicts == 0
+    db_session.refresh(existing)
+    assert existing.power_kwp == 9.0

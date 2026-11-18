@@ -87,7 +87,7 @@ def ensure_default_tasks_for_project(db: Session, project: Project) -> list[Task
 
 def visible_tasks_query(db: Session, ctx: AuthContext) -> Query:
     if ctx.has_permission("task.view_all"):
-        return db.query(Task)
+        return db.query(Task).join(Project, Task.project_id == Project.id).filter(Project.deleted_at.is_(None))
 
     project_conditions = []
     if ctx.has_permission("project.view_own"):
@@ -104,7 +104,11 @@ def visible_tasks_query(db: Session, ctx: AuthContext) -> Query:
         conditions.append(Task.assigned_to_person_id == ctx.person_id)
     if not conditions:
         return db.query(Task).filter(False)
-    return db.query(Task).join(Project, Task.project_id == Project.id).filter(or_(*conditions))
+    return (
+        db.query(Task)
+        .join(Project, Task.project_id == Project.id)
+        .filter(Project.deleted_at.is_(None), or_(*conditions))
+    )
 
 
 def list_tasks(

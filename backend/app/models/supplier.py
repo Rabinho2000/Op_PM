@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Column, Float, ForeignKey, String, Table, Text
+from sqlalchemy import CheckConstraint, Column, Float, ForeignKey, String, Table, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import GUID, Base
@@ -16,6 +16,18 @@ supplier_material_type_links = Table(
     Column("supplier_id", GUID(), ForeignKey("suppliers.id"), primary_key=True),
     Column("material_type_id", GUID(), ForeignKey("supplier_material_types.id"), primary_key=True),
 )
+
+
+class SupplierCompanyAssociation(Base):
+    __tablename__ = "supplier_company_links"
+    __table_args__ = (
+        CheckConstraint("company_code IN ('solcor', 'verde_milenar')", name="ck_supplier_company_links_company_code"),
+    )
+
+    supplier_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("suppliers.id", ondelete="CASCADE"), primary_key=True
+    )
+    company_code: Mapped[str] = mapped_column(String(32), primary_key=True)
 
 
 class SupplierMaterialType(UUIDPk, TimestampMixin, Base):
@@ -60,11 +72,21 @@ class Supplier(UUIDPk, TimestampMixin, Base):
         order_by=SupplierMaterialType.name_key,
         lazy="selectin",
     )
+    company_associations: Mapped[list[SupplierCompanyAssociation]] = relationship(
+        order_by="SupplierCompanyAssociation.company_code",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
     contacts: Mapped[list[SupplierContact]] = relationship(
         order_by="SupplierContact.position",
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+
+    @property
+    def company_codes(self) -> list[str]:
+        """DTO-facing projection; associations are loaded in one select-in query."""
+        return [link.company_code for link in self.company_associations]
 
 
 class SupplierContact(UUIDPk, TimestampMixin, Base):

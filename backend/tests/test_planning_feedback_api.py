@@ -546,7 +546,7 @@ def test_planning_migration_backfills_legacy_participant_and_roundtrips(tmp_path
         )
         connection.commit()
 
-    upgraded = _run_alembic(database_path, backend_path, "upgrade", "head")
+    upgraded = _run_alembic(database_path, backend_path, "upgrade", "f5a7c9d1e3b2")
     assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
     with sqlite3.connect(database_path) as connection:
         assert connection.execute(
@@ -568,7 +568,7 @@ def test_planning_migration_backfills_legacy_participant_and_roundtrips(tmp_path
         ).fetchone()[0] == 0
         assert "category" not in {row[1] for row in connection.execute("PRAGMA table_info(calendar_events)")}
 
-    upgraded_again = _run_alembic(database_path, backend_path, "upgrade", "head")
+    upgraded_again = _run_alembic(database_path, backend_path, "upgrade", "f5a7c9d1e3b2")
     assert upgraded_again.returncode == 0, upgraded_again.stdout + upgraded_again.stderr
     with sqlite3.connect(database_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM calendar_event_assignees").fetchone()[0] == 1
