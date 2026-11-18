@@ -4,12 +4,9 @@
 # dependências externas (ver backend/.env.example). Usar isto quando quiser
 # validar o backend contra PostgreSQL de verdade.
 #
-# NOTA: não foi possível validar este ficheiro neste ambiente de execução
-# (sem Docker disponível) — reveja antes da primeira utilização.
-#
 #   docker compose up -d db
-#   DATABASE_URL=postgresql+psycopg://op_pm:op_pm_dev_only@localhost:5432/op_pm \
-#     backend/.venv/Scripts/python -m alembic upgrade head
+#   cd backend && DATABASE_URL=postgresql+psycopg://op_pm:op_pm_dev_only@localhost:5432/op_pm \
+#     python -m alembic upgrade head
 
 services:
   db:
@@ -19,7 +16,8 @@ services:
       POSTGRES_PASSWORD: op_pm_dev_only
       POSTGRES_DB: op_pm
     ports:
-      - "5432:5432"
+      # Só no próprio computador: a password é de desenvolvimento.
+      - "127.0.0.1:5432:5432"
     volumes:
       - op_pm_pg_data:/var/lib/postgresql/data
 

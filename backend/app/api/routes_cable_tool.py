@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import stat as stat_module
 import threading
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ from app.config import Settings, get_settings
 from app.schemas.cable_tool import CableToolRead
 from app.security.current_user import get_auth_context
 from app.security.permissions import AuthContext
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["cable-tool"])
 
@@ -125,10 +128,12 @@ def get_cable_tool(
     try:
         cached = _load_tool(path)
         engine_version = _manifest_engine_version(path, cached.sha256)
-    except _CableToolUnavailable:
+    except _CableToolUnavailable as exc:
+        logger.warning("Motor de cabos indisponível: %s", exc)
         raise HTTPException(status_code=503, detail=_UNAVAILABLE_DETAIL) from None
     except (OSError, SQLAlchemyError):
-        # Keep filesystem/database implementation details out of the API.
+        # Keep filesystem/database implementation details out of the API (only in the log).
+        logger.exception("Erro ao carregar o motor de cabos")
         raise HTTPException(status_code=503, detail=_UNAVAILABLE_DETAIL) from None
 
     return CableToolRead(

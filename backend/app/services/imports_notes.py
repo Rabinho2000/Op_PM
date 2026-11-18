@@ -44,6 +44,13 @@ from app.models.imports import (
 )
 from app.models.project import Project
 from app.models.project_data import ProjectInstallationData, ProjectLicensingData
+from app.security.permissions import (
+    AuthContext,
+    can_edit_project,
+    can_edit_project_installation_data,
+    can_edit_project_licensing_data,
+)
+from app.security.project_fields import PM_EDITABLE_PROJECT_FIELDS
 from app.services.project_data import upsert_installation_data, upsert_licensing_data
 
 # Versões do formulário aceites — "v11" no nome do ficheiro pode conter
@@ -86,6 +93,44 @@ class ImportPendingStateError(NotesImportError):
 
 class DuplicateImportError(NotesImportError):
     pass
+
+
+class NotesImportPermissionError(NotesImportError):
+    """Quem importa notas pode criar projetos novos, mas só altera um projeto
+    existente dentro das mesmas regras da edição manual (D-028/D-035)."""
+
+
+def _require_existing_project_edit_rights(
+    ctx: AuthContext,
+    project: Project,
+    mapped: dict,
+    conflict_resolutions: dict[tuple[str, str], str],
+) -> None:
+    def kept(entity: str) -> dict:
+        return {
+            field_name: value
+            for field_name, value in (mapped.get(entity) or {}).items()
+            if conflict_resolutions.get((entity, field_name)) != CONFLICT_RESOLUTION_KEEP_OLD
+        }
+
+    changed_project_fields = {
+        field_name
+        for field_name, value in kept("project").items()
+        if not _values_equal(getattr(project, field_name, None), value)
+    }
+    if changed_project_fields:
+        if not can_edit_project(ctx, project):
+            raise NotesImportPermissionError("Sem permissão para alterar este projeto existente.")
+        if not ctx.has_permission("project.edit_all"):
+            blocked = sorted(changed_project_fields - PM_EDITABLE_PROJECT_FIELDS)
+            if blocked:
+                raise NotesImportPermissionError(
+                    "Estes campos só podem ser alterados por quem tem project.edit_all: " + ", ".join(blocked)
+                )
+    if kept("installation") and not can_edit_project_installation_data(ctx, project):
+        raise NotesImportPermissionError("Sem permissão para alterar os dados de instalação deste projeto.")
+    if kept("licensing") and not can_edit_project_licensing_data(ctx, project):
+        raise NotesImportPermissionError("Sem permissão para alterar os dados de licenciamento deste projeto.")
 
 
 def _ensure_clean_import_session(db: Session) -> None:
@@ -2087,8 +2132,13 @@ def apply_notes_import(
     batch: FieldImportBatch,
     target_project_id: uuid.UUID | None,
     applied_by_person_id: uuid.UUID | None,
+    ctx: AuthContext | None = None,
 ) -> Project:
-    """Apply one locked, fully revalidated pending import transactionally."""
+    """Apply one locked, fully revalidated pending import transactionally.
+
+    Com `ctx` (sempre, a partir da API), a alteração de um projeto existente
+    exige os mesmos direitos da edição manual; criar um projeto novo continua
+    a exigir só `import.notes` (passagem Comercial → Operações)."""
     _ensure_clean_import_session(db)
     batch = _lock_pending_batch(db, batch.id)
     record = (
@@ -2196,6 +2246,8 @@ def apply_notes_import(
             .filter(FieldImportConflict.record_id == record.id)
             .all()
         }
+        if ctx is not None:
+            _require_existing_project_edit_rights(ctx, project, mapped, conflict_resolutions)
         for field_name, new_value in mapped.get("project", {}).items():
             if conflict_resolutions.get(("project", field_name)) == CONFLICT_RESOLUTION_KEEP_OLD:
                 continue

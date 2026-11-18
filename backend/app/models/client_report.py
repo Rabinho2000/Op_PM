@@ -4,11 +4,14 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from sqlalchemy import DateTime, ForeignKey, Index, JSON, String, Text, Time, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Index, JSON, String, Text, Time, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
+
+# Igual a `ACTIVE_SEND_STATUSES` em app/services/client_reports.py.
+ACTIVE_WEEK_PREDICATE = "status IN ('pending', 'pending_review', 'sent')"
 
 
 class ClientReportConfig(UUIDPk, TimestampMixin, Base):
@@ -32,6 +35,16 @@ class ClientReportSend(UUIDPk, Base):
     __tablename__ = "client_report_sends"
     __table_args__ = (
         Index("ix_client_report_sends_project_week", "project_id", "iso_week"),
+        # Um só envio ativo (em curso, em revisão ou enviado) por projeto e
+        # semana ISO — a garantia contra emails duplicados ao cliente.
+        Index(
+            "uq_client_report_sends_active_week",
+            "project_id",
+            "iso_week",
+            unique=True,
+            sqlite_where=text(ACTIVE_WEEK_PREDICATE),
+            postgresql_where=text(ACTIVE_WEEK_PREDICATE),
+        ),
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("projects.id"), nullable=False)

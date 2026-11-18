@@ -24,6 +24,8 @@ Dois caminhos, nunca simultâneos:
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -33,6 +35,8 @@ from app.db import get_db
 from app.models.identity import AuthAuditLog, User
 from app.security.entra_auth import EntraClaims, TokenValidationError, get_token_validator
 from app.security.permissions import AuthContext, load_auth_context
+
+logger = logging.getLogger(__name__)
 
 _DEV_HEADER_ALLOWED_ENVIRONMENTS = {"local", "test"}
 
@@ -106,11 +110,13 @@ def get_current_user(
         validator = get_token_validator(settings)
         try:
             claims = validator.validate(token)
-        except TokenValidationError:
+        except TokenValidationError as exc:
             # Nunca revelar o motivo exato (assinatura/issuer/audience/
-            # validade) na resposta HTTP — só no log do servidor, se algum
-            # dia for adicionado. Uma mensagem genérica evita ajudar quem
-            # tenta "afinar" um token inválido por tentativa e erro.
+            # validade) na resposta HTTP — só no log do servidor (sem o
+            # token). Uma mensagem genérica evita ajudar quem tenta "afinar"
+            # um token inválido por tentativa e erro; o log distingue, por
+            # exemplo, uma falha de rede ao JWKS de um token expirado.
+            logger.info("Token Entra rejeitado: %s: %s", type(exc.__cause__ or exc).__name__, exc)
             raise HTTPException(
                 status_code=401,
                 detail="Token inválido, expirado, ou não emitido para este tenant/aplicação.",

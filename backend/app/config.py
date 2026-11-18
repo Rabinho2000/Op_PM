@@ -53,8 +53,9 @@ class Settings(BaseSettings):
     # "Dados sintéticos") e para o arranque demo (`app.cli.demo`). Nunca
     # aceite em staging/produção — ver _enforce_hardening_in_non_local_envs.
     demo_mode: bool = Field(default=False, alias="DEMO_MODE")
-    # A demo pode ser alimentada com dados reais; a flag só é exposta pela
-    # API quando `demo_mode` está efetivamente ativo (ver /health).
+    # A instância pode ter dados reais de clientes. Exposta sempre em /health
+    # (mesmo fora do modo demo) para o frontend mostrar o aviso de dados
+    # reais; também fecha /docs por omissão (resolved_api_docs_enabled).
     demo_real_data: bool = Field(default=False, alias="DEMO_REAL_DATA")
 
     # --- Base de dados ---
@@ -140,6 +141,19 @@ class Settings(BaseSettings):
     # Pasta local onde o adapter de fallback grava rascunhos .eml/.ics
     # enquanto o Graph real não estiver configurado.
     graph_fallback_dir: str = Field(default="./data/outbox", alias="GRAPH_FALLBACK_DIR")
+
+    # --- Scheduler do relatório semanal (app/cli/client_reports.py) ---
+    # Utilizador de serviço com client_report.manage e âmbito global
+    # (project.view_all ou project.edit_all). Vazio: usa o primeiro utilizador
+    # ativo que cumpra esses requisitos e regista um aviso no log.
+    client_report_scheduler_email: str = Field(default="", alias="CLIENT_REPORT_SCHEDULER_EMAIL")
+    # Ficheiro de heartbeat lido pelo healthcheck do scheduler. Vazio:
+    # <pasta de dados>/client_report_scheduler.heartbeat.
+    client_report_scheduler_heartbeat_file: str = Field(default="", alias="CLIENT_REPORT_SCHEDULER_HEARTBEAT_FILE")
+
+    # --- Documentação interativa da API (/docs, /redoc, /openapi.json) ---
+    # Vazio: só em 'local'/'test' sem dados reais (DEMO_REAL_DATA=false).
+    api_docs_enabled: bool | None = Field(default=None, alias="API_DOCS_ENABLED")
 
     clickup_enabled: bool = Field(default=False, alias="CLICKUP_ENABLED")
     clickup_token: str = Field(default="", alias="CLICKUP_TOKEN")
@@ -273,6 +287,16 @@ class Settings(BaseSettings):
         path = Path(self.graph_fallback_dir).parent
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def resolved_api_docs_enabled(self) -> bool:
+        if self.api_docs_enabled is not None:
+            return self.api_docs_enabled
+        return self.app_env in ("local", "test") and not self.demo_real_data
+
+    def resolved_scheduler_heartbeat_file(self) -> Path:
+        if self.client_report_scheduler_heartbeat_file:
+            return Path(self.client_report_scheduler_heartbeat_file)
+        return Path(self.graph_fallback_dir).parent / "client_report_scheduler.heartbeat"
 
 
 @lru_cache

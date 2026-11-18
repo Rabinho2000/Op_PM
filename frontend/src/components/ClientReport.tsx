@@ -14,7 +14,7 @@ import {
   updateClientReport,
 } from "../api/client";
 import { useToast } from "./Toast";
-import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState } from "./ui";
+import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, type Tone } from "./ui";
 
 const WEEKDAYS = [
   "Segunda-feira",
@@ -78,6 +78,7 @@ function formatLisbonDate(value: string | null | undefined): string {
 function statusLabel(status: string): string {
   const labels: Record<string, string> = {
     sent: "Enviado",
+    outbox_local: "Não enviado (outbox local)",
     failed: "Falhou",
     skipped: "Ignorado",
     pending_review: "A aguardar aprovação",
@@ -86,6 +87,15 @@ function statusLabel(status: string): string {
     pending: "Pendente",
   };
   return labels[status] ?? status;
+}
+
+// `outbox_local`: o Graph está desligado e o cliente NÃO recebeu o email —
+// nunca pode parecer um envio bem-sucedido.
+function sendTone(status: string): Tone {
+  if (status === "sent") return "success";
+  if (status === "failed") return "danger";
+  if (status === "outbox_local") return "warning";
+  return "neutral";
 }
 
 function sendDate(send: ClientReportSend): string {
@@ -459,7 +469,7 @@ export default function ClientReport({ projectId }: ClientReportProps) {
                   <tr key={send.id}>
                     <td>{send.iso_week ?? "—"}</td>
                     <td>
-                      <Badge tone={send.status === "sent" ? "success" : send.status === "failed" ? "danger" : "neutral"}>
+                      <Badge tone={sendTone(send.status)}>
                         {statusLabel(send.status)}
                       </Badge>
                       {send.error && <div className="small danger-text">{send.error}</div>}

@@ -25,3 +25,12 @@ htmlcov/
 *.ics
 *.tsbuildinfo
 
+
+# Chaves e segredos locais (o repositório é público)
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+# Instância interna: contém IDs de tenant e caminhos do servidor — nunca versionar
+docker-compose.tailscale.yml

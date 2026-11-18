@@ -49,18 +49,24 @@ from app.api.routes_task_list_views import preferences_router as task_list_prefe
 from app.api.routes_task_list_views import views_router as task_list_views_router
 from app.api.routes_time_bank import router as time_bank_router
 from app.config import get_settings
+from app.logging_setup import configure_logging
 
+configure_logging()
 settings = get_settings()
+_docs_enabled = settings.resolved_api_docs_enabled()
 
 app = FastAPI(
     title=settings.app_name,
     description=(
-        "Fase 1 — autenticação real, CRUD de projetos, resolução de "
-        "migração. Nenhuma integração externa real ativa ainda "
-        "(Graph/ClickUp/Financial/Claude continuam mock/fallback); "
-        "nenhum dado de produção migrado. Ver docs/ARCHITECTURE_PROPOSAL.md "
-        "e docs/DECISIONS.md no repositório."
+        "API do Op_PM (autenticação Microsoft Entra ID). Integrações: envio do "
+        "relatório semanal por Microsoft Graph quando GRAPH_ENABLED=true "
+        "(senão outbox local); ClickUp, Financial e Claude continuam mock. "
+        "Ver README.md e docs/DECISIONS.md no repositório."
     ),
+    # Fechada por omissão em instâncias com dados reais (API_DOCS_ENABLED).
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
 )
 
 app.add_middleware(
@@ -120,4 +126,4 @@ app.include_router(imports_router)
 
 @app.get("/")
 def root() -> dict:
-    return {"app": settings.app_name, "env": settings.app_env, "docs": "/docs"}
+    return {"app": settings.app_name, "env": settings.app_env, "docs": "/docs" if _docs_enabled else None}
