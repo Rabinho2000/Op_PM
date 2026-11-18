@@ -14,9 +14,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Literal, get_args
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["local", "test", "staging", "production"]
@@ -41,7 +41,11 @@ class Settings(BaseSettings):
     )
 
     # --- Aplicação ---
-    app_env: Environment = Field(default="local", alias="APP_ENV")
+    # Obrigatório, sem valor por omissão (A7, fail-closed): um deploy que
+    # esqueça (ou escreva mal) APP_ENV nunca pode cair em 'local', onde a
+    # autenticação é substituída pelo cabeçalho X-Dev-User-Email. Quem
+    # desenvolve define APP_ENV=local explicitamente (ver backend/.env.example).
+    app_env: Environment = Field(alias="APP_ENV")
     app_name: str = Field(default="Op_PM API", alias="APP_NAME")
     secret_key: str = Field(
         default=DEFAULT_DEV_SECRET_KEY,
@@ -299,6 +303,27 @@ class Settings(BaseSettings):
         return Path(self.graph_fallback_dir).parent / "client_report_scheduler.heartbeat"
 
 
+class ConfigurationError(RuntimeError):
+    """Configuração em falta ou inválida que impede a aplicação (ou uma CLI)
+    de arrancar. A mensagem diz o que corrigir — nunca inclui valores de
+    variáveis, para não imprimir segredos por engano."""
+
+
+_APP_ENV_HELP = (
+    "APP_ENV não está definido (ou tem um valor inválido). Não há valor por omissão de propósito: "
+    "um deploy mal configurado não pode arrancar sem autenticação. Definir APP_ENV como um de "
+    f"{', '.join(repr(e) for e in get_args(Environment))} — 'local' para desenvolvimento "
+    "(ver backend/.env.example), 'test' para a suite de testes, 'staging'/'production' em deploys reais."
+)
+
+
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    try:
+        return Settings()
+    except ValidationError as exc:
+        # Só o problema de APP_ENV é traduzido: os restantes (hardening em
+        # staging/produção, etc.) já trazem uma mensagem própria e clara.
+        if any(error["loc"] and error["loc"][0] in ("APP_ENV", "app_env") for error in exc.errors()):
+            raise ConfigurationError(_APP_ENV_HELP) from None
+        raise

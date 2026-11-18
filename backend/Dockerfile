@@ -16,7 +16,9 @@
 # A app recusa-se a arrancar com configuração insegura em
 # APP_ENV=staging/production (app/config.py,
 # Settings._enforce_hardening_in_non_local_envs) -- isto continua a ser
-# a barreira real; a imagem em si não assume nenhum valor de ambiente.
+# a barreira real; a imagem em si não assume nenhum valor de ambiente
+# (APP_ENV não tem valor por omissão: sem ele a app e o Alembic recusam
+# arrancar -- tem de vir sempre do compose/orquestrador).
 
 FROM python:3.12-slim AS builder
 WORKDIR /app
