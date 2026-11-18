@@ -191,8 +191,8 @@ Formato: **ID — título** · `ficheiro:linha` · problema → impacto → corr
 | M6 | `frontend/src/session/installerAccess.ts:17`; `components/Layout.tsx:57,60`; `backend/app/security/permissions.py:163` | Há drift de permissões: `inventory.manage`, `process.view_own`, `process.update_own` e o papel `admin` não existem no catálogo. Como as permissões são strings livres (`AuthContext.require(code: str)`, cerca de 185 chamadas), um erro de escrita nega o acesso em silêncio. → Criar `Perm(StrEnum)`, gerar o tipo TypeScript e escrever um teste que confirme que cada literal existe no catálogo. |
 | M7 | `backend/app/models/project.py:109`; `models/inventory.py:240-311`; `models/time_bank.py:18-57` | Os vocabulários fechados (`lifecycle_status`, `movement_type`, `MaterialRequest.status`, `calculation_mode`, `kind`) e as quantidades não têm CHECK na BD. Como o stock é derivado por somas, uma linha inválida corrompe os saldos. → Uma migração com CHECKs gerados a partir das constantes Python; o modelo a seguir é `UserRequest`. |
 | M8 | `backend/app/models/identity.py:65` | `User.email` é único mas distingue maiúsculas, enquanto a autenticação compara com `lower(email)`. `A@x` e `a@x` bloqueiam a ligação JIT sem dar erro. → Índice único em `lower(email)` e normalizar o email ao gravar. |
-| M9 | `.github/workflows/ci.yml` | Não há ruff, mypy, `pip-audit`, `npm audit`, gitleaks, Trivy, Dependabot nem limiar de cobertura. Usa `npm install` em vez de `npm ci`. Não constrói o `Dockerfile.tailscale`, que é o que está em produção. As actions não estão fixadas por SHA e falta `permissions:`. |
-| M10 | `backend/requirements.txt`; `backend/Dockerfile`; `frontend/Dockerfile*` | As dependências são intervalos sem lockfile e as imagens base são tags sem digest, por isso o build não é reproduzível. → Gerar um lock com `pip-compile`/`uv` e fixar as imagens por digest, com Dependabot. |
+| M9 | `.github/workflows/ci.yml` | Não há ruff, mypy, `pip-audit`, `npm audit`, gitleaks, Trivy, Dependabot nem limiar de cobertura. Usa `npm install` em vez de `npm ci`. Não constrói o `Dockerfile.tailscale`, que é o que está em produção. As actions não estão fixadas por SHA e falta `permissions:`. | **Resolvido na Fase 1 (frente C, branch `fase1/ci-supply-chain`, sem push):** `permissions: contents: read`, `concurrency` por ref, actions fixadas por SHA, `npm ci`, build do `Dockerfile.tailscale`, ruff e mypy gradual (bloqueantes), limiar de cobertura de 85 % (medido: 89 %), `pip-audit`, `npm audit`, gitleaks (bloqueantes) e Trivy (informativo: 70 achados HIGH/CRITICAL corrigíveis no `nginx:1.27-alpine`), `actionlint` e Dependabot semanal.
+| M10 | `backend/requirements.txt`; `backend/Dockerfile`; `frontend/Dockerfile*` | As dependências são intervalos sem lockfile e as imagens base são tags sem digest, por isso o build não é reproduzível. → Gerar um lock com `pip-compile`/`uv` e fixar as imagens por digest, com Dependabot. | **Resolvido na Fase 1 (frente C):** lock com hashes (`uv pip compile --generate-hashes`, Python 3.12) para `requirements.txt`, `requirements-postgres.txt` e `requirements-dev.txt`, instalado com `--require-hashes` no Dockerfile e no CI; imagens base dos quatro Dockerfiles fixadas por digest; Dependabot para pip, npm, docker e github-actions. Fica por fazer subir o `nginx` (1.27 já não recebe correções).
 | M11 | `backend/app/adapters/__init__.py:1-13, 27-60`; `README.md:57-61, 310-324`; `backend/app/main.py:56-63`; `docs/API_CLIENT_REPORTS.md:3-5` | A documentação diz que "não há nenhuma integração real", mas o `graph_mail.py` é real e é chamado diretamente. As fábricas `get_*_adapter` são código morto e lançam `NotImplementedError` se alguém ligar `CLICKUP_ENABLED`. → Atualizar os textos e remover ou ligar a fábrica. |
 | M12 | `backend/.env.example:48-52`; `.env.staging.example:72-76` | Documentam `GRAPH_CLIENT_SECRET`, mas o código lê `GRAPH_CLIENT_SECRET_FILE`. Faltam `OPPM_SECRETS_KEY_FILE`, `CABLE_TOOL_FILE`, `PROJECT_PHOTO_DIR` e `INVENTORY_FILE_DIR` nos exemplos e nos runbooks. |
 | M13 | `backend/app/security/entra_auth.py:148-185` | A chave privada RSA de teste está no código da aplicação, e qualquer pessoa a pode ler (repo público). Se alguém ligar `ENTRA_VALIDATION_MODE=mock` em local, é possível forjar tokens. A config bloqueia isto fora de local/test. → Mover a chave para `tests/`. |
@@ -364,7 +364,7 @@ O CI corre o pytest em SQLite e em PostgreSQL 16, e no frontend `tsc`, `vitest` 
 - [ ] Healthcheck/heartbeat do scheduler (A3)
 - [x] Healthcheck do backend e `restart: unless-stopped`
 - [x] Frontend publicado só em 127.0.0.1, sem portas do backend expostas
-- [ ] Imagens fixadas por digest e dependências com lock (M10)
+- [x] Imagens fixadas por digest e dependências com lock (M10)
 - [ ] Alertas para falhas de envio e do scheduler
 
 **Integrações**
@@ -375,8 +375,9 @@ O CI corre o pytest em SQLite e em PostgreSQL 16, e no frontend `tsc`, `vitest` 
 
 **Qualidade e CI**
 - [x] Pytest em SQLite + PostgreSQL; vitest; tsc; build; smoke test da demo
-- [ ] Lint e typecheck do backend, auditoria de dependências, scan de segredos e de imagens
-- [ ] Limiar de cobertura; teste de drift entre modelos e migrações
+- [x] Lint e typecheck do backend (ruff, mypy gradual), auditoria de dependências (pip-audit, npm audit), scan de segredos (gitleaks) e de imagens (Trivy, ainda só informativo)
+- [x] Limiar de cobertura (85 %)
+- [ ] Teste de drift entre modelos e migrações
 - [ ] Teste intermitente B4 corrigido
 
 **Documentação**
