@@ -107,11 +107,17 @@ describe("API de imagens de inventário", () => {
   });
 
   it("obtém o documento como blob por fetch autenticado, sem abrir um link direto", async () => {
-    fetchMock.mockResolvedValue(new Response(new Blob(["pdf"], { type: "application/pdf" }), { status: 200 }));
+    // Corpo em string: o Response nativo do Node não reconhece o Blob do jsdom e
+    // serializava-o como "[object Blob]". O tipo e o tamanho provam o conteúdo
+    // sem depender do realm de Blob (instanceof falha entre jsdom e Node).
+    fetchMock.mockResolvedValue(
+      new Response("pdf", { status: 200, headers: { "Content-Type": "application/pdf" } }),
+    );
 
     const blob = await getInventoryItemDocumentBlob("item-1", "doc-2");
 
-    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.size).toBe(3);
+    expect(blob.type).toBe("application/pdf");
     expect(fetchMock).toHaveBeenCalledWith(
       "http://localhost:8000/api/inventory/items/item-1/documents/doc-2/download",
       expect.objectContaining({
