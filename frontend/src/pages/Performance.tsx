@@ -346,8 +346,11 @@ export default function Performance() {
   useEffect(() => {
     listPeople()
       .then(setPeople)
-      .catch(() => setPeople([]));
-  }, []);
+      .catch(() => {
+        setPeople([]);
+        notify("Não foi possível carregar a lista de pessoas.", "error");
+      });
+  }, [notify]);
 
   return (
     <div className="performance-page">

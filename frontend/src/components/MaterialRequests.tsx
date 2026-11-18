@@ -21,6 +21,7 @@ import {
 } from "../api/client";
 import { formatDateTimePt } from "../utils/dates";
 import { formatQuantity } from "../utils/quantities";
+import { useToast } from "./Toast";
 import { Alert, Badge, EmptyState, LoadingState, Modal, Tone } from "./ui";
 
 const STATUS_TONES: Record<MaterialRequestStatus, Tone> = {
@@ -78,6 +79,7 @@ export function CreateMaterialRequestModal({
   onClose: () => void;
   onDone: (created: MaterialRequest) => void;
 }) {
+  const { notify } = useToast();
   const [projectId, setProjectId] = useState("");
   const [lines, setLines] = useState<LineDraft[]>([{ ...EMPTY_LINE }]);
   const [notes, setNotes] = useState("");
@@ -86,11 +88,17 @@ export function CreateMaterialRequestModal({
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    // Sem inventory.view a lista de itens falha: continua a ser possível pedir por descrição livre.
+    // Sem inventory.view a lista de itens falha (403): continua a ser possível pedir por descrição livre,
+    // sem aviso. Qualquer outro erro (rede, 5xx) é avisado, para não parecer que não há itens.
     listInventoryItems()
       .then((loadedItems) => setItems(loadedItems.filter((item) => item.is_active)))
-      .catch(() => setItems([]));
-  }, []);
+      .catch((err) => {
+        setItems([]);
+        if (!(err instanceof ApiError && err.status === 403)) {
+          notify("Não foi possível carregar a lista de itens de inventário.", "error");
+        }
+      });
+  }, [notify]);
 
   function setLine(index: number, changes: Partial<LineDraft>) {
     setLines((prev) => prev.map((line, i) => (i === index ? { ...line, ...changes } : line)));

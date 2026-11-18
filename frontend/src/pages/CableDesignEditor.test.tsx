@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api/client";
 import type { CableDesign, CableDesignHistoryEntry, CableDesignRevision } from "../api/cableDesigns";
@@ -419,6 +419,43 @@ describe("CableDesignEditor nativo", () => {
     fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
     fireEvent.click(screen.getByRole("tab", { name: "Esquema unifilar" }));
     expect(screen.getByText("Sem inversores para desenhar")).toBeInTheDocument();
+  });
+
+  it("mostra erros por secção na gaveta (e não 'sem revisões'/'sem histórico') e volta a carregar", async () => {
+    api.listCableRevisions.mockRejectedValue(new ApiError(403, "Sem acesso às revisões."));
+    api.listCableHistory.mockRejectedValue(new Error("rede em baixo"));
+    await renderEditor();
+    fireEvent.click(screen.getByRole("button", { name: "⋯ Mais" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Revisões e histórico" }));
+    const drawer = await screen.findByRole("dialog", { name: "Revisões e histórico" });
+
+    expect(await within(drawer).findByText("Sem acesso às revisões.")).toBeInTheDocument();
+    expect(within(drawer).getByText("Não foi possível contactar o servidor.")).toBeInTheDocument();
+    expect(within(drawer).queryByText("Sem revisões registadas.")).not.toBeInTheDocument();
+    expect(within(drawer).queryByText("Sem histórico registado.")).not.toBeInTheDocument();
+
+    api.listCableRevisions.mockResolvedValue([revision]);
+    api.listCableHistory.mockResolvedValue([]);
+    const [retryRevisions, retryHistory] = within(drawer).getAllByRole("button", { name: "Tentar novamente" });
+    fireEvent.click(retryRevisions);
+    await waitFor(() => expect(within(drawer).queryByText("Sem acesso às revisões.")).not.toBeInTheDocument());
+    fireEvent.click(retryHistory);
+    expect(await within(drawer).findByText("Sem histórico registado.")).toBeInTheDocument();
+    expect(within(drawer).queryByTestId("error-state")).not.toBeInTheDocument();
+  });
+
+  it("avisa quando o projeto não carrega e recarrega os dados ao tentar de novo", async () => {
+    api.getProject.mockRejectedValueOnce(new ApiError(403, "Sem acesso ao projeto."));
+    await renderEditor();
+
+    expect(await screen.findByText("Não foi possível carregar os dados do projeto.")).toBeInTheDocument();
+    expect(screen.getByText(/Sem acesso ao projeto\./)).toBeInTheDocument();
+    expect(screen.getByLabelText("Nome do projeto")).toHaveValue("");
+
+    fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
+    await waitFor(() => expect(screen.queryByText("Não foi possível carregar os dados do projeto.")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText("Nome do projeto")).toHaveValue("Projeto A"));
+    expect(api.getProject).toHaveBeenCalledTimes(2);
   });
 
   it("não mostra controlos dependentes do motor na revisão aprovada", async () => {

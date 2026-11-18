@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } 
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ApiError,
+  errorMessage,
   collectProjectMaterial,
   consumeProjectMaterial,
   DEFAULT_TASK_TYPE_LABELS,
@@ -674,6 +675,10 @@ export default function ProjectDetail() {
   const [history, setHistory] = useState<ProjectHistoryEntry[] | null>(null);
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
+  // Erros por secção: uma falha de rede ou um 403 não pode passar por "sem dados".
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [tasksError, setTasksError] = useState<string | null>(null);
+  const [peopleError, setPeopleError] = useState<string | null>(null);
   const [installationData, setInstallationData] = useState<ProjectInstallationData | null>(null);
   const [licensingData, setLicensingData] = useState<ProjectLicensingData | null>(null);
   const [communicationData, setCommunicationData] = useState<ProjectCommunicationData | null>(null);
@@ -779,18 +784,56 @@ export default function ProjectDetail() {
     }
   }, [projectId, canViewInventory, inventoryOwner]);
 
+  const loadHistory = useCallback(() => {
+    if (!projectId) return;
+    setHistoryError(null);
+    setHistory(null);
+    getProjectHistory(projectId)
+      .then(setHistory)
+      .catch((e) => setHistoryError(errorMessage(e)));
+  }, [projectId]);
+
+  const loadTasks = useCallback(() => {
+    if (!projectId) return;
+    setTasksError(null);
+    setTasks(null);
+    listTasks({ project_id: projectId })
+      .then(setTasks)
+      .catch((e) => setTasksError(errorMessage(e)));
+  }, [projectId]);
+
+  const loadPeople = useCallback(() => {
+    setPeopleError(null);
+    listPeople()
+      .then(setPeople)
+      .catch((e) => setPeopleError(errorMessage(e)));
+  }, []);
+
   const load = useCallback(async (): Promise<boolean> => {
     if (!projectId) return true;
     setError(null);
     getProject(projectId)
       .then(setProject)
-      .catch((e) => setError(e instanceof ApiError ? e.detail : "Não foi possível contactar o servidor."));
+      .catch((e) => setError(errorMessage(e)));
+    // Se uma recarga falhar, os dados antigos saem do ecrã: o erro não pode ficar escondido atrás deles.
     getProjectHistory(projectId)
-      .then(setHistory)
-      .catch(() => setHistory([]));
+      .then((rows) => {
+        setHistory(rows);
+        setHistoryError(null);
+      })
+      .catch((e) => {
+        setHistory(null);
+        setHistoryError(errorMessage(e));
+      });
     listTasks({ project_id: projectId })
-      .then(setTasks)
-      .catch(() => setTasks([]));
+      .then((rows) => {
+        setTasks(rows);
+        setTasksError(null);
+      })
+      .catch((e) => {
+        setTasks(null);
+        setTasksError(errorMessage(e));
+      });
     if (canViewInstallation) {
       getProjectInstallationData(projectId)
         .then(setInstallationData)
@@ -835,10 +878,8 @@ export default function ProjectDetail() {
     void load();
   }, [load]);
   useEffect(() => {
-    listPeople()
-      .then(setPeople)
-      .catch(() => setPeople([]));
-  }, []);
+    loadPeople();
+  }, [loadPeople]);
 
   const { change: changeStatus, busyId } = useTaskStatusChange(
     useCallback(
@@ -1127,7 +1168,7 @@ export default function ProjectDetail() {
                 )}
               </Card>
               <Card title="Tarefas em aberto" icon="tasks">
-                <div className="stat__value">{tasks === null ? "…" : openTasks.length}</div>
+                <div className="stat__value">{tasks === null ? (tasksError ? "—" : "…") : openTasks.length}</div>
                 <button type="button" className="btn btn--sm" style={{ marginTop: 8 }} onClick={() => chooseTab("tarefas")}>
                   Ver tarefas
                 </button>
@@ -1186,7 +1227,21 @@ export default function ProjectDetail() {
               ) : undefined
             }
           >
-            {tasks === null && <LoadingState />}
+            {peopleError && (
+              <Alert
+                tone="warning"
+                title="Não foi possível carregar a lista de pessoas."
+                action={
+                  <button type="button" className="btn btn--sm" onClick={loadPeople}>
+                    Tentar novamente
+                  </button>
+                }
+              >
+                Não é possível atribuir responsáveis até a lista ser carregada. {peopleError}
+              </Alert>
+            )}
+            {tasks === null && !tasksError && <LoadingState />}
+            {tasks === null && tasksError && <ErrorState message={tasksError} onRetry={loadTasks} />}
             {tasks?.length === 0 && <EmptyState icon="tasks" title="Sem tarefas neste projeto." />}
             {tasks && tasks.length > 0 && (
               <div className="table-wrap">
@@ -1432,7 +1487,8 @@ export default function ProjectDetail() {
 
         {tab === "historico" && (
           <Card title="Histórico de alterações" icon="history">
-            {history === null && <LoadingState />}
+            {history === null && !historyError && <LoadingState />}
+            {history === null && historyError && <ErrorState message={historyError} onRetry={loadHistory} />}
             {history?.length === 0 && <EmptyState compact icon="history" title="Sem alterações registadas." />}
             {history && history.length > 0 && (
               <ol className="timeline">

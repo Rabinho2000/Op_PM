@@ -1,5 +1,6 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../api/client";
 import { COMERCIAL_ME, makeMe, makeSummary } from "../test/fixtures";
 import { renderWithProviders } from "../test/render";
 import { todayIsoLisbon } from "../utils/dates";
@@ -133,5 +134,25 @@ describe("Calendário de férias — feriados e aniversários", () => {
     expect(screen.queryByRole("dialog", { name: "Gerir feriados" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Nome do feriado")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Adicionar feriado" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Calendário de férias — erros do resumo", () => {
+  it("mostra o erro (e não 'ninguém ausente') quando o resumo falha, e recarrega ao tentar de novo", async () => {
+    api.getDashboardSummary.mockRejectedValueOnce(new ApiError(403, "Sem acesso ao resumo."));
+    renderWithProviders(<Vacations />, { me: COMERCIAL_ME });
+
+    expect(await screen.findAllByTestId("error-state")).toHaveLength(3);
+    expect(screen.getAllByText("Sem acesso ao resumo.")).toHaveLength(3);
+    expect(screen.queryByText("Ninguém ausente hoje.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Sem ausências marcadas.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Sem aniversários nos próximos 30 dias.")).not.toBeInTheDocument();
+
+    api.getDashboardSummary.mockResolvedValueOnce(makeSummary());
+    fireEvent.click(screen.getAllByRole("button", { name: "Tentar novamente" })[0]);
+
+    expect(await screen.findByText("Ninguém ausente hoje.")).toBeInTheDocument();
+    expect(screen.queryByTestId("error-state")).not.toBeInTheDocument();
+    expect(api.getDashboardSummary).toHaveBeenCalledTimes(2);
   });
 });

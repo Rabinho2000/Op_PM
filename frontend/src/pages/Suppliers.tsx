@@ -47,8 +47,11 @@ export default function Suppliers() {
   useEffect(() => {
     listSupplierMaterialTypes()
       .then(setTypes)
-      .catch(() => setTypes([]));
-  }, [reloadKey]);
+      .catch(() => {
+        setTypes([]);
+        notify("Não foi possível carregar os tipos de material.", "error");
+      });
+  }, [reloadKey, notify]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => setDebouncedSearch(filters.search), 250);

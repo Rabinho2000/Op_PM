@@ -14,15 +14,18 @@ import { Alert, Badge, Modal } from "./ui";
 // nunca é duplicada aqui. Enquanto carrega, o rótulo cai para o código.
 export function useLifecycleStatuses(): LifecycleStatus[] {
   const [statuses, setStatuses] = useState<LifecycleStatus[]>([]);
+  const { notify } = useToast();
   useEffect(() => {
     let cancelled = false;
     getLifecycleStatuses()
       .then((s) => !cancelled && setStatuses(s))
-      .catch(() => undefined);
+      .catch(() => {
+        if (!cancelled) notify("Não foi possível carregar os estados do projeto; são mostrados os códigos.", "error");
+      });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [notify]);
   return statuses;
 }
 
