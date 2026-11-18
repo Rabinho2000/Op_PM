@@ -232,7 +232,7 @@ jobs:
         run: docker build -f frontend/Dockerfile.demo -t op_pm-frontend-demo:ci ./frontend
       - name: Trivy — vulnerabilidades HIGH/CRITICAL com correção disponível (informativo)
         # INFORMATIVO, não bloqueia (--exit-code 0 + continue-on-error): os
-        # achados estão em pacotes do SO das imagens base (nginx 1.27-alpine
+        # achados estão em pacotes do SO das imagens base (nginx stable-alpine
         # e python:3.12-slim), que o repositório só corrige subindo a base —
         # tratado pelo Dependabot (docker). Passar a --exit-code 1 quando as
         # bases estiverem limpas. Só `vuln`: os segredos já são cobertos
