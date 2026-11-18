@@ -94,6 +94,19 @@ class TimeBankAudit(UUIDPk, Base):
     )
 
 
+class TimeBankNote(UUIDPk, Base):
+    __tablename__ = "time_bank_notes"
+    __table_args__ = (Index("ix_time_bank_notes_person_created", "person_id", "created_at"),)
+
+    person_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("people.id"), nullable=False)
+    body: Mapped[str] = mapped_column(Text(), nullable=False)
+    created_by_user_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    person = relationship("Person", foreign_keys=[person_id])
+    created_by_user = relationship("User", foreign_keys=[created_by_user_id])
+
+
 class TimeBankImportBatch(UUIDPk, Base):
     __tablename__ = "time_bank_import_batches"
     __table_args__ = (

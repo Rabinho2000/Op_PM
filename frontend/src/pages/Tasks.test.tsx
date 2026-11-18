@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -6,6 +7,9 @@ import { ApiError } from "../api/client";
 import { makeMe, makeProject, makeTask } from "../test/fixtures";
 import { renderWithProviders } from "../test/render";
 import Tasks from "./Tasks";
+
+const tasksCss = readFileSync("src/pages/Tasks.css", "utf8");
+const appCss = readFileSync("src/styles/app.css", "utf8");
 
 const { listTasks, listPeople, listProjects, updateTask } = vi.hoisted(() => ({
   listTasks: vi.fn(),
@@ -148,6 +152,30 @@ describe("Tasks", () => {
     const todo = await screen.findByRole("region", { name: "Por fazer (2)" });
     expect(within(todo).getByText("Visita técnica")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Em curso (1)" })).toBeInTheDocument();
+  });
+
+  it("mantém a dica Kanban condicional à largura e a região focável para scroll nativo", async () => {
+    renderWithProviders(<Tasks />, { me: makeMe() });
+    await screen.findByText("Resolver reclamação");
+    fireEvent.click(screen.getByRole("button", { name: /Kanban/ }));
+    await screen.findByRole("region", { name: "Por fazer (2)" });
+
+    const board = screen.getByRole("region", { name: "Quadro Kanban" });
+    expect(screen.getByText("Deslize horizontalmente para ver todas as colunas.")).toBeInTheDocument();
+    expect(board).toHaveAttribute("tabindex", "0");
+    board.focus();
+    expect(board).toHaveFocus();
+
+    expect(tasksCss).toMatch(/\.tasks-page__kanban-area\s*\{[^}]*container-name:\s*tasks-board;[^}]*container-type:\s*inline-size;/s);
+    expect(tasksCss).toMatch(/\.tasks-page__kanban-scroll-hint\s*\{\s*display:\s*none;/);
+    expect(tasksCss).toMatch(/@container tasks-board \(max-width:\s*1055px\)\s*\{\s*\.tasks-page__kanban-scroll-hint\s*\{\s*display:\s*block;\s*\}\s*\}/);
+    expect(appCss).toMatch(/\.kanban\s*\{[^}]*overflow-x:\s*auto;/s);
+    // jsdom não avalia container queries nem o scroll horizontal nativo via ArrowRight.
+  });
+
+  it("dá alvos de pelo menos 44px aos controlos do configurador móvel de colunas", () => {
+    expect(tasksCss).toMatch(/@media \(max-width:\s*760px\)[\s\S]*?\.tasks-page \.tasks-list__column-menu > \.btn,\s*\.tasks-page \.tasks-list__column-dialog \.btn\s*\{\s*min-width:\s*44px;\s*min-height:\s*44px;\s*white-space:\s*normal;/);
+    expect(tasksCss).toMatch(/@media \(max-width:\s*390px\)[\s\S]*?\.tasks-list__column-dialog\s*\{[^}]*z-index:\s*50;/);
   });
 
   it("esconde 'Nova tarefa' quando nenhum projeto permite criar tarefas", async () => {

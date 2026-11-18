@@ -91,7 +91,7 @@ def test_supplier_contacts_migration_backfills_legacy_fields(tmp_path: Path):
         )
         connection.commit()
 
-    after = _run_alembic(database_path, "upgrade", "head")
+    after = _run_alembic(database_path, "upgrade", "d7a2c5e9b3f1")
     assert after.returncode == 0, after.stdout + after.stderr
 
     with sqlite3.connect(database_path) as connection:

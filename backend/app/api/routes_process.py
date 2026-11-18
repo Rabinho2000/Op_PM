@@ -14,7 +14,7 @@ from app.db import get_db
 from app.schemas.process import ContactProgressUpdate, ProcessRead, SubtaskProgressUpdate
 from app.security.current_user import get_auth_context
 from app.security.permissions import AuthContext, PermissionDenied, is_installer_readonly_scope
-from app.services.process import ProcessError, build_project_process, set_contact_done, set_subtask_done
+from app.services.process import ProcessError, build_project_process, set_contact_done, set_stage_subtasks_done, set_subtask_done
 from app.services.projects import get_visible_project
 from app.utils.timezones import today_lisbon
 
@@ -65,6 +65,26 @@ def update_subtask_endpoint(
     project = _visible(db, ctx, project_id)
     try:
         set_subtask_done(db, project=project, subtask_id=subtask_id, done=body.done, ctx=ctx)
+    except PermissionDenied:
+        raise HTTPException(status_code=403, detail="Sem permissão para marcar o progresso deste projeto.")
+    except ProcessError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return _redact_process(build_project_process(db, project, ctx, today_lisbon()), ctx)
+
+
+@router.patch("/{project_id}/process/stages/{stage_id}/subtasks", response_model=ProcessRead)
+def update_stage_subtasks_endpoint(
+    project_id: uuid.UUID,
+    stage_id: uuid.UUID,
+    body: SubtaskProgressUpdate,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> ProcessRead:
+    if is_installer_readonly_scope(ctx):
+        raise HTTPException(status_code=403, detail="O papel externo tem acesso somente de leitura.")
+    project = _visible(db, ctx, project_id)
+    try:
+        set_stage_subtasks_done(db, project=project, stage_id=stage_id, done=body.done, ctx=ctx)
     except PermissionDenied:
         raise HTTPException(status_code=403, detail="Sem permissão para marcar o progresso deste projeto.")
     except ProcessError as exc:

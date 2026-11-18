@@ -323,3 +323,133 @@ def test_catalog_validates_unique_identifiers_quantities_units_and_active_refere
         headers=_headers(),
     )
     assert project_without_reference.status_code == 422, project_without_reference.text
+
+
+def test_inventory_categories_are_canonical_and_null_is_allowed(api_client):
+    categories = api_client.get("/api/inventory/categories", headers=_headers())
+    assert categories.status_code == 200, categories.text
+    expected = [
+        "Painéis",
+        "Inversores",
+        "Baterias",
+        "Estruturas",
+        "Cabos DC",
+        "Cabos AC",
+        "Proteções/Quadros",
+        "Conectores",
+        "Monitorização/Comunicação",
+        "Consumíveis",
+        "Outros",
+    ]
+    assert categories.json() == expected
+
+    created = api_client.post(
+        "/api/inventory/items",
+        json={"sku": "CATEGORY-PANEL", "name": "Painel", "category": "Paineis"},
+        headers=_headers(),
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["category"] == "Painéis"
+
+    cleared = api_client.patch(
+        f"/api/inventory/items/{created.json()['id']}",
+        json={"category": None},
+        headers=_headers(),
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["category"] is None
+
+
+def test_inventory_item_category_is_validated_on_create_and_edit(api_client):
+    invalid_create = api_client.post(
+        "/api/inventory/items",
+        json={"sku": "CATEGORY-INVALID", "name": "Categoria inválida", "category": "Ferramentas"},
+        headers=_headers(),
+    )
+    assert invalid_create.status_code == 422, invalid_create.text
+
+    created = api_client.post(
+        "/api/inventory/items",
+        json={"sku": "CATEGORY-EDIT", "name": "Editar categoria", "category": "Painéis"},
+        headers=_headers(),
+    )
+    assert created.status_code == 201, created.text
+    invalid_update = api_client.patch(
+        f"/api/inventory/items/{created.json()['id']}",
+        json={"category": "Ferramentas"},
+        headers=_headers(),
+    )
+    assert invalid_update.status_code == 422, invalid_update.text
+    unchanged = api_client.get("/api/inventory/items", headers=_headers())
+    item = next(row for row in unchanged.json() if row["id"] == created.json()["id"])
+    assert item["category"] == "Painéis"
+
+
+def test_inventory_legacy_category_aliases_normalize_on_create(api_client):
+    from app.schemas.inventory_catalog import LEGACY_INVENTORY_CATEGORY_ALIASES
+
+    assert LEGACY_INVENTORY_CATEGORY_ALIASES == {
+        "Cabo AC": "Cabos AC",
+        "Cabo DC": "Cabos DC",
+        "Painel": "Painéis",
+        "Painéis solares": "Painéis",
+        "Inversor": "Inversores",
+        "Bateria": "Baterias",
+        "Estrutura": "Estruturas",
+        "Conector": "Conectores",
+        "Consumível": "Consumíveis",
+    }
+
+    created = api_client.post(
+        "/api/inventory/items",
+        json={"sku": "CATEGORY-ALIAS-DC", "name": "Cabo DC legado", "category": "Cabo DC"},
+        headers=_headers(),
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["category"] == "Cabos DC"
+
+
+def test_inventory_patch_accepts_unchanged_legacy_categories(db_session, api_client):
+    cable = InventoryItem(
+        sku="LEGACY-CABLE-DC",
+        name="Cabo DC antigo",
+        unit="un",
+        category="Cabo DC",
+        min_stock=0,
+        is_active=True,
+    )
+    unknown = InventoryItem(
+        sku="LEGACY-UNKNOWN-CAT",
+        name="Categoria antiga desconhecida",
+        unit="un",
+        category="Módulos antigos",
+        min_stock=0,
+        is_active=True,
+    )
+    db_session.add_all([cable, unknown])
+    db_session.commit()
+
+    alias_patch = api_client.patch(
+        f"/api/inventory/items/{cable.id}",
+        json={"category": "Cabo DC"},
+        headers=_headers(),
+    )
+    assert alias_patch.status_code == 200, alias_patch.text
+    assert alias_patch.json()["category"] == "Cabos DC"
+
+    unchanged_unknown = api_client.patch(
+        f"/api/inventory/items/{unknown.id}",
+        json={"name": "Categoria antiga editada", "category": "Módulos antigos"},
+        headers=_headers(),
+    )
+    assert unchanged_unknown.status_code == 200, unchanged_unknown.text
+    assert unchanged_unknown.json()["name"] == "Categoria antiga editada"
+    assert unchanged_unknown.json()["category"] == "Módulos antigos"
+
+    invalid_change = api_client.patch(
+        f"/api/inventory/items/{unknown.id}",
+        json={"category": "Ferramentas"},
+        headers=_headers(),
+    )
+    assert invalid_change.status_code == 422, invalid_change.text
+    assert db_session.get(InventoryItem, unknown.id).category == "Módulos antigos"

@@ -41,12 +41,15 @@ def _require_manage(ctx: AuthContext, action: str) -> None:
 def list_suppliers_endpoint(
     q: str | None = Query(default=None, description="Nome, morada, email, materiais ou tipo"),
     material_type: str | None = Query(default=None, description="Nome do tipo de material"),
+    company_code: str | None = Query(default=None, description="solcor, verde_milenar ou unclassified"),
     is_active: bool | None = None,
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[SupplierRead]:
     _require_view(ctx)
-    suppliers = service.list_suppliers(db, q=q, material_type=material_type, is_active=is_active)
+    if company_code is not None and company_code not in ("solcor", "verde_milenar", "unclassified"):
+        raise HTTPException(status_code=422, detail="Código de empresa inválido.")
+    suppliers = service.list_suppliers(db, q=q, material_type=material_type, is_active=is_active, company_code=company_code)
     return [SupplierRead.model_validate(s) for s in suppliers]
 
 

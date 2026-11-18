@@ -9,11 +9,17 @@ import {
   BirthdayMini,
   cancelAbsence,
   createAbsence,
+  createHoliday,
+  deleteHoliday,
   getDashboardSummary,
+  Holiday,
+  HolidayScope,
+  listHolidays,
   listAbsences,
   listPeople,
   Person,
   rejectAbsence,
+  updateHoliday,
 } from "../api/client";
 import Icon from "../components/Icon";
 import { useToast } from "../components/Toast";
@@ -276,6 +282,14 @@ export default function Vacations() {
   const { notify } = useToast();
   const [absences, setAbsences] = useState<Absence[] | null>(null);
   const [birthdays, setBirthdays] = useState<BirthdayMini[] | null>(null);
+  const [holidays, setHolidays] = useState<Holiday[] | null>(null);
+  const [holidayError, setHolidayError] = useState<string | null>(null);
+  const [holidayForm, setHolidayForm] = useState<{ date: string; name: string; scope: HolidayScope }>({ date: "", name: "", scope: "municipal" });
+  const [holidayManagementOpen, setHolidayManagementOpen] = useState(false);
+  const [holidayFormOpen, setHolidayFormOpen] = useState(false);
+  const [holidayYear, setHolidayYear] = useState(() => Number(todayIsoLisbon().slice(0, 4)));
+  const [holidayToDeactivate, setHolidayToDeactivate] = useState<Holiday | null>(null);
+  const [savingHoliday, setSavingHoliday] = useState(false);
   const [current, setCurrent] = useState<AbsenceMini[] | null>(null);
   const [upcoming, setUpcoming] = useState<AbsenceMini[] | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
@@ -295,6 +309,7 @@ export default function Vacations() {
   const canManageOwn = can("absence.manage_own");
   const canApprove = can("absence.approve");
   const seesEveryone = can("absence.view_all");
+  const canManageHolidays = can("holiday.manage");
 
   const load = useCallback(() => {
     setError(null);
@@ -315,6 +330,17 @@ export default function Vacations() {
   }, []);
 
   useEffect(load, [load]);
+  const days = useMemo(() => monthGrid(cursor.year, cursor.month), [cursor.year, cursor.month]);
+  const loadHolidays = useCallback(async () => {
+    setHolidayError(null);
+    try {
+      setHolidays(await listHolidays(canManageHolidays ? undefined : days[0], canManageHolidays ? undefined : days[41], canManageHolidays));
+    } catch (e) {
+      setHolidayError(e instanceof ApiError ? e.detail : "Não foi possível carregar os feriados.");
+      setHolidays([]);
+    }
+  }, [canManageHolidays, days]);
+  useEffect(() => { void loadHolidays(); }, [loadHolidays]);
   useEffect(() => {
     if (!canManageAll) return;
     listPeople()
@@ -332,8 +358,20 @@ export default function Vacations() {
     .slice()
     .sort((a, b) => b.start_date.localeCompare(a.start_date));
 
-  const days = monthGrid(cursor.year, cursor.month);
   const birthdayByDate = new Map((birthdays ?? []).map((b) => [addDaysIso(today, b.days_until), b]));
+  const holidaysByDate = useMemo(() => {
+    const grouped = new Map<string, Holiday[]>();
+    for (const holiday of holidays ?? []) if (holiday.is_active) grouped.set(holiday.date, [...(grouped.get(holiday.date) ?? []), holiday]);
+    return grouped;
+  }, [holidays]);
+  const holidayYears = useMemo(
+    () => [...new Set([Number(today.slice(0, 4)), ...(holidays ?? []).map((holiday) => Number(holiday.date.slice(0, 4)))])].sort((a, b) => b - a),
+    [holidays, today]
+  );
+  const holidaysForYear = useMemo(
+    () => (holidays ?? []).filter((holiday) => Number(holiday.date.slice(0, 4)) === holidayYear).sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name)),
+    [holidays, holidayYear]
+  );
 
   function shiftMonth(delta: number) {
     setCursor(({ year, month }) => {
@@ -372,8 +410,40 @@ export default function Vacations() {
     }
   }
 
+  async function handleCreateHoliday(event: FormEvent) {
+    event.preventDefault();
+    setSavingHoliday(true);
+    setHolidayError(null);
+    try {
+      await createHoliday({ ...holidayForm, name: holidayForm.name.trim() });
+      setHolidayForm((current) => ({ ...current, name: "" }));
+      notify("Feriado adicionado.", "success");
+      await loadHolidays();
+    } catch (e) {
+      setHolidayError(e instanceof ApiError ? e.detail : "Não foi possível guardar o feriado.");
+    } finally {
+      setSavingHoliday(false);
+    }
+  }
+
+  async function handleHolidayActiveChange(holiday: Holiday) {
+    try {
+      if (holiday.is_active) await deleteHoliday(holiday.id);
+      else await updateHoliday(holiday.id, { is_active: true });
+      notify(holiday.is_active ? "Feriado desativado." : "Feriado reativado.", "success");
+      await loadHolidays();
+    } catch (e) {
+      notify(e instanceof ApiError ? e.detail : "Não foi possível alterar o feriado.", "error");
+    }
+  }
+
+  function closeHolidayManagement() {
+    setHolidayManagementOpen(false);
+    setHolidayFormOpen(false);
+  }
+
   return (
-    <>
+    <div className="vacations-page">
       <PageHeader
         title="Férias e aniversários"
         subtitle={
@@ -382,10 +452,19 @@ export default function Vacations() {
             : "As suas férias e ausências. O seu perfil não tem acesso às ausências de outras pessoas."
         }
         actions={
-          (canManageAll || canManageOwn) && (
-            <button type="button" className="btn btn--primary" onClick={() => setCreating(true)}>
-              <Icon name="plus" size={16} /> Registar ausência
-            </button>
+          (canManageAll || canManageOwn || canManageHolidays) && (
+            <>
+              {(canManageAll || canManageOwn) && (
+                <button type="button" className="btn btn--primary" onClick={() => setCreating(true)}>
+                  <Icon name="plus" size={16} /> Registar ausência
+                </button>
+              )}
+              {canManageHolidays && (
+                <button type="button" className="btn" onClick={() => setHolidayManagementOpen(true)}>
+                  Gerir feriados
+                </button>
+              )}
+            </>
           )
         }
       />
@@ -456,9 +535,11 @@ export default function Vacations() {
                   const inMonth = Number(iso.slice(5, 7)) - 1 === cursor.month;
                   const events = calendarAbsences.filter((a) => a.start_date <= iso && iso <= a.end_date);
                   const birthday = birthdayByDate.get(iso);
+                  const dayHolidays = holidaysByDate.get(iso) ?? [];
                   const weekend = i % 7 >= 5;
                   const label = [
                     formatDatePt(iso),
+                    ...dayHolidays.map((holiday) => `Feriado: ${holiday.name}`),
                     ...events.map(
                       (a) =>
                         `${a.person_display_name}: ${ABSENCE_TYPE_LABELS[a.type]}${a.status === "pendente" ? " (pendente)" : ""}`
@@ -487,6 +568,11 @@ export default function Vacations() {
                           🎂 {birthday.person_display_name}
                         </span>
                       )}
+                      {dayHolidays.map((holiday) => (
+                        <span key={holiday.id} className="calendar__event calendar__event--holiday" aria-hidden="true" title={holiday.name}>
+                          ◆ {holiday.name}
+                        </span>
+                      ))}
                       {events.slice(0, 3).map((a) => (
                         <span
                           key={a.id}
@@ -523,7 +609,14 @@ export default function Vacations() {
                 <span className="legend__swatch calendar__legend-pending" />
                 Pendente (tracejado)
               </span>
-              <span>🎂 Aniversário</span>
+              <span>
+                <span className="legend__swatch calendar__legend-holiday" />
+                Feriado
+              </span>
+              <span>
+                <span className="legend__swatch calendar__legend-birthday" />
+                🎂 Aniversário
+              </span>
             </div>
           </Card>
 
@@ -722,6 +815,104 @@ export default function Vacations() {
         </div>
       )}
 
+      {canManageHolidays && holidayManagementOpen && (
+        <Modal
+          title="Gerir feriados"
+          onClose={closeHolidayManagement}
+          footer={
+            <button type="button" className="btn" onClick={closeHolidayManagement}>
+              Fechar
+            </button>
+          }
+        >
+          <div className="field" style={{ marginBottom: 16 }}>
+            <label htmlFor="holiday-year">Ano</label>
+            <select id="holiday-year" className="select" value={holidayYear} onChange={(event) => setHolidayYear(Number(event.target.value))}>
+              {holidayYears.map((year) => <option key={year} value={year}>{year}</option>)}
+            </select>
+          </div>
+          <button type="button" className="btn" onClick={() => setHolidayFormOpen((open) => !open)}>
+            {holidayFormOpen ? "Cancelar adição" : "Adicionar feriado"}
+          </button>
+          {holidayFormOpen && (
+            <form className="form-grid" onSubmit={handleCreateHoliday} style={{ marginTop: 16 }}>
+              {holidayError && <div className="span-2"><Alert tone="danger">{holidayError}</Alert></div>}
+              <div className="field">
+                <label htmlFor="holiday-name">Nome do feriado</label>
+                <input id="holiday-name" className="input" required maxLength={160} value={holidayForm.name} onChange={(event) => setHolidayForm({ ...holidayForm, name: event.target.value })} />
+              </div>
+              <div className="field">
+                <label htmlFor="holiday-date">Data do feriado</label>
+                <input id="holiday-date" className="input" type="date" required value={holidayForm.date} onChange={(event) => setHolidayForm({ ...holidayForm, date: event.target.value })} />
+              </div>
+              <div className="field">
+                <label htmlFor="holiday-scope">Âmbito</label>
+                <select id="holiday-scope" className="select" value={holidayForm.scope} onChange={(event) => setHolidayForm({ ...holidayForm, scope: event.target.value as HolidayScope })}>
+                  <option value="municipal">Municipal</option>
+                  <option value="empresa">Empresa</option>
+                </select>
+              </div>
+              <div className="field" style={{ alignSelf: "end" }}>
+                <button type="submit" className="btn" disabled={savingHoliday}>{savingHoliday ? "A guardar…" : "Guardar feriado"}</button>
+              </div>
+            </form>
+          )}
+          {holidayError && !holidayFormOpen && <Alert tone="danger">{holidayError}</Alert>}
+          {holidays === null ? (
+            <LoadingState label="A carregar feriados…" rows={3} />
+          ) : holidaysForYear.length === 0 ? (
+            <p className="small muted">Sem feriados registados em {holidayYear}.</p>
+          ) : (
+            <ul className="list" aria-label={`Feriados de ${holidayYear}`}>
+              {holidaysForYear.map((holiday) => (
+                <li key={holiday.id} className="list__item">
+                  <div className="list__main">
+                    <span className="list__title">{holiday.name}</span>
+                    <span className="list__meta">{formatDatePt(holiday.date)} · {holiday.scope}</span>
+                  </div>
+                  {!holiday.is_active && <Badge>Inativo</Badge>}
+                  <button
+                    type="button"
+                    className="btn btn--sm"
+                    aria-label={`${holiday.is_active ? "Desativar" : "Reativar"} ${holiday.name}`}
+                    onClick={() => holiday.is_active ? setHolidayToDeactivate(holiday) : void handleHolidayActiveChange(holiday)}
+                  >
+                    {holiday.is_active ? "Desativar" : "Reativar"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Modal>
+      )}
+
+      {canManageHolidays && holidayToDeactivate && (
+        <Modal
+          title="Desativar feriado?"
+          onClose={() => setHolidayToDeactivate(null)}
+          footer={
+            <>
+              <button type="button" className="btn" onClick={() => setHolidayToDeactivate(null)}>
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn btn--danger"
+                onClick={() => {
+                  const holiday = holidayToDeactivate;
+                  setHolidayToDeactivate(null);
+                  void handleHolidayActiveChange(holiday);
+                }}
+              >
+                Sim, desativar
+              </button>
+            </>
+          }
+        >
+          <p>Desativar «{holidayToDeactivate.name}»? O feriado deixa de aparecer no calendário e pode ser reativado mais tarde.</p>
+        </Modal>
+      )}
+
       {creating && me && (
         <CreateAbsenceModal
           people={people}
@@ -763,6 +954,6 @@ export default function Vacations() {
           </p>
         </Modal>
       )}
-    </>
+    </div>
   );
 }

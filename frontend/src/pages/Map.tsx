@@ -5,10 +5,6 @@
 // (ver docs/MAP_AND_PLANNING.md). Sem otimização automática de rotas, por
 // pedido explícito — só seleção manual + link para uma rota externa.
 import LifecycleMultiSelect from "../components/LifecycleMultiSelect";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
-import "leaflet.markercluster";
-import "leaflet.markercluster/dist/MarkerCluster.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -50,6 +46,9 @@ import { PROJECT_STATUS_TONES } from "../utils/labels";
 import { formatDatePt, formatDateTimePt, lisbonWallClockToIso } from "../utils/dates";
 import { useLifecycleStatuses } from "../components/LifecycleStatus";
 import { canFilterByMaterial, EMPTY_MAP_FILTERS, filterMapProjects, MapFilters } from "../utils/mapFilters";
+import ProjectMapView, { clusterIcon, makeDivIcon, type MapItem } from "../components/ProjectMapView";
+
+export { clusterIcon, makeDivIcon };
 
 type LayerKey = "projects" | "suppliers" | "pickups" | "issues";
 
@@ -67,12 +66,6 @@ const ATTENTION_MARKER_CLASSES: Record<MapAttention, string> = {
   green: "map-marker--attention-green",
   yellow: "map-marker--attention-yellow",
   red: "map-marker--attention-red",
-};
-
-const ATTENTION_CLUSTER_CLASSES: Record<MapAttention, string> = {
-  green: "map-cluster--attention-green",
-  yellow: "map-cluster--attention-yellow",
-  red: "map-cluster--attention-red",
 };
 
 const ATTENTION_TONES: Record<MapAttention, Tone> = {
@@ -95,16 +88,6 @@ function AttentionDot({ attention }: { attention: MapAttention }) {
       className={`map-attention-dot ${ATTENTION_MARKER_CLASSES[attention]}`}
     />
   );
-}
-
-export function makeDivIcon(layer: LayerKey, attention?: MapAttention): L.DivIcon {
-  const attentionClass = layer === "projects" && attention ? ` ${ATTENTION_MARKER_CLASSES[attention]}` : "";
-  return L.divIcon({
-    className: "map-marker-host",
-    html: `<span class="map-marker map-marker--${layer}${attentionClass}" aria-hidden="true"></span>`,
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
-  });
 }
 
 function EditCoordinatesModal({
@@ -525,85 +508,6 @@ function CreatePickupPointModal({
   );
 }
 
-type MapItem = {
-  key: string;
-  layer: LayerKey;
-  lat: number;
-  lon: number;
-  title: string;
-  onClick: () => void;
-  // Só definido para projetos — mantém a cor semântica fornecida pelo servidor.
-  attention?: MapAttention;
-};
-
-const ATTENTION_RANK: Record<MapAttention, number> = { green: 0, yellow: 1, red: 2 };
-
-// Ícone do cluster de instalações: cor pela PIOR attention dos filhos (nunca
-// pelas cores por omissão do plugin, que se confundiriam com o semáforo).
-export function clusterIcon(cluster: L.MarkerCluster): L.DivIcon {
-  let worst: MapAttention = "green";
-  for (const marker of cluster.getAllChildMarkers()) {
-    const attention = (marker.options as { attention?: MapAttention }).attention ?? "green";
-    if (ATTENTION_RANK[attention] > ATTENTION_RANK[worst]) worst = attention;
-  }
-  return L.divIcon({
-    className: "map-cluster-host",
-    html: `<span class="map-cluster ${ATTENTION_CLUSTER_CLASSES[worst]}"><span class="map-cluster__count">${cluster.getChildCount()}</span></span>`,
-    iconSize: [34, 34],
-  });
-}
-
-function LeafletMap({ items }: { items: MapItem[] }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<L.Map | null>(null);
-  const layersRef = useRef<L.Layer[]>([]);
-  const { config } = useMapConfigContext();
-
-  useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
-    const map = L.map(containerRef.current, { scrollWheelZoom: true }).setView([39.6, -8.0], 7);
-    L.tileLayer(config.tile_url, { attribution: config.tile_attribution, maxZoom: 19 }).addTo(map);
-    mapRef.current = map;
-    return () => {
-      map.remove();
-      mapRef.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    layersRef.current.forEach((l) => l.remove());
-    layersRef.current = [];
-    // Só as instalações são agrupadas; fornecedores/recolhas/pendências
-    // ficam soltos (significados diferentes, poucos pontos).
-    const clusters = L.markerClusterGroup({ iconCreateFunction: clusterIcon, maxClusterRadius: 50 });
-    const bounds: L.LatLngExpression[] = [];
-    for (const item of items) {
-      const marker = L.marker([item.lat, item.lon], {
-        icon: makeDivIcon(item.layer, item.attention),
-        attention: item.attention,
-      } as L.MarkerOptions)
-        .bindTooltip(item.title)
-        .on("click", item.onClick);
-      if (item.layer === "projects") clusters.addLayer(marker);
-      else {
-        marker.addTo(map);
-        layersRef.current.push(marker);
-      }
-      bounds.push([item.lat, item.lon]);
-    }
-    clusters.addTo(map);
-    layersRef.current.push(clusters);
-    if (bounds.length > 0) {
-      map.fitBounds(bounds as L.LatLngBoundsExpression, { padding: [30, 30], maxZoom: 14 });
-    }
-  }, [items]);
-
-  return <div ref={containerRef} style={{ height: 480, borderRadius: 12, overflow: "hidden" }} />;
-}
-
 // Barra de resumo do mapa — sempre a partir de `data.summary`, nunca
 // recalculada no frontend a partir das listas (mesma regra do dashboard,
 // D-041). `map_coverage_percent` (cobertura de coordenadas) e
@@ -645,15 +549,6 @@ function MapSummaryBar({ summary }: { summary: MapData["summary"] }) {
     </div>
   );
 }
-
-// Contexto mínimo só para passar a config de tiles ao LeafletMap sem prop
-// drilling excessivo — evita puxar uma dependência de estado global só
-// para isto.
-import { createContext, useContext } from "react";
-const MapConfigContext = createContext<{ config: MapData["config"] }>({
-  config: { provider_enabled: false, tile_url: "", tile_attribution: "" },
-});
-const useMapConfigContext = () => useContext(MapConfigContext);
 
 export default function MapPage() {
   const { can } = useSession();
@@ -739,6 +634,9 @@ export default function MapPage() {
             title: `${p.name} — ${ATTENTION_LABELS[p.attention]}`,
             onClick: () => setSelected({ kind: "project", item: p }),
             attention: p.attention,
+            projectId: p.id,
+            projectName: p.name,
+            projectStatus: PROJECT_STATUS_LABELS[p.status as keyof typeof PROJECT_STATUS_LABELS] ?? p.status,
           });
         }
       }
@@ -868,7 +766,7 @@ export default function MapPage() {
   }
 
   return (
-    <MapConfigContext.Provider value={{ config: data.config }}>
+    <>
       <PageHeader
         title="Mapa operacional"
         subtitle="Instalações, fornecedores, pontos de recolha e pendências."
@@ -994,7 +892,7 @@ export default function MapPage() {
 
       {data.config.provider_enabled && (
         <div className="section-gap">
-          <LeafletMap items={mapItems} />
+          <ProjectMapView items={mapItems} config={data.config} />
         </div>
       )}
 
@@ -1431,6 +1329,6 @@ export default function MapPage() {
           }}
         />
       )}
-    </MapConfigContext.Provider>
+    </>
   );
 }

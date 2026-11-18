@@ -9,16 +9,20 @@ import {
   GOAL_METRIC_LABELS,
   GoalMetric,
   GoalPeriod,
+  getCompletedTasksWeekly,
   getPerformanceSummary,
   listPeople,
   Person,
   PerformanceSummary,
+  CompletedTasksWeekly,
   updateGoal,
 } from "../api/client";
 import Icon from "../components/Icon";
 import { useToast } from "../components/Toast";
+import { GoalComparisonBars, GoalDonut, GoalPaceLegend } from "./PerformanceCharts";
 import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHeader, ProgressBar, Tone } from "../components/ui";
 import { useSession } from "../session/SessionContext";
+import { addDaysIso, formatDatePt, todayIsoLisbon } from "../utils/dates";
 
 const PACE_TONE: Record<GoalPeriod["pace_status"], Tone> = {
   ahead: "success",
@@ -35,6 +39,14 @@ const PACE_LABEL: Record<GoalPeriod["pace_status"], string> = {
 };
 
 type PeriodType = GoalPeriod["period_type"];
+
+function startOfIsoWeek(iso: string): string {
+  const date = new Date(`${iso}T00:00:00Z`);
+  const mondayOffset = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - mondayOffset);
+  return date.toISOString().slice(0, 10);
+}
+
 
 function CreateGoalModal({
   year,
@@ -296,6 +308,13 @@ export default function Performance() {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editingGoal, setEditingGoal] = useState<GoalPeriod | null>(null);
+  const initialWeeklyTo = todayIsoLisbon();
+  const [weeklyFrom, setWeeklyFrom] = useState(() => addDaysIso(startOfIsoWeek(initialWeeklyTo), -49));
+  const [weeklyTo, setWeeklyTo] = useState(initialWeeklyTo);
+  const [weekly, setWeekly] = useState<CompletedTasksWeekly[] | null>(null);
+  const [weeklyError, setWeeklyError] = useState<string | null>(null);
+  const [weeklyLoading, setWeeklyLoading] = useState(false);
+  const [expandedWeekly, setExpandedWeekly] = useState<string | null>(null);
 
   const canManageGoals = can("performance.manage_goals");
 
@@ -313,7 +332,17 @@ export default function Performance() {
       .catch((e) => setError(e instanceof ApiError ? e.detail : "Não foi possível contactar o servidor."));
   }, [year, periodType, quarter, semester, month, pmFilter]);
 
+  const loadWeekly = useCallback(() => {
+    setWeeklyLoading(true);
+    setWeeklyError(null);
+    getCompletedTasksWeekly({ from: weeklyFrom, to: weeklyTo })
+      .then(setWeekly)
+      .catch((e) => setWeeklyError(e instanceof ApiError ? e.detail : "Não foi possível carregar as tarefas concluídas."))
+      .finally(() => setWeeklyLoading(false));
+  }, [weeklyFrom, weeklyTo]);
+
   useEffect(load, [load]);
+  useEffect(loadWeekly, [loadWeekly]);
   useEffect(() => {
     listPeople()
       .then(setPeople)
@@ -321,7 +350,7 @@ export default function Performance() {
   }, []);
 
   return (
-    <>
+    <div className="performance-page">
       <PageHeader
         title="Metas e indicadores"
         subtitle="Objetivos e progresso da operação, num único sítio — sem separar «Metas» de «Dashboards»."
@@ -448,6 +477,20 @@ export default function Performance() {
             )}
           </Card>
 
+          {summary?.goals.length ? (
+            <div className="section-gap performance-chart-grid">
+              <Card title="Progresso das metas" icon="activity" flush>
+                <div className="performance-donut-grid">
+                  {summary.goals.map((goal) => <GoalDonut key={goal.id} goal={goal} />)}
+                </div>
+                <GoalPaceLegend />
+              </Card>
+              <Card title="Realizado, objetivo e ritmo esperado" icon="activity" flush>
+                <GoalComparisonBars goals={summary.goals} />
+              </Card>
+            </div>
+          ) : null}
+
           <div className="section-gap grid">
             <Card title="Portefólio por estado" icon="folder" tone="violet" flush>
               {summary === null ? (
@@ -506,6 +549,50 @@ export default function Performance() {
               )}
             </Card>
           </div>
+
+          <Card title="Tarefas concluídas por semana e PM" icon="activity" flush>
+            <form className="toolbar" role="search" aria-label="Intervalo de tarefas concluídas" onSubmit={(event) => { event.preventDefault(); loadWeekly(); }}>
+              <div className="field">
+                <label htmlFor="weekly-from">De</label>
+                <input id="weekly-from" className="input" type="date" value={weeklyFrom} onChange={(event) => setWeeklyFrom(event.target.value)} />
+              </div>
+              <div className="field">
+                <label htmlFor="weekly-to">Até</label>
+                <input id="weekly-to" className="input" type="date" value={weeklyTo} onChange={(event) => setWeeklyTo(event.target.value)} />
+              </div>
+              <button type="submit" className="btn" aria-label="Atualizar tarefas concluídas" disabled={weeklyLoading}>
+                {weeklyLoading ? "A carregar…" : "Atualizar"}
+              </button>
+            </form>
+            {weeklyError && <Alert tone="danger">{weeklyError}</Alert>}
+            {weekly === null && !weeklyError ? (
+              <LoadingState rows={3} />
+            ) : weekly && weekly.every((week) => week.pms.length === 0) ? (
+              <EmptyState compact title="Sem tarefas concluídas no intervalo." />
+            ) : (
+              <div className="table-wrap">
+                <table className="table">
+                  <caption className="sr-only">Tarefas concluídas por semana ISO e PM</caption>
+                  <thead><tr><th>Semana</th><th>PM</th><th>Tarefas</th><th>Subtarefas do processo</th></tr></thead>
+                  <tbody>
+                    {weekly?.flatMap((week) => (week.pms.length ? week.pms : [{ pm_person_id: null, pm_display_name: null, task_count: 0, subtask_count: 0, tasks: [] }]).map((pm) => {
+                      const key = `${week.iso_year}-${week.iso_week}-${pm.pm_person_id ?? "none"}`;
+                      const expanded = expandedWeekly === key;
+                      return [
+                        <tr key={key}>
+                          <td>{week.iso_year}-W{String(week.iso_week).padStart(2, "0")}<span className="cell-sub">{formatDatePt(week.week_start)} – {formatDatePt(week.week_end)}</span></td>
+                          <td>{pm.pm_display_name ?? "Sem PM atribuído"}</td>
+                          <td><button type="button" className="btn btn--sm btn--ghost" aria-label={`Ver tarefas de ${pm.pm_display_name ?? "Sem PM atribuído"}`} aria-expanded={expanded} disabled={!pm.tasks.length} onClick={() => setExpandedWeekly(expanded ? null : key)}>{pm.task_count} {pm.task_count === 1 ? "tarefa" : "tarefas"}</button></td>
+                          <td>{pm.subtask_count}</td>
+                        </tr>,
+                        ...(expanded ? [<tr key={`${key}-details`}><td colSpan={4}><ul className="list">{pm.tasks.map((task) => <li key={task.id} className="list__item"><span><strong>{task.title}</strong><span className="cell-sub">{task.project_name} · {formatDatePt(task.completed_at.slice(0, 10))} · {task.id}</span></span></li>)}</ul></td></tr>] : []),
+                      ];
+                    }))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
         </>
       )}
 
@@ -533,6 +620,6 @@ export default function Performance() {
           }}
         />
       )}
-    </>
+    </div>
   );
 }

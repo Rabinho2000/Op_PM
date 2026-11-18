@@ -34,6 +34,37 @@ function resolveToken(name: string, values: Map<string, string>, visiting = new 
   return resolveToken(reference[1], values, visiting);
 }
 
+function rule(selector: string): string {
+  const start = css.indexOf(`${selector} {`);
+  if (start < 0) throw new Error(`Regra CSS não encontrada: ${selector}`);
+  const opening = css.indexOf("{", start);
+  const closing = css.indexOf("}", opening);
+  if (closing < 0) throw new Error(`Regra CSS sem fecho: ${selector}`);
+  return css.slice(opening + 1, closing);
+}
+
+function referencedToken(block: string, property: string): string {
+  const declaration = block.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${property}:`));
+  const value = declaration?.slice(property.length + 1).trim();
+  if (!value?.startsWith("var(--") || !value.endsWith(")")) {
+    throw new Error(`Declaração ${property} não referencia um token CSS.`);
+  }
+  return value.slice(4, -1);
+}
+
+function luminance(hex: string): number {
+  const channels = [0, 2, 4].map((offset) => {
+    const value = parseInt(hex.slice(offset + 1, offset + 3), 16) / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
+
+function contrastRatio(foreground: string, background: string): number {
+  const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+  return (values[0] + 0.05) / (values[1] + 0.05);
+}
+
 const lightTokens = declarations(findBlock(css, ":root"));
 const darkThemeStart = css.indexOf(':root[data-theme="dark"]');
 const darkTokens = declarations(findBlock(css, ':root[data-theme="dark"]', darkThemeStart));
@@ -52,8 +83,15 @@ const printColorTokens = [
   "--text-muted",
   "--text-subtle",
   "--brand",
+  "--brand-identity",
+  "--brand-fill",
+  "--brand-text",
   "--brand-strong",
+  "--brand-fill-strong",
   "--brand-soft",
+  "--link",
+  "--link-hover",
+  "--focus-color",
   "--on-brand",
   "--accent",
   "--accent-soft",
@@ -94,6 +132,18 @@ describe("tokens de impressão", () => {
         resolveToken(expectedLightToken, lightTokens),
       );
     }
+  });
+
+  it("mantém contraste de marca nos consumidores reais durante impressão", () => {
+    const linkToken = referencedToken(rule("a"), "color");
+    const linkColor = resolveToken(linkToken, printTokens);
+    const printedSurface = resolveToken("--surface", printTokens);
+    expect(contrastRatio(linkColor, printedSurface), "link impresso sobre superfície branca").toBeGreaterThanOrEqual(4.5);
+
+    const planningStyle = rule(".planning-chip");
+    const planningText = resolveToken(referencedToken(planningStyle, "color"), printTokens);
+    const planningBackground = resolveToken(referencedToken(planningStyle, "background"), printTokens);
+    expect(contrastRatio(planningText, planningBackground), "texto do planning chip impresso").toBeGreaterThanOrEqual(4.5);
   });
 
   it("remove navegação e permite fluxo e paginação sem cortes artificiais", () => {

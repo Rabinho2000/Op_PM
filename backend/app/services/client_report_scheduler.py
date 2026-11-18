@@ -19,7 +19,11 @@ def due_configs(db: Session, *, now: dt.datetime) -> list[tuple[Project, ClientR
     rows = (
         db.query(Project, ClientReportConfig)
         .join(ClientReportConfig, ClientReportConfig.project_id == Project.id)
-        .filter(ClientReportConfig.enabled.is_(True), Project.is_active.is_(True))
+        .filter(
+            ClientReportConfig.enabled.is_(True),
+            Project.is_active.is_(True),
+            Project.deleted_at.is_(None),
+        )
         .all()
     )
     return [

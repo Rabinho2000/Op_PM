@@ -198,6 +198,7 @@ def build_absence_warning_map(
         .filter(
             Project.pm_person_id.in_(person_ids),
             Project.is_active.is_(True),
+            Project.deleted_at.is_(None),
             or_(Project.lifecycle_status.in_(WORK_STATUSES), Project.lifecycle_status.is_(None)),
             Project.work_start_date.isnot(None),
             Project.work_end_date.isnot(None),

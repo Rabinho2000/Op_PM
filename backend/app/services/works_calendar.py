@@ -161,6 +161,7 @@ def get_works_calendar(
     pm_person_id: uuid.UUID | None = None,
     lifecycle_statuses: list[str] | None = None,
     installer_id: uuid.UUID | None = None,
+    installer_ids: list[uuid.UUID] | None = None,
     team_id: uuid.UUID | None = None,
 ) -> WorksCalendar:
     if end < start:
@@ -169,6 +170,9 @@ def get_works_calendar(
         raise WindowError(f"A janela não pode exceder {MAX_WINDOW_DAYS} dias.")
 
     scoped = is_installer_readonly_scope(ctx)
+    selected_installer_ids = set(installer_ids or [])
+    if installer_id is not None:
+        selected_installer_ids.add(installer_id)
     if scoped:
         assignment_loader = selectinload(
             Project.team_assignments.and_(
@@ -231,7 +235,7 @@ def get_works_calendar(
             return False
         if lifecycle_statuses and project.lifecycle_status not in lifecycle_statuses:
             return False
-        if installer_id is not None and entry.installer_id != installer_id:
+        if selected_installer_ids and entry.installer_id not in selected_installer_ids:
             return False
         if team_id is not None and entry.team_id != team_id:
             return False
@@ -266,8 +270,8 @@ def get_works_calendar(
         to_plan = [project for project in to_plan if project.pm_person_id == pm_person_id]
     if lifecycle_statuses:
         to_plan = [project for project in to_plan if project.lifecycle_status in lifecycle_statuses]
-    if installer_id is not None:
-        to_plan = [project for project in to_plan if project.installer_id == installer_id]
+    if selected_installer_ids:
+        to_plan = [project for project in to_plan if project.installer_id in selected_installer_ids]
     # Uma linha sem atribuição é, por definição, "sem equipa".
     if team_id is not None:
         to_plan = []

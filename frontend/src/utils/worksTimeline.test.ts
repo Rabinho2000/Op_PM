@@ -233,6 +233,14 @@ describe("buildRows", () => {
     expect(idle.filter((r) => r.kind === "lane").every((r) => r.muted)).toBe(true);
   });
 
+  it("limita as linhas idle aos instaladores selecionados e mantém todas sem seleção", () => {
+    const selectedA = buildRows([], installers, true, ["vm"]);
+    expect(selectedA.map((row) => row.label)).toEqual(["Instalador A", "Equipa 1", "Equipa 2"]);
+    expect(buildRows([], installers, true, []).map((row) => row.label)).toEqual([
+      "Instalador A", "Equipa 1", "Equipa 2", "Instalador B",
+    ]);
+  });
+
   it("uma equipa inativa com obras continua a aparecer", () => {
     const rows = buildRows([work("z", "2026-06-01", "2026-06-02", { installer_id: "vm", installer_team_id: "t3" })], installers);
     expect(rows.map((r) => r.label)).toEqual(["Instalador A", "Equipa 3"]);

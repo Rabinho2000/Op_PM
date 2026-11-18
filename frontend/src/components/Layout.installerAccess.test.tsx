@@ -16,6 +16,7 @@ const EXTERNAL_ME = makeMe({
     "installer_team.view_assigned_installer",
     "inventory.view_assigned_installer",
     "time_bank.view_own",
+    "requests.create",
   ],
 });
 
@@ -35,6 +36,18 @@ describe("menu do colaborador de instalador", () => {
 
     expect(screen.queryByRole("link", { name: "Férias e aniversários" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Estado do sistema" })).not.toBeInTheDocument();
+  });
+
+  it("mostra o widget de pedidos mas não o menu da caixa ao instalador", () => {
+    renderWithProviders(
+      <Layout>
+        <div>Conteúdo scoped</div>
+      </Layout>,
+      { me: EXTERNAL_ME, route: "/projects" },
+    );
+
+    expect(screen.getByRole("button", { name: "Pedidos" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Pedidos/ })).not.toBeInTheDocument();
   });
 
   it("mantém os destinos staff-only para o menu staff existente", () => {

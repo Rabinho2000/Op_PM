@@ -1,0 +1,52 @@
+.cable-designs__table-wrap {
+  margin: -4px -20px -20px;
+}
+
+.cable-designs__table td:last-child,
+.cable-designs__table th:last-child {
+  text-align: right;
+}
+
+.cable-designs__row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cable-designs__action-error,
+.cable-designs__dialog-error {
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger-text);
+  font-size: 0.88rem;
+}
+
+.cable-designs__dialog-error {
+  margin-top: 14px;
+  margin-bottom: 0;
+}
+
+.btn--danger-ghost {
+  color: var(--danger);
+}
+
+.btn--danger-ghost:hover {
+  color: var(--danger);
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+}
+
+@media (max-width: 760px) {
+  .cable-designs__table-wrap {
+    margin-left: -20px;
+    margin-right: -20px;
+  }
+
+  .cable-designs__table {
+    min-width: 760px;
+  }
+}

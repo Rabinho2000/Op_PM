@@ -61,6 +61,7 @@ function licensing(overrides: Partial<ProjectLicensingData> = {}): ProjectLicens
   return {
     project_id: "proj-1",
     upac_number: "UPAC-001",
+    upac_registration_date: null,
     dgeg_number: null,
     cadastro_number: null,
     licensing_status: null,
@@ -68,11 +69,13 @@ function licensing(overrides: Partial<ProjectLicensingData> = {}): ProjectLicens
     certification_request_date: null,
     inspecting_entity: null,
     inspection_date: null,
+    provisional_certificate_date: null,
     certificate_date: null,
     installer: null,
     commercializer: null,
     annual_production_kwh: null,
     comments: "",
+    licensing_state: "sem_registo",
     updated_at: null,
     ...overrides,
   };
@@ -81,10 +84,8 @@ function licensing(overrides: Partial<ProjectLicensingData> = {}): ProjectLicens
 function communication(overrides: Partial<ProjectCommunicationData> = {}): ProjectCommunicationData {
   return {
     project_id: "proj-1",
-    operator: "Operador Teste",
-    gsm_m2m_number: "911000000",
-    card_identifier: null,
     communication_status: null,
+    whereversim_login: null,
     notes: "",
     updated_at: null,
     ...overrides,
@@ -163,7 +164,9 @@ describe("Detalhe do projeto — dados de instalação/licenciamento", () => {
     fireEvent.click(screen.getByRole("tab", { name: /licenciamento/i }));
 
     await screen.findByText("UPAC-001");
-    expect(screen.getByText(/sem permiss.o para ver estes dados/i)).toBeInTheDocument();
+    // Comunicações e Cartões SIM mostram o aviso (dois blocos sem permissão).
+    expect(screen.getAllByText(/sem permiss.o para ver estes dados/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText("wsim-user")).not.toBeInTheDocument();
     expect(screen.queryByText("911000000")).not.toBeInTheDocument();
   });
 });

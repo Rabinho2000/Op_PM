@@ -17,6 +17,28 @@ privada de uma fase posterior.
 
 ## Endpoints
 
+### `GET /api/cable-tool`
+
+Devolve o motor privado configurado por `CABLE_TOOL_FILE` para os utilizadores
+com a capability `cable_design.view_costs`:
+
+```json
+{
+  "engine_version": "cabos-engine@2026.10",
+  "sha256": "...",
+  "script": "globalThis.CabosEngine = {};"
+}
+```
+
+O conteúdo do ficheiro é lido como UTF-8, sem validação do tipo ou da extensão,
+e tem limite de 8 MiB. O manifesto opcional fica ao lado do ficheiro com o
+nome `<nome>.manifest.json`; para `cabos-engine.js` é
+`cabos-engine.manifest.json`. Sem um manifesto válido, `engine_version` usa
+`cabos-engine@<sha256[:12]>`. A resposta envia `Cache-Control: private, no-store`
+e `X-Content-Type-Options: nosniff`. Sem sessão devolve
+`401`; sem a capability devolve `403`; uma configuração, leitura ou descodificação
+indisponível devolve `503` sanitizado.
+
 ### `GET /api/projects/{project_id}/cable-designs`
 
 Lista estudos ativos do projeto:

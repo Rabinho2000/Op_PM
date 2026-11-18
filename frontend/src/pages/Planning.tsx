@@ -1,4 +1,5 @@
-// Planeamento (calendário): dados manuais e projeções read-only do Processo.
+// Planeamento (calendário): eventos criados manualmente, com referências
+// opcionais a tarefas e itens do Processo.
 // O servidor é a fonte de verdade para visibilidade, permissões, categorias e
 // responsáveis; esta página só compõe a vista e envia referências válidas.
 import { CSSProperties, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -14,7 +15,6 @@ import {
   listCalendarEvents,
   listPeople,
   listPlanningEventCategories,
-  listProcessCalendarEvents,
   listProjects,
   listTasks,
   Person,
@@ -27,6 +27,7 @@ import {
 import Icon from "../components/Icon";
 import { useToast } from "../components/Toast";
 import { Alert, Avatar, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHeader, Tone } from "../components/ui";
+import { useSession } from "../session/SessionContext";
 import { lisbonWallClockToIso, todayIsoLisbon } from "../utils/dates";
 import "./Planning.css";
 
@@ -39,7 +40,6 @@ const EVENT_STATUS_TONES: Record<string, Tone> = {
   aprovado: "brand",
   publicado: "success",
   cancelado: "danger",
-  projected: "violet",
 };
 
 const LISBON_DATETIME_PARTS = new Intl.DateTimeFormat("en-CA", {
@@ -222,39 +222,6 @@ export function findPlanningConflicts(
   });
 }
 
-function canonicalInstant(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toISOString();
-}
-
-function processReferenceKey(event: CalendarEvent): string | null {
-  if (!event.project_id || (!event.process_stage_id && !event.process_subtask_id)) return null;
-  return [
-    event.project_id,
-    event.process_stage_id ?? "",
-    event.process_subtask_id ?? "",
-    canonicalInstant(event.starts_at),
-    canonicalInstant(event.ends_at),
-  ].join("|");
-}
-
-export function mergePlanningEvents(manualEvents: CalendarEvent[], processEvents: CalendarEvent[]): CalendarEvent[] {
-  const result: CalendarEvent[] = [];
-  const keys = new Set<string>();
-  for (const event of manualEvents) {
-    const key = processReferenceKey(event);
-    if (key) keys.add(key);
-    result.push(event);
-  }
-  for (const event of processEvents) {
-    const key = processReferenceKey(event);
-    if (key && keys.has(key)) continue;
-    if (key) keys.add(key);
-    result.push(event);
-  }
-  return result.sort((a, b) => a.starts_at.localeCompare(b.starts_at) || a.id.localeCompare(b.id));
-}
-
 function eventCategoryMeta(event: CalendarEvent, categories: CalendarEventCategory[]): { label: string; color: string } {
   const category = categories.find((item) => item.code === event.category);
   return {
@@ -264,8 +231,7 @@ function eventCategoryMeta(event: CalendarEvent, categories: CalendarEventCatego
 }
 
 function projectUrlFor(event: CalendarEvent): string | null {
-  if (event.project_url) return event.project_url;
-  return event.project_id ? `/projects/${event.project_id}` : null;
+  return event.project_url ?? null;
 }
 
 function PlanningProjectCombobox({
@@ -275,6 +241,7 @@ function PlanningProjectCombobox({
   value,
   onChange,
   placeholder,
+  required = false,
 }: {
   id: string;
   label: string;
@@ -282,6 +249,7 @@ function PlanningProjectCombobox({
   value: string;
   onChange: (projectId: string) => void;
   placeholder: string;
+  required?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const selectedProject = projects.find((project) => project.id === value);
@@ -338,12 +306,14 @@ function PlanningProjectCombobox({
 
   return (
     <div className="planning-combobox" ref={rootRef}>
-      <label htmlFor={id}>{label}</label>
+      <label htmlFor={id}>{label}{required ? " *" : ""}</label>
       <div className="planning-combobox__control">
         <input
           id={id}
           className="input planning-combobox__input"
           role="combobox"
+          aria-required={required || undefined}
+          aria-describedby={required ? `${id}-required` : undefined}
           aria-autocomplete="list"
           aria-controls={listboxId}
           aria-expanded={open}
@@ -511,6 +481,7 @@ function EventModal({
   people,
   categories,
   allEvents,
+  projectRequired,
   onClose,
   onSaved,
 }: {
@@ -520,6 +491,7 @@ function EventModal({
   people: Person[];
   categories: CalendarEventCategory[];
   allEvents: CalendarEvent[];
+  projectRequired: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -611,6 +583,10 @@ function EventModal({
     setError(null);
     if (!form.title.trim()) {
       setError("Indique o título do evento.");
+      return;
+    }
+    if (projectRequired && !form.project_id) {
+      setError("Selecione um projeto antes de guardar este evento.");
       return;
     }
     if (!form.starts_at || !form.ends_at) {
@@ -713,7 +689,8 @@ function EventModal({
           <span className="small">{event?.source === "process" ? "Processo (read-only)" : "Manual"}</span>
         </div>
         <div className="field span-2">
-          <PlanningProjectCombobox id="e-project" label="Projeto" projects={projects} value={form.project_id} onChange={selectProject} placeholder="Pesquisar projeto…" />
+          <PlanningProjectCombobox id="e-project" label="Projeto" projects={projects} value={form.project_id} onChange={selectProject} placeholder="Pesquisar projeto…" required={projectRequired} />
+          {projectRequired && <span className="field__hint" id="e-project-required">Obrigatório para guardar eventos com esta conta.</span>}
         </div>
         {form.project_id && (
           <>
@@ -788,14 +765,12 @@ function EventChip({
   as?: "button" | "span";
 }) {
   const meta = eventCategoryMeta(event, categories);
-  const sourceLabel = event.source === "process" ? "Processo" : "Manual";
   const participants = event.assigned_to_display_names?.length ? event.assigned_to_display_names.join(", ") : event.assigned_to_display_name ?? "sem responsáveis";
   const content = (
     <>
       <span className="planning-event-chip__dot" aria-hidden="true" />
       <span className="planning-event-chip__time">{formatTimePt(event.starts_at)}</span>
       <span className="planning-event-chip__title">{event.title}</span>
-      {event.source === "process" && <span className="planning-event-chip__source" aria-hidden="true">P</span>}
     </>
   );
   const style = { "--planning-event-color": meta.color } as CSSProperties;
@@ -810,7 +785,7 @@ function EventChip({
       className="planning-event-chip"
       style={style}
       onClick={onClick}
-      aria-label={`${event.title}, ${meta.label}, ${sourceLabel}, responsáveis: ${participants}`}
+      aria-label={`${event.title}, ${meta.label}, Manual, responsáveis: ${participants}`}
     >
       {content}
     </button>
@@ -847,21 +822,13 @@ function EventDetailModal({
   onCancel: () => void;
 }) {
   const meta = eventCategoryMeta(event, categories);
-  const processEvent = event.source === "process";
   const projectUrl = projectUrlFor(event);
-  const responsibleNames = event.responsible_display_names?.length
-    ? event.responsible_display_names
-    : event.assigned_to_display_names?.length
-      ? event.assigned_to_display_names
-      : event.assigned_to_display_name
-        ? [event.assigned_to_display_name]
-        : [];
   return (
     <Modal
       title={event.title}
       onClose={onClose}
       footer={
-        !processEvent && event.can_manage && event.status !== "cancelado" ? (
+        event.can_manage && event.status !== "cancelado" ? (
           <>
             <button type="button" className="btn btn--danger" onClick={onCancel}>Cancelar evento</button>
             <button type="button" className="btn btn--primary" onClick={onEdit}>Editar</button>
@@ -874,18 +841,17 @@ function EventDetailModal({
         <span className="planning-category-badge" style={{ "--planning-event-color": meta.color } as CSSProperties}>
           <span className="planning-event-chip__dot" aria-hidden="true" /> {meta.label}
         </span>
-        <Badge tone={processEvent ? "violet" : "neutral"}>{processEvent ? "Processo" : "Manual"}</Badge>
+        <Badge tone="neutral">Manual</Badge>
       </div>
-      {processEvent && <Alert tone="info">Este evento é uma projeção do Processo. Só é possível abrir a etapa; as datas e o progresso não são editáveis aqui.</Alert>}
       <dl className="kv planning-event-detail">
         <dt>Início</dt>
         <dd>{formatDayHeaderPt(lisbonDateOf(event.starts_at))} · {formatTimePt(event.starts_at)}</dd>
         <dt>Fim</dt>
         <dd>{formatDayHeaderPt(lisbonDateOf(event.ends_at))} · {formatTimePt(event.ends_at)}</dd>
-        {event.project_id && (
+        {(event.project_id || event.project_context_hidden) && (
           <>
             <dt>Projeto</dt>
-            <dd>{projectUrl ? <Link to={projectUrl}>{event.project_name ?? "Abrir projeto"}</Link> : event.project_name}</dd>
+            <dd>{event.project_context_hidden ? "Projeto fora do seu âmbito" : projectUrl ? <Link to={projectUrl}>{event.project_name ?? "Abrir projeto"}</Link> : event.project_name}</dd>
           </>
         )}
         {event.task_title && (
@@ -908,20 +874,15 @@ function EventDetailModal({
         )}
         <dt>Responsáveis</dt>
         <dd><ParticipantSummary event={event} people={people} /></dd>
-        {processEvent && responsibleNames.length > 0 && (
-          <>
-            <dt>Responsáveis do Processo</dt>
-            <dd>{responsibleNames.join(", ")}</dd>
-          </>
-        )}
-        {processEvent && projectUrl && <><dt>Processo</dt><dd><Link to={projectUrl} aria-label="Abrir processo">Abrir Processo</Link></dd></>}
       </dl>
     </Modal>
   );
 }
 
 export default function Planning() {
+  const { can } = useSession();
   const { notify } = useToast();
+  const projectRequired = can("calendar.view_all_pm") && !can("project.view_all");
   const [view, setView] = useState<ViewMode>("month");
   const [anchorIso, setAnchorIso] = useState(() => todayIsoLisbon());
   const [hideWeekends, setHideWeekends] = useState(false);
@@ -935,7 +896,6 @@ export default function Planning() {
 
   const [events, setEvents] = useState<CalendarEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [processError, setProcessError] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
   const [categories, setCategories] = useState<CalendarEventCategory[]>([]);
@@ -995,7 +955,6 @@ export default function Planning() {
     const sequence = ++loadSequence.current;
     setEvents(null);
     setError(null);
-    setProcessError(null);
     const filters = {
       starts_from: lisbonWallClockToIso(`${range.startIso}T00:00`),
       // End exclusive at Lisbon midnight keeps the complete last day and
@@ -1006,17 +965,12 @@ export default function Planning() {
       assigned_to_person_id: scope === "responsible" && scopeResponsibleId ? scopeResponsibleId : undefined,
       category: categoryFilter || undefined,
     };
-    Promise.allSettled([listCalendarEvents(filters), listProcessCalendarEvents(filters)]).then(([manualResult, processResult]) => {
+    listCalendarEvents(filters).then((manualEvents) => {
       if (sequence !== loadSequence.current) return;
-      const manualEvents = manualResult.status === "fulfilled" ? manualResult.value : [];
-      const processEvents = processResult.status === "fulfilled" ? processResult.value : [];
-      setEvents(mergePlanningEvents(manualEvents, processEvents));
-      if (manualResult.status === "rejected") {
-        setError(manualResult.reason instanceof ApiError ? manualResult.reason.detail : "Não foi possível carregar os eventos do planeamento.");
-      }
-      if (processResult.status === "rejected") {
-        setProcessError(processResult.reason instanceof ApiError ? processResult.reason.detail : "Não foi possível carregar as projeções do Processo.");
-      }
+      setEvents(manualEvents);
+    }).catch((loadError) => {
+      if (sequence !== loadSequence.current) return;
+      setError(loadError instanceof ApiError ? loadError.detail : "Não foi possível carregar os eventos do planeamento.");
     });
   }, [categoryFilter, range.endIso, range.startIso, scope, scopeProjectId, scopeResponsibleId]);
 
@@ -1110,18 +1064,17 @@ export default function Planning() {
     <div className="planning-page">
       <PageHeader
         title="Planeamento"
-        subtitle="Calendário local de visitas, Processo e outras marcações — sem sincronização externa."
+        subtitle="Calendário local de marcações manuais — sem sincronização externa."
         actions={<button type="button" className="btn btn--primary btn--sm" onClick={() => setCreatingForDate(anchorIso)}><Icon name="plus" size={14} /> Novo evento</button>}
       />
 
-      {(preferenceError || preferenceSaveError || projectError || peopleError || categoryError || processError) && (
+      {(preferenceError || preferenceSaveError || projectError || peopleError || categoryError) && (
         <div className="planning-alerts">
           {preferenceError && <Alert tone="warning" title="Vista guardada indisponível" action={<button type="button" className="btn btn--sm" onClick={retryPreferences}>Tentar novamente</button>}>{preferenceError}</Alert>}
           {preferenceSaveError && <Alert tone="warning" title="Vista não guardada" action={<button type="button" className="btn btn--sm" onClick={handleSavePreference} disabled={savingPreference}>Tentar guardar</button>}>{preferenceSaveError}</Alert>}
           {projectError && <Alert tone="warning">{projectError}</Alert>}
           {peopleError && <Alert tone="warning">{peopleError}</Alert>}
           {categoryError && <Alert tone="warning">{categoryError}</Alert>}
-          {processError && <Alert tone="warning" title="Projeções do Processo indisponíveis" action={<button type="button" className="btn btn--sm" onClick={loadEvents}>Tentar novamente</button>}>{processError}</Alert>}
         </div>
       )}
 
@@ -1164,7 +1117,7 @@ export default function Planning() {
             {visibleDays.filter((day) => (eventsByDay.get(day) ?? []).length > 0).map((day) => (
               <li key={day} className="list__item planning-list__day" data-testid="planning-day">
                 <div className="list__title">{formatDayHeaderPt(day)}</div>
-                <div className="planning-list__events">{(eventsByDay.get(day) ?? []).map((event) => <button key={event.id} type="button" className="planning-list__event" onClick={() => setDetailEvent(event)} onKeyDown={(keyboardEvent) => { if (keyboardEvent.key === "Enter") { keyboardEvent.preventDefault(); setDetailEvent(event); } }}><EventChip event={event} categories={categories} as="span" /><span className="planning-list__meta">{event.project_name ?? "sem projeto"} · {eventCategoryMeta(event, categories).label} · <ParticipantSummary event={event} people={people} /></span></button>)}</div>
+                <div className="planning-list__events">{(eventsByDay.get(day) ?? []).map((event) => <button key={event.id} type="button" className="planning-list__event" onClick={() => setDetailEvent(event)} onKeyDown={(keyboardEvent) => { if (keyboardEvent.key === "Enter") { keyboardEvent.preventDefault(); setDetailEvent(event); } }}><EventChip event={event} categories={categories} as="span" /><span className="planning-list__meta">{event.project_context_hidden ? "Projeto fora do seu âmbito" : event.project_name ?? "sem projeto"} · {eventCategoryMeta(event, categories).label} · <ParticipantSummary event={event} people={people} /></span></button>)}</div>
               </li>
             ))}
           </ul>
@@ -1184,7 +1137,7 @@ export default function Planning() {
       </Card>
 
       {detailEvent && <EventDetailModal event={detailEvent} people={people} categories={categories} onClose={() => setDetailEvent(null)} onCancel={() => handleCancel(detailEvent)} onEdit={() => { setEditingEvent(detailEvent); setDetailEvent(null); }} />}
-      {(creatingForDate !== null || editingEvent) && <EventModal event={editingEvent} defaultDate={creatingForDate} projects={orderedProjects} people={people} categories={categories} allEvents={events ?? []} onClose={() => { setCreatingForDate(null); setEditingEvent(null); }} onSaved={() => { notify(editingEvent ? "Evento atualizado." : "Evento criado.", "success"); setCreatingForDate(null); setEditingEvent(null); loadEvents(); }} />}
+      {(creatingForDate !== null || editingEvent) && <EventModal event={editingEvent} defaultDate={creatingForDate} projects={orderedProjects} people={people} categories={categories} allEvents={events ?? []} projectRequired={projectRequired} onClose={() => { setCreatingForDate(null); setEditingEvent(null); }} onSaved={() => { notify(editingEvent ? "Evento atualizado." : "Evento criado.", "success"); setCreatingForDate(null); setEditingEvent(null); loadEvents(); }} />}
     </div>
   );
 }

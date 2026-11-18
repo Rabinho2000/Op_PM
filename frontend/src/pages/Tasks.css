@@ -95,8 +95,8 @@
   margin: 0 0 12px;
 }
 
-/* The global mobile stylesheet converts tables to cards. For this page the
-   accepted behavior is a local horizontal wrapper, not page-wide overflow. */
+/* The task list retains its established table layout and local horizontal
+   scroll on small screens; the document itself stays within the viewport. */
 @media (max-width: 760px) {
   .tasks-list__settings {
     align-items: stretch;
@@ -178,9 +178,193 @@
 
   .tasks-list__column-dialog {
     position: fixed;
+    z-index: 50;
     top: 16px;
     right: 16px;
     left: 16px;
     width: auto;
+  }
+}
+
+/* Composição C da página: um espaço de trabalho para filtros e vista. */
+.tasks-page {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.tasks-page > .page-header {
+  align-items: center;
+  gap: 20px;
+  margin: 0;
+}
+
+.tasks-page > .page-header .page-header__actions {
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.tasks-page .page-header__actions .segmented button {
+  min-height: 44px;
+}
+
+.tasks-page .tasks-list__preference-alert {
+  margin: 0;
+}
+
+.tasks-page__control-surface {
+  min-width: 0;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.tasks-page__control-surface .toolbar {
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.tasks-page__control-surface .toolbar .field {
+  flex: 1 1 150px;
+  min-width: 0;
+}
+
+.tasks-page__control-surface .toolbar .field--wide {
+  flex: 1.7 1 240px;
+}
+
+.tasks-page__control-surface .tasks-list__settings {
+  gap: 8px 10px;
+  margin: 12px 0 0;
+  padding: 12px 0 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.tasks-page__control-surface .tasks-list__settings > .field {
+  min-width: 0;
+}
+
+.tasks-page__control-surface .tasks-list__kanban-help {
+  margin: 8px 0 0;
+}
+
+.tasks-page__control-surface > [role="status"] {
+  margin: 8px 0 0;
+}
+
+.tasks-page__results {
+  min-width: 0;
+}
+
+.tasks-page__kanban-area {
+  min-width: 0;
+  container-name: tasks-board;
+  container-type: inline-size;
+}
+
+.tasks-page__kanban-area .kanban {
+  max-width: 100%;
+}
+
+.tasks-page__kanban-scroll-hint {
+  display: none;
+  margin: 0 0 8px;
+}
+
+@container tasks-board (max-width: 1055px) {
+  .tasks-page__kanban-scroll-hint {
+    display: block;
+  }
+}
+
+@media (max-width: 760px) {
+  .tasks-page {
+    gap: 12px;
+  }
+
+  .tasks-page > .page-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .tasks-page > .page-header .page-header__actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .tasks-page .page-header__actions .segmented {
+    flex: 0 0 auto;
+  }
+
+  .tasks-page .page-header__actions .btn--primary {
+    flex: 1 1 120px;
+  }
+
+  .tasks-page__control-surface {
+    padding: 12px;
+  }
+
+  .tasks-page__control-surface .toolbar {
+    gap: 8px;
+  }
+
+  .tasks-page__control-surface .toolbar .field--wide {
+    flex: 1 1 100%;
+  }
+
+  .tasks-page__control-surface .toolbar .field:not(.field--wide) {
+    flex: 1 1 145px;
+  }
+
+  .tasks-page__control-surface .toolbar > .checkbox {
+    flex: 1 1 145px;
+  }
+
+  .tasks-page__control-surface .toolbar__end {
+    margin-left: 0;
+  }
+
+  .tasks-page__control-surface .tasks-list__settings > .field,
+  .tasks-page__control-surface .tasks-list__saved-view-field {
+    flex: 1 1 145px !important;
+  }
+
+  .tasks-page__control-surface .tasks-list__view-actions {
+    display: grid;
+    flex: 1 1 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-left: 0;
+    min-width: 0;
+  }
+
+  .tasks-page__control-surface .tasks-list__view-actions .btn {
+    min-width: 0;
+    min-height: 44px;
+    padding-right: 8px;
+    padding-left: 8px;
+    white-space: normal;
+    line-height: 1.3;
+  }
+
+  .tasks-page .tasks-list__column-menu > .btn,
+  .tasks-page .tasks-list__column-dialog .btn {
+    min-width: 44px;
+    min-height: 44px;
+    white-space: normal;
+  }
+}
+
+@media (max-width: 360px) {
+  .tasks-page > .page-header .page-header__actions .btn--primary {
+    flex-basis: 100%;
   }
 }

@@ -210,16 +210,73 @@ def test_assignment_migration_converts_legacy_team_and_window(tmp_path):
         )
 
     run("upgrade", "d7a2c5e9b3f1")
-    seed = (
-        "from app.db import SessionLocal; "
-        "from app.models.installer import Installer, InstallerTeam; "
-        "from app.models.project import Project; "
-        "import datetime as dt; "
-        "db=SessionLocal(); i=Installer(name='Migrador Sintético', name_key='migrador sintetico'); db.add(i); db.flush(); "
-        "t=InstallerTeam(installer_id=i.id, name='Equipa Sintética', name_key='equipa sintetica'); db.add(t); db.flush(); "
-        "p=Project(name='Obra Migrada Sintética', installer_id=i.id, installer_team_id=t.id, "
-        "work_start_date=dt.date(2035,1,1), work_end_date=dt.date(2035,1,4), is_active=True); db.add(p); db.commit(); db.close()"
+    seed = '''
+from datetime import date, datetime, timezone
+import os
+from uuid import uuid4
+
+from sqlalchemy import create_engine, text
+
+engine = create_engine(os.environ["DATABASE_URL"])
+now = datetime.now(timezone.utc)
+installer_id, team_id, project_id = (str(uuid4()) for _ in range(3))
+with engine.begin() as connection:
+    connection.execute(
+        text("""
+            INSERT INTO installers (id, name, name_key, is_active, created_at, updated_at)
+            VALUES (:id, :name, :name_key, :is_active, :created_at, :updated_at)
+        """),
+        {
+            "id": installer_id,
+            "name": "Migrador Sintético",
+            "name_key": "migrador sintetico",
+            "is_active": True,
+            "created_at": now,
+            "updated_at": now,
+        },
     )
+    connection.execute(
+        text("""
+            INSERT INTO installer_teams (id, installer_id, name, name_key, is_active, created_at, updated_at)
+            VALUES (:id, :installer_id, :name, :name_key, :is_active, :created_at, :updated_at)
+        """),
+        {
+            "id": team_id,
+            "installer_id": installer_id,
+            "name": "Equipa Sintética",
+            "name_key": "equipa sintetica",
+            "is_active": True,
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+    connection.execute(
+        text("""
+            INSERT INTO projects (
+                id, name, installer_id, installer_team_id, work_start_date, work_end_date,
+                is_active, notes, work_dates_estimated, created_at, updated_at
+            )
+            VALUES (
+                :id, :name, :installer_id, :installer_team_id, :work_start_date, :work_end_date,
+                :is_active, :notes, :work_dates_estimated, :created_at, :updated_at
+            )
+        """),
+        {
+            "id": project_id,
+            "name": "Obra Migrada Sintética",
+            "installer_id": installer_id,
+            "installer_team_id": team_id,
+            "work_start_date": date(2035, 1, 1),
+            "work_end_date": date(2035, 1, 4),
+            "is_active": True,
+            "notes": "",
+            "work_dates_estimated": False,
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+engine.dispose()
+'''
     subprocess.run([python, "-c", seed], cwd=root, env=env, text=True, capture_output=True, check=True)
     run("upgrade", "head")
     check = (
@@ -285,6 +342,51 @@ def test_teams_view_conflicts_only_compare_visible_assignments(api_client, db_se
     assert broad.status_code == 200, broad.text
     assert {row["project_name"] for row in broad_team["assignments"]} == {OWN, LEGACY_PM}
     assert all(row["conflict"] is True for row in broad_team["assignments"])
+
+
+def test_deleted_project_releases_team_until_restored(api_client, db_session):
+    team = _team(db_session, ALFA, "Equipa 1")
+    hidden = _project(db_session, LEGACY_PM)
+    hidden.installer_id = team.installer_id
+    hidden.lifecycle_status = "construcao"
+    hidden.is_active = True
+    db_session.add(
+        ProjectTeamAssignment(
+            project_id=hidden.id,
+            installer_id=team.installer_id,
+            team_id=team.id,
+            start_date=dt.date(2047, 2, 10),
+            end_date=dt.date(2047, 2, 12),
+        )
+    )
+    db_session.flush()
+
+    def team_status() -> str:
+        response = api_client.get(
+            "/api/works/teams",
+            params={"date": "2047-02-10", "days": 3, "installer_id": str(team.installer_id)},
+            headers=_h(PM_UM),
+        )
+        assert response.status_code == 200, response.text
+        return next(
+            item["status"]
+            for installer in response.json()["installers"]
+            for item in installer["teams"]
+            if item["name"] == "Equipa 1"
+        )
+
+    # Uma obra activa fora do âmbito do PM continua a bloquear a equipa.
+    assert team_status() == "ocupada_noutra_obra"
+
+    deleted = api_client.request(
+        "DELETE", f"/api/projects/{hidden.id}", json={"reason": "Teste de libertação"}, headers=_h(CHEFE)
+    )
+    assert deleted.status_code == 204, deleted.text
+    assert team_status() == "livre"
+
+    restored = api_client.post(f"/api/projects/{hidden.id}/restore", headers=_h("admin.sintetico@example.invalid"))
+    assert restored.status_code == 200, restored.text
+    assert team_status() == "ocupada_noutra_obra"
 
 
 @pytest.mark.skipif(engine.dialect.name != "postgresql", reason="o lock de corrida exige PostgreSQL")
