@@ -29,7 +29,10 @@ target_metadata = Base.metadata
 # A URL real vem sempre de Settings (variável de ambiente DATABASE_URL),
 # nunca do valor estático em alembic.ini — evita divergência entre o que a
 # app usa e o que as migrações veem.
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# `%` tem de ser duplicado: o set_main_option passa pelo ConfigParser, que o
+# interpreta como interpolação (uma password com caracteres especiais fica
+# percent-encoded no URL e rebentava aqui).
+config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
 
 
 def run_migrations_offline() -> None:
