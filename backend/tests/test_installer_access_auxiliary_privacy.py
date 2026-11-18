@@ -186,11 +186,16 @@ def test_external_filter_reads_redact_foreign_ids_without_mutating_private_rows(
         foreign_view.installer_id,
         foreign_view.team_id,
     )
-
+    original_own_installer_view_ids = (
+        own_installer_view.pm_person_id,
+        own_installer_view.installer_id,
+        own_installer_view.team_id,
+    )
     preferences = api_client.get("/api/me/works-preferences", headers=_headers())
     assert preferences.status_code == 200, preferences.text
     assert preferences.json()["pm_person_id"] is None
     assert preferences.json()["installer_id"] is None
+    assert preferences.json()["installer_ids"] == []
     assert preferences.json()["team_id"] is None
 
     views = api_client.get("/api/me/works-saved-views", headers=_headers())
@@ -201,13 +206,16 @@ def test_external_filter_reads_redact_foreign_ids_without_mutating_private_rows(
     assert by_name["Vista estrangeira sintética"]["team_id"] is None
     assert by_name["Vista instalador próprio sintética"]["pm_person_id"] is None
     assert by_name["Vista instalador próprio sintética"]["installer_id"] == str(alpha.id)
+    assert by_name["Vista instalador próprio sintética"]["installer_ids"] == [str(alpha.id)]
     assert by_name["Vista instalador próprio sintética"]["team_id"] == str(alpha_team.id)
 
     db_session.expire_all()
     stored_preference = db_session.get(UserWorksPreference, preference.id)
     stored_foreign_view = db_session.get(WorksCalendarSavedView, foreign_view.id)
+    stored_own_view = db_session.get(WorksCalendarSavedView, own_installer_view.id)
     assert stored_preference is not None
     assert stored_foreign_view is not None
+    assert stored_own_view is not None
     assert (
         stored_preference.pm_person_id,
         stored_preference.installer_id,
@@ -218,6 +226,11 @@ def test_external_filter_reads_redact_foreign_ids_without_mutating_private_rows(
         stored_foreign_view.installer_id,
         stored_foreign_view.team_id,
     ) == original_foreign_view_ids
+    assert (
+        stored_own_view.pm_person_id,
+        stored_own_view.installer_id,
+        stored_own_view.team_id,
+    ) == original_own_installer_view_ids
 
 
 def test_own_time_bank_does_not_depend_on_active_installer_membership(db_session, api_client):

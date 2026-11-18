@@ -7,27 +7,31 @@ import re
 import uuid
 from collections import defaultdict
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.models.people import Person
+from app.models.identity import User
 from app.models.time_bank import (
     ADJUSTMENT_KINDS,
     TimeBankAdjustment,
     TimeBankAudit,
     TimeBankEntry,
     TimeBankImportBatch,
+    TimeBankNote,
 )
-from app.schemas.time_bank import EntryCreate, AdjustmentCreate
+from app.schemas.time_bank import EntryCreate, AdjustmentCreate, MyEntryCreate, TimeBankNoteCreate
 from app.security.permissions import (
     AuthContext,
+    can_log_time_bank_own,
     can_manage_time_bank,
     can_view_time_bank,
     can_view_time_bank_person,
 )
-from app.services.time_bank import TimeBankValidationError, calculate_work_seconds
+from app.services.time_bank import DAILY_LIMIT_SECONDS, TimeBankValidationError, calculate_work_seconds
 from app.services.time_bank_import import PARSER_VERSION, parse_time_bank_xlsx
 
 
@@ -204,6 +208,35 @@ def list_people(db: Session, ctx: AuthContext) -> list[Person]:
     raise TimeBankForbidden("Sem permissão para consultar o Banco de Horas.")
 
 
+def list_time_bank_notes(db: Session, ctx: AuthContext, *, person_id: uuid.UUID, limit: int, offset: int) -> tuple[list[TimeBankNote], int]:
+    _require_person_scope(ctx, person_id)
+    _person_or_404(db, person_id)
+    query = db.query(TimeBankNote, Person.display_name).join(User, TimeBankNote.created_by_user_id == User.id).join(Person, User.person_id == Person.id).filter(TimeBankNote.person_id == person_id)
+    total = query.count()
+    rows = query.order_by(TimeBankNote.created_at.desc(), TimeBankNote.id.desc()).offset(offset).limit(limit).all()
+    items = []
+    for item, display_name in rows:
+        item.author_display_name = display_name
+        items.append(item)
+    return items, total
+
+
+def create_time_bank_note(db: Session, ctx: AuthContext, body: TimeBankNoteCreate) -> TimeBankNote:
+    _require_manage(ctx)
+    person = _person_or_404(db, body.person_id)
+    clean = body.body.strip()
+    if not clean:
+        raise TimeBankError("A nota não pode estar vazia.")
+    if len(clean) > 2000:
+        raise TimeBankError("A nota não pode exceder 2000 caracteres.")
+    note = TimeBankNote(id=uuid.uuid4(), person_id=person.id, body=clean, created_by_user_id=ctx.user.id, created_at=_now_utc())
+    db.add(note)
+    _audit(db, ctx, action="note.create", entity_id=note.id, data={"note_id": str(note.id), "person_id": str(person.id)})
+    db.flush()
+    note.author_display_name = ctx.user.person.display_name
+    return note
+
+
 def _resolve_list_person_id(ctx: AuthContext, person_id: uuid.UUID | None) -> uuid.UUID | None:
     """Resolve omitted list scope without widening a reader's visibility."""
     if person_id is not None or ctx.has_permission("time_bank.view_all"):
@@ -223,6 +256,21 @@ def _apply_entry_filters(query: Any, *, person_id: uuid.UUID | None, from_date: 
     return query
 
 
+def _mark_reversed_rows(
+    db: Session,
+    items: list[Any],
+    model: type[TimeBankEntry] | type[TimeBankAdjustment],
+) -> None:
+    """Attach reversal state using only original IDs present on this page."""
+    if not items:
+        return
+    page_ids = [item.id for item in items]
+    reversed_ids = {row[0] for row in db.query(model.reversal_of_id).filter(model.reversal_of_id.in_(page_ids)).all()}
+    for item in items:
+        # This is response enrichment only; the client cannot supply or alter it.
+        setattr(item, "is_reversed", item.id in reversed_ids)
+
+
 def list_entries(
     db: Session,
     ctx: AuthContext,
@@ -232,6 +280,7 @@ def list_entries(
     to_date: dt.date | None,
     limit: int,
     offset: int,
+    include_annulled: bool = True,
 ) -> tuple[list[TimeBankEntry], int]:
     _require_view(ctx)
     selected = _resolve_list_person_id(ctx, person_id)
@@ -239,8 +288,14 @@ def list_entries(
         _require_person_scope(ctx, selected)
         _person_or_404(db, selected)
     query = _apply_entry_filters(db.query(TimeBankEntry), person_id=selected, from_date=from_date, to_date=to_date)
+    if not include_annulled:
+        reversal = aliased(TimeBankEntry)
+        query = query.filter(TimeBankEntry.reversal_of_id.is_(None)).filter(
+            ~db.query(reversal.id).filter(reversal.reversal_of_id == TimeBankEntry.id).exists()
+        )
     total = query.count()
     items = query.order_by(TimeBankEntry.work_date.asc(), TimeBankEntry.occurred_at.asc(), TimeBankEntry.id.asc()).offset(offset).limit(limit).all()
+    _mark_reversed_rows(db, items, TimeBankEntry)
     return items, total
 
 
@@ -253,6 +308,7 @@ def list_adjustments(
     to_date: dt.date | None,
     limit: int,
     offset: int,
+    include_annulled: bool = True,
 ) -> tuple[list[TimeBankAdjustment], int]:
     _require_view(ctx)
     selected = _resolve_list_person_id(ctx, person_id)
@@ -266,8 +322,14 @@ def list_adjustments(
         query = query.filter(TimeBankAdjustment.effective_date >= from_date)
     if to_date is not None:
         query = query.filter(TimeBankAdjustment.effective_date <= to_date)
+    if not include_annulled:
+        reversal = aliased(TimeBankAdjustment)
+        query = query.filter(TimeBankAdjustment.reversal_of_id.is_(None)).filter(
+            ~db.query(reversal.id).filter(reversal.reversal_of_id == TimeBankAdjustment.id).exists()
+        )
     total = query.count()
     items = query.order_by(TimeBankAdjustment.effective_date.asc(), TimeBankAdjustment.occurred_at.asc(), TimeBankAdjustment.id.asc()).offset(offset).limit(limit).all()
+    _mark_reversed_rows(db, items, TimeBankAdjustment)
     return items, total
 
 
@@ -316,8 +378,132 @@ def create_entry(db: Session, ctx: AuthContext, body: EntryCreate) -> TimeBankEn
     return entry
 
 
-def reverse_entry(db: Session, ctx: AuthContext, entry_id: uuid.UUID, reason: str) -> TimeBankEntry:
-    _require_manage(ctx)
+def _require_log_own(ctx: AuthContext) -> uuid.UUID:
+    if not can_log_time_bank_own(ctx) or ctx.person_id is None:
+        raise TimeBankForbidden("Sem permissão para registar a própria jornada no Banco de Horas.")
+    return ctx.person_id
+
+
+def _lisbon_today() -> dt.date:
+    return dt.datetime.now(ZoneInfo("Europe/Lisbon")).date()
+
+
+def _my_entry_mode(work_date: dt.date) -> str:
+    if work_date > _lisbon_today():
+        raise TimeBankError(
+            "A data de trabalho não pode ser futura. "
+            f"Hoje é {_lisbon_today().isoformat()} (Europe/Lisbon)."
+        )
+    if work_date.weekday() == 6:
+        raise TimeBankError("Domingos e feriados só podem ser lançados por um Chefe ou Administrador.")
+    return "saturday" if work_date.weekday() == 5 else "standard"
+
+
+def _active_entry_for_date(db: Session, person_id: uuid.UUID, work_date: dt.date) -> TimeBankEntry | None:
+    entries = (
+        db.query(TimeBankEntry)
+        .filter(TimeBankEntry.person_id == person_id, TimeBankEntry.work_date == work_date)
+        .all()
+    )
+    reversed_ids = {entry.reversal_of_id for entry in entries if entry.reversal_of_id is not None}
+    return next(
+        (
+            entry
+            for entry in entries
+            if entry.reversal_of_id is None and entry.id not in reversed_ids
+        ),
+        None,
+    )
+
+
+def _prepare_my_entry(
+    db: Session,
+    ctx: AuthContext,
+    body: MyEntryCreate,
+) -> tuple[str, int, bool, uuid.UUID]:
+    person_id = _require_log_own(ctx)
+    calculation_mode = _my_entry_mode(body.work_date)
+    # The person lock deliberately precedes the duplicate lookup.  On
+    # PostgreSQL it serializes concurrent self-service submissions for a person.
+    _lock_person(db, person_id)
+    try:
+        balance = calculate_work_seconds(
+            work_date=body.work_date,
+            start_minute=body.start_minute,
+            end_minute=body.end_minute,
+            lunch_taken=body.lunch_taken,
+            calculation_mode=calculation_mode,
+        )
+    except TimeBankValidationError as exc:
+        raise TimeBankError(str(exc)) from exc
+    duplicate = _active_entry_for_date(db, person_id, body.work_date) is not None
+    return calculation_mode, balance, duplicate, person_id
+
+
+def _my_entry_warnings(balance_seconds: int) -> list[dict[str, str]]:
+    if balance_seconds > DAILY_LIMIT_SECONDS:
+        return [{
+            "code": "daily_limit",
+            "message": "O saldo deste dia excede o limite diário de 2 horas.",
+        }]
+    return []
+
+
+def preview_my_entry(db: Session, ctx: AuthContext, body: MyEntryCreate) -> dict[str, Any]:
+    calculation_mode, balance, duplicate, _person_id = _prepare_my_entry(db, ctx, body)
+    return {
+        "work_date": body.work_date,
+        "calculation_mode": calculation_mode,
+        "balance_seconds": balance,
+        "warnings": _my_entry_warnings(balance),
+        "duplicate": duplicate,
+    }
+
+
+def create_my_entry(db: Session, ctx: AuthContext, body: MyEntryCreate) -> TimeBankEntry:
+    calculation_mode, balance, duplicate, person_id = _prepare_my_entry(db, ctx, body)
+    if duplicate:
+        raise TimeBankConflict("Já existe um lançamento para este dia. Anule-o primeiro se quiser corrigir.")
+    entry = TimeBankEntry(
+        person_id=person_id,
+        work_date=body.work_date,
+        start_minute=body.start_minute,
+        end_minute=body.end_minute,
+        lunch_taken=body.lunch_taken,
+        balance_seconds=balance,
+        calculated_seconds=balance,
+        calculation_mode=calculation_mode,
+        reason=None,
+        needs_review=False,
+        review_flags={},
+        provenance={"source": "self_service"},
+        created_by_user_id=ctx.user.id,
+        occurred_at=_now_utc(),
+    )
+    db.add(entry)
+    db.flush()
+    _audit(
+        db,
+        ctx,
+        action="entry.create_self",
+        entity_id=entry.id,
+        data={
+            "person_id": str(person_id),
+            "work_date": body.work_date.isoformat(),
+            "balance_seconds": balance,
+        },
+    )
+    return entry
+
+
+def _reverse_entry_core(
+    db: Session,
+    ctx: AuthContext,
+    entry_id: uuid.UUID,
+    reason: str,
+    *,
+    audit_action: str,
+) -> TimeBankEntry:
     clean_reason = reason.strip()
     if not clean_reason:
         raise TimeBankError("O motivo da anulação é obrigatório.")
@@ -350,8 +536,30 @@ def reverse_entry(db: Session, ctx: AuthContext, entry_id: uuid.UUID, reason: st
     )
     db.add(compensation)
     db.flush()
-    _audit(db, ctx, action="entry.reverse", entity_id=compensation.id, data={"reversal_of_id": str(target.id), "balance_seconds": compensation.balance_seconds})
+    _audit(
+        db,
+        ctx,
+        action=audit_action,
+        entity_id=compensation.id,
+        data={"reversal_of_id": str(target.id), "balance_seconds": compensation.balance_seconds},
+    )
     return compensation
+
+
+def reverse_entry(db: Session, ctx: AuthContext, entry_id: uuid.UUID, reason: str) -> TimeBankEntry:
+    _require_manage(ctx)
+    return _reverse_entry_core(db, ctx, entry_id, reason, audit_action="entry.reverse")
+
+
+def reverse_my_entry(db: Session, ctx: AuthContext, entry_id: uuid.UUID, reason: str) -> TimeBankEntry:
+    person_id = _require_log_own(ctx)
+    target = db.get(TimeBankEntry, entry_id)
+    if target is None or target.person_id != person_id:
+        raise TimeBankNotFound("Lançamento não encontrado.")
+    provenance = target.provenance if isinstance(target.provenance, dict) else {}
+    if provenance.get("source") != "self_service" or target.created_by_user_id != ctx.user.id:
+        raise TimeBankForbidden("Só pode anular os seus próprios lançamentos self-service.")
+    return _reverse_entry_core(db, ctx, entry_id, reason, audit_action="entry.reverse_self")
 
 
 def create_adjustment(db: Session, ctx: AuthContext, body: AdjustmentCreate) -> TimeBankAdjustment:
@@ -465,7 +673,7 @@ def _summary_for_person(db: Session, person: Person, *, year: int, month: int | 
             daily[row.work_date] += row.balance_seconds
             iso = row.work_date.isocalendar()
             weekly[(iso.year, iso.week)] += row.balance_seconds
-    if any(value > 2 * 3600 for value in daily.values()):
+    if any(value > DAILY_LIMIT_SECONDS for value in daily.values()):
         warnings.append({"code": "daily_threshold", "message": "Há dias com mais de 2 horas positivas de Banco de Horas."})
     if any(value > 4 * 3600 for value in weekly.values()):
         warnings.append({"code": "weekly_threshold", "message": "Há semanas ISO com mais de 4 horas positivas de Banco de Horas."})

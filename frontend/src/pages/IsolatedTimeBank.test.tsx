@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api/client";
 import { makeMe } from "../test/fixtures";
@@ -19,6 +19,8 @@ const api = vi.hoisted(() => ({
   getTimeBankImport: vi.fn(),
   resolveTimeBankImport: vi.fn(),
   applyTimeBankImport: vi.fn(),
+  listTimeBankNotes: vi.fn(),
+  createTimeBankNote: vi.fn(),
 }));
 
 vi.mock("../api/timeBank", async () => {
@@ -64,6 +66,7 @@ function entry(overrides: Partial<TimeBankEntryRead> = {}): TimeBankEntryRead {
     created_by_user_id: "u-manager",
     occurred_at: "2026-10-16T17:00:00Z",
     reversal_of_id: null,
+    is_reversed: false,
     ...overrides,
   };
 }
@@ -81,6 +84,7 @@ function adjustment(overrides: Partial<TimeBankAdjustmentRead> = {}): TimeBankAd
     created_by_user_id: "u-manager",
     occurred_at: "2026-10-01T10:00:00Z",
     reversal_of_id: null,
+    is_reversed: false,
     ...overrides,
   };
 }
@@ -90,6 +94,7 @@ function configureReader() {
   api.getTimeBankSummary.mockResolvedValue(summary());
   api.listTimeBankEntries.mockResolvedValue({ items: [entry()], total: 1 });
   api.listTimeBankAdjustments.mockResolvedValue({ items: [adjustment()], total: 1 });
+  api.listTimeBankNotes.mockResolvedValue({ items: [], total: 0 });
 }
 
 beforeEach(() => {
@@ -104,6 +109,7 @@ describe("Banco de Horas", () => {
     });
 
     expect(await screen.findByText("+02:30")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Notas da pessoa" })).toBeInTheDocument();
     expect(screen.getByText("Limite diário ultrapassado (aviso).")).toBeInTheDocument();
     expect(screen.getAllByText("Pessoa Sintética").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: /registar jornada/i })).not.toBeInTheDocument();
@@ -129,6 +135,17 @@ describe("Banco de Horas", () => {
 
     expect(await screen.findByText(/weekday_mismatch: \{"expected":"saturday","observed":"standard"\}/)).toBeInTheDocument();
     expect(screen.getByText(/formula: \{"detail":"valor histórico preservado"\}/)).toBeInTheDocument();
+  });
+
+  it("mostra o motivo disponível tanto no lançamento como no ajuste", async () => {
+    configureReader();
+    api.listTimeBankEntries.mockResolvedValue({ items: [entry({ reason: "Motivo jornada sintética" })], total: 1 });
+    renderWithProviders(<IsolatedTimeBank />, {
+      me: makeMe({ person_id: "p-reader", display_name: "Pessoa Sintética", permissions: ["time_bank.view_own"] }),
+    });
+
+    expect(await screen.findByText("Motivo jornada sintética")).toBeInTheDocument();
+    expect(screen.getByText("Correção sintética")).toBeInTheDocument();
   });
 
   it("permite ao gestor registar uma sexta-feira com saldo inteiro em segundos", async () => {
@@ -218,6 +235,18 @@ describe("Banco de Horas", () => {
     expect(screen.getByText("16/10/2026")).toBeInTheDocument();
   });
 
+  it("não oferece a ação nem o importador a quem não tem permissão de gestão", async () => {
+    configureReader();
+    renderWithProviders(<IsolatedTimeBank />, {
+      me: makeMe({ person_id: "p-reader", display_name: "Pessoa Sintética", permissions: ["time_bank.view_all"] }),
+    });
+
+    await screen.findByText("Lançamentos (1)");
+    expect(screen.queryByRole("button", { name: "Importar Excel" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Importar Excel" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Ficheiro Excel")).not.toBeInTheDocument();
+  });
+
   it("não aplica preview com pessoa por mapear e só confirma depois do readback", async () => {
     const manager = makeMe({ permissions: ["time_bank.view_all", "time_bank.manage_all"] });
     api.listTimeBankPeople.mockResolvedValue([
@@ -245,23 +274,69 @@ describe("Banco de Horas", () => {
     api.getTimeBankImport.mockResolvedValue(applied);
 
     renderWithProviders(<IsolatedTimeBank />, { me: manager });
-    await screen.findByRole("button", { name: /importar excel/i });
-    const input = screen.getByLabelText(/ficheiro excel/i);
+    const openImport = await screen.findByRole("button", { name: "Importar Excel" });
+    expect(screen.queryByLabelText("Ficheiro Excel")).not.toBeInTheDocument();
+    expect(screen.queryByText("Anomalias e validações")).not.toBeInTheDocument();
+    openImport.focus();
+    fireEvent.click(openImport);
+    const importer = await screen.findByRole("dialog", { name: "Importar Excel" });
+    const input = within(importer).getByLabelText("Ficheiro Excel");
     const file = new File(["xlsx-sintético"], "horas-sinteticas.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     fireEvent.change(input, { target: { files: [file] } });
 
-    expect(await screen.findByText("Pessoa do Excel")).toBeInTheDocument();
-    expect(screen.getByText(/3 linhas de origem · 2 lançamentos · 1 em quarentena/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /aplicar importação/i })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText(/pessoa do excel/i), { target: { value: "p-two" } });
-    fireEvent.click(screen.getByRole("button", { name: /guardar mapeamento/i }));
+    expect(await within(importer).findByText("Pessoa do Excel")).toBeInTheDocument();
+    expect(within(importer).getByText(/3 linhas de origem · 2 lançamentos · 1 em quarentena/)).toBeInTheDocument();
+    expect(within(importer).getByRole("button", { name: /aplicar importação/i })).toBeDisabled();
+    fireEvent.change(within(importer).getByLabelText(/pessoa do excel/i), { target: { value: "p-two" } });
+    fireEvent.click(within(importer).getByRole("button", { name: /guardar mapeamento/i }));
     await waitFor(() => expect(api.resolveTimeBankImport).toHaveBeenCalledWith("import-1", { person_mapping: { "Pessoa do Excel": "p-two" } }));
-    await waitFor(() => expect(screen.getByRole("button", { name: /aplicar importação/i })).not.toBeDisabled());
+    await waitFor(() => expect(within(importer).getByRole("button", { name: /aplicar importação/i })).not.toBeDisabled());
 
-    fireEvent.click(screen.getByRole("button", { name: /aplicar importação/i }));
-    fireEvent.click(screen.getByRole("button", { name: /confirmar aplicação/i }));
+    fireEvent.click(within(importer).getByRole("button", { name: /aplicar importação/i }));
+    const confirmation = await screen.findByRole("dialog", { name: "Confirmar aplicação do Excel" });
+    fireEvent.click(within(confirmation).getByRole("button", { name: /confirmar aplicação/i }));
     await waitFor(() => expect(api.applyTimeBankImport).toHaveBeenCalledWith("import-1"));
     await waitFor(() => expect(api.getTimeBankImport).toHaveBeenCalledWith("import-1"));
+    expect(await within(importer).findByText("Importação aplicada")).toBeInTheDocument();
     expect(await screen.findByText(/importação aplicada: 2 lançamentos/i)).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Importar Excel" })).not.toBeInTheDocument());
+    expect(openImport).toHaveFocus();
   });
+
+  it("toggle loads server-filtered pages, preserves summary, and restores annulled history", async () => {
+    configureReader();
+    const original = entry({ id: "entry-original", is_reversed: true });
+    const compensation = entry({ id: "entry-compensation", reversal_of_id: "entry-original", balance_seconds: -1800 });
+    const originalAdjustment = adjustment({ id: "adjustment-original", is_reversed: true });
+    const compensationAdjustment = adjustment({ id: "adjustment-compensation", reversal_of_id: "adjustment-original", delta_seconds: 1800 });
+    api.listTimeBankEntries.mockImplementation(({ includeAnnulled }: { includeAnnulled?: boolean }) => Promise.resolve({
+      items: includeAnnulled ? [original, compensation] : [], total: includeAnnulled ? 2 : 0,
+    }));
+    api.listTimeBankAdjustments.mockImplementation(({ includeAnnulled }: { includeAnnulled?: boolean }) => Promise.resolve({
+      items: includeAnnulled ? [originalAdjustment, compensationAdjustment] : [], total: includeAnnulled ? 2 : 0,
+    }));
+    const me = makeMe({ person_id: "p-reader", display_name: "Pessoa Sintética", permissions: ["time_bank.view_own"] });
+    renderWithProviders(<IsolatedTimeBank />, { me });
+    expect(await screen.findByText("Lançamentos (0)")).toBeInTheDocument();
+    expect(screen.getByText("Ajustes (0)")).toBeInTheDocument();
+    expect(api.listTimeBankEntries).toHaveBeenCalledWith(expect.objectContaining({ includeAnnulled: false, offset: 0, limit: 100 }));
+    expect(screen.queryByText("Original anulada")).not.toBeInTheDocument();
+    expect(screen.getByText("+02:30")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Mostrar anulados"));
+    await waitFor(() => expect(api.listTimeBankEntries).toHaveBeenLastCalledWith(expect.objectContaining({ includeAnnulled: true, offset: 0, limit: 100 })));
+    expect(await screen.findByText("Lançamentos (2)")).toBeInTheDocument();
+    expect(screen.getByText("Ajustes (2)")).toBeInTheDocument();
+    expect(screen.getByText("Original anulada")).toBeInTheDocument();
+    expect(screen.getAllByText("Compensação").length).toBeGreaterThan(0);
+    expect(api.listTimeBankAdjustments).toHaveBeenLastCalledWith(expect.objectContaining({ includeAnnulled: true, offset: 0, limit: 100 }));
+    expect(screen.getByText("+02:30")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Mostrar anulados"));
+    await waitFor(() => expect(screen.getByText("Lançamentos (0)")).toBeInTheDocument());
+    expect(api.listTimeBankEntries).toHaveBeenLastCalledWith(expect.objectContaining({ includeAnnulled: false }));
+    expect(api.listTimeBankEntries).toHaveBeenCalledTimes(3);
+    expect(api.listTimeBankAdjustments).toHaveBeenCalledTimes(3);
+  });
+
 });

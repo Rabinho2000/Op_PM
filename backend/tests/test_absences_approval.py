@@ -394,7 +394,7 @@ def _absence_columns(db_path: Path) -> set[str]:
 
 def test_migracao_ferias_upgrade_downgrade_upgrade(tmp_path):
     db_path = tmp_path / "fa_mig.db"
-    upgraded = _run_alembic(db_path, "upgrade", "head")
+    upgraded = _run_alembic(db_path, "upgrade", "d1a7f3c9e2b4")
     assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
     assert {"cancelled_by_person_id", "cancelled_at"} <= _absence_columns(db_path)
 
@@ -404,6 +404,6 @@ def test_migracao_ferias_upgrade_downgrade_upgrade(tmp_path):
     assert downgraded_head.returncode == 0, downgraded_head.stdout + downgraded_head.stderr
     assert not {"cancelled_by_person_id", "cancelled_at"} & _absence_columns(db_path)
 
-    upgraded_again = _run_alembic(db_path, "upgrade", "head")
+    upgraded_again = _run_alembic(db_path, "upgrade", "d1a7f3c9e2b4")
     assert upgraded_again.returncode == 0, upgraded_again.stdout + upgraded_again.stderr
     assert {"cancelled_by_person_id", "cancelled_at"} <= _absence_columns(db_path)

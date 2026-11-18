@@ -57,6 +57,8 @@ def test_installer_role_has_only_scoped_read_permissions():
         "installer_team.view_assigned_installer",
         "inventory.view_assigned_installer",
         "time_bank.view_own",
+        "time_bank.log_own",
+        "requests.create",
     }
 
 

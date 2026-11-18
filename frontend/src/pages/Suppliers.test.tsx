@@ -37,6 +37,7 @@ function makeSupplier(overrides: Partial<Supplier> = {}): Supplier {
     notes: "",
     is_active: true,
     material_types: ["Carports", "Estruturas de fixação"],
+    company_codes: [],
     ...overrides,
   };
 }
@@ -109,6 +110,42 @@ describe("Suppliers (lista)", () => {
     expect(screen.getByRole("link", { name: "Abrir localização" })).toHaveAttribute("href", "https://maps.example.invalid/abc");
   });
 
+  it("abre o detalhe completo ao clicar no nome e fecha com Escape", async () => {
+    listSuppliers.mockResolvedValue([
+      makeSupplier({
+        materials: "Painéis, cabos e fixadores",
+        notes: "Nota sintética do fornecedor.",
+        contacts: [
+          { id: "c-1", name: "Contacto Sintético Um", department: "Comercial", phone: "000 000 001", email: "um@example.invalid" },
+          { id: "c-2", name: "Contacto Sintético Dois", department: "Logística", phone: null, email: "dois@example.invalid" },
+        ],
+      }),
+    ]);
+    renderWithProviders(<Suppliers />, { me: viewOnly() });
+    await screen.findByText("Fornecedor A");
+
+    fireEvent.click(screen.getByRole("button", { name: "Ver detalhe de Fornecedor A" }));
+    const dialog = await screen.findByRole("dialog", { name: "Detalhe do fornecedor: Fornecedor A" });
+    expect(within(dialog).getByText("Dados gerais")).toBeInTheDocument();
+    expect(within(dialog).getByText("Carports")).toBeInTheDocument();
+    expect(within(dialog).getByText("Painéis, cabos e fixadores")).toBeInTheDocument();
+    expect(within(dialog).getByText("Contacto Sintético Um")).toBeInTheDocument();
+    expect(within(dialog).getByText("Contacto Sintético Dois")).toBeInTheDocument();
+    expect(within(dialog).getByText("Nota sintética do fornecedor.")).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Detalhe do fornecedor: Fornecedor A" })).not.toBeInTheDocument());
+  });
+
+  it("fecha o detalhe do fornecedor ao clicar fora da janela", async () => {
+    renderWithProviders(<Suppliers />, { me: viewOnly() });
+    await screen.findByText("Fornecedor A");
+    fireEvent.click(screen.getByRole("button", { name: "Ver detalhe de Fornecedor A" }));
+    const dialog = await screen.findByRole("dialog", { name: "Detalhe do fornecedor: Fornecedor A" });
+    fireEvent.mouseDown(dialog.parentElement!);
+    expect(screen.queryByRole("dialog", { name: "Detalhe do fornecedor: Fornecedor A" })).not.toBeInTheDocument();
+  });
+
   it("edita os contactos e envia a lista completa (valida antes)", async () => {
     updateSupplier.mockResolvedValue(makeSupplier());
     renderWithProviders(<Suppliers />, { me: withManage() });
@@ -138,7 +175,7 @@ describe("Suppliers (lista)", () => {
   it("carrega só fornecedores ativos por omissão e envia os filtros ao servidor", async () => {
     renderWithProviders(<Suppliers />, { me: viewOnly() });
     await screen.findByText("Fornecedor A");
-    expect(listSuppliers).toHaveBeenLastCalledWith({ q: undefined, material_type: undefined, is_active: true });
+    expect(listSuppliers).toHaveBeenLastCalledWith({ q: undefined, material_type: undefined, is_active: true, company_code: undefined });
 
     await screen.findByRole("option", { name: "Carports (2)" });
     fireEvent.change(screen.getByLabelText("Tipo de material"), { target: { value: "Carports" } });
@@ -146,17 +183,54 @@ describe("Suppliers (lista)", () => {
     fireEvent.change(screen.getByLabelText("Pesquisar"), { target: { value: "  porto " } });
 
     await waitFor(() =>
-      expect(listSuppliers).toHaveBeenLastCalledWith({ q: "porto", material_type: "Carports", is_active: undefined })
+      expect(listSuppliers).toHaveBeenLastCalledWith({ q: "porto", material_type: "Carports", is_active: undefined, company_code: undefined })
     );
   });
 
   it("toApiFilters traduz 'todos' para ausência de filtro", () => {
-    expect(toApiFilters({ search: " ", materialType: "", active: "all" })).toEqual({
+    expect(toApiFilters({ search: " ", materialType: "", active: "all", company: "all" })).toEqual({
       q: undefined,
       material_type: undefined,
       is_active: undefined,
+      company_code: undefined,
     });
-    expect(toApiFilters({ search: "", materialType: "", active: "inactive" }).is_active).toBe(false);
+    expect(toApiFilters({ search: "", materialType: "", active: "inactive", company: "all" }).is_active).toBe(false);
+  });
+
+  it("filtra cada empresa e mantém os restantes filtros ao trocar de separador", async () => {
+    renderWithProviders(<Suppliers />, { me: viewOnly() });
+    await screen.findByText("Fornecedor A");
+    fireEvent.change(screen.getByLabelText("Pesquisar"), { target: { value: "porto" } });
+    fireEvent.change(screen.getByLabelText("Tipo de material"), { target: { value: "Carports" } });
+    fireEvent.change(screen.getByLabelText("Situação"), { target: { value: "all" } });
+    for (const [label, code] of [["Solcor", "solcor"], ["Verde Milenar", "verde_milenar"], ["Por classificar", "unclassified"]]) {
+      fireEvent.click(screen.getByRole("button", { name: label }));
+      await waitFor(() => expect(listSuppliers).toHaveBeenLastCalledWith({
+        q: "porto", material_type: "Carports", is_active: undefined, company_code: code,
+      }));
+    }
+  });
+
+  it("permite classificar um fornecedor em ambas as empresas", async () => {
+    updateSupplier.mockResolvedValue(makeSupplier({ company_codes: ["solcor", "verde_milenar"] }));
+    renderWithProviders(<Suppliers />, { me: withManage() });
+    await screen.findByText("Fornecedor A");
+    fireEvent.click(screen.getAllByRole("button", { name: /Editar Fornecedor A/ })[0]);
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByLabelText("Solcor"));
+    fireEvent.click(within(dialog).getByLabelText("Verde Milenar"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Guardar fornecedor" }));
+    await waitFor(() => expect(updateSupplier).toHaveBeenCalledWith("s-1", expect.objectContaining({ company_codes: ["solcor", "verde_milenar"] })));
+  });
+
+  it("permite filtrar como leitor sem mostrar controlos de classificação", async () => {
+    renderWithProviders(<Suppliers />, { me: viewOnly() });
+    await screen.findByText("Fornecedor A");
+    fireEvent.click(screen.getByRole("button", { name: "Solcor" }));
+    await waitFor(() => expect(listSuppliers).toHaveBeenLastCalledWith(expect.objectContaining({ company_code: "solcor" })));
+    expect(screen.queryByRole("button", { name: /Novo fornecedor/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Editar/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Solcor")).not.toBeInTheDocument();
   });
 
   it("sem permissão de gestão não mostra criar nem editar", async () => {
@@ -208,6 +282,7 @@ describe("Suppliers (lista)", () => {
       contact: null,
       notes: "",
       material_types: ["Inversores", "Baterias"],
+      company_codes: [],
     });
     expect(await screen.findByText("Fornecedor «Nova Loja» criado.")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
@@ -252,7 +327,7 @@ describe("Suppliers (lista)", () => {
     await waitFor(() => expect(updateSupplier).toHaveBeenCalled());
     const [id, changes] = updateSupplier.mock.calls[0];
     expect(id).toBe("s-1");
-    expect(changes).toMatchObject({ is_active: false, material_types: ["Estruturas de fixação"] });
+    expect(changes).toMatchObject({ is_active: false, material_types: ["Estruturas de fixação"], company_codes: [] });
     expect(await screen.findByText("Fornecedor «Fornecedor A» atualizado.")).toBeInTheDocument();
   });
 

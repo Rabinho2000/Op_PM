@@ -22,14 +22,10 @@ from app.config import Settings, get_settings
 from app.models.client_report import ClientReportConfig, ClientReportSend
 from app.models.identity import User
 from app.models.people import Person
-from app.models.project import (
-    Project,
-    ProjectHistory,
-    ProjectStageProgress,
-    ProjectSubtaskProgress,
-)
-from app.models.workflow import Phase, WorkflowStage, WorkflowSubtask
+from app.models.project import Project, ProjectHistory, ProjectStageProgress
+from app.models.workflow import Phase, WorkflowStage
 from app.security.permissions import AuthContext
+from app.services.performance import completed_tasks_by_week
 
 LISBON = ZoneInfo("Europe/Lisbon")
 REPORT_MANAGE = "client_report.manage"
@@ -87,7 +83,11 @@ def _normalise_status(value: str | None) -> str:
 
 def is_project_reportable(project: Project) -> bool:
     """`NULL` é deliberadamente reportável; estados terminais/on-hold não."""
-    return bool(project.is_active) and _normalise_status(project.lifecycle_status) not in EXCLUDED_LIFECYCLE
+    return (
+        project.deleted_at is None
+        and bool(project.is_active)
+        and _normalise_status(project.lifecycle_status) not in EXCLUDED_LIFECYCLE
+    )
 
 
 def current_iso_week(now: dt.datetime | None = None) -> str:
@@ -150,7 +150,7 @@ def validate_report_config(payload: dict) -> dict:
 
 
 def _project_or_404(db: Session, project_id: uuid.UUID) -> Project:
-    project = db.query(Project).filter(Project.id == project_id).one_or_none()
+    project = db.query(Project).filter(Project.id == project_id, Project.deleted_at.is_(None)).one_or_none()
     if project is None:
         raise ClientReportNotFound("Projeto não encontrado.")
     return project
@@ -241,8 +241,13 @@ def _date_key(value: dt.datetime | None) -> dt.datetime:
     return value.astimezone(dt.timezone.utc)
 
 
-def _recent_change_items(db: Session, project: Project, since: dt.datetime) -> list[str]:
-    """Recolhe apenas progresso visível ao cliente do projeto indicado."""
+def _recent_change_items(
+    db: Session,
+    project: Project,
+    since: dt.datetime,
+    until: dt.datetime,
+) -> list[str]:
+    """Recolhe alterações de estado do projeto no período do relatório."""
     items: list[tuple[dt.datetime, str]] = []
     allowed_fields = {"lifecycle_status", "current_phase_id", "stage_id", "contact_done", "done", "status"}
     labels = {
@@ -255,7 +260,11 @@ def _recent_change_items(db: Session, project: Project, since: dt.datetime) -> l
     }
     history = (
         db.query(ProjectHistory)
-        .filter(ProjectHistory.project_id == project.id, ProjectHistory.changed_at >= since)
+        .filter(
+            ProjectHistory.project_id == project.id,
+            ProjectHistory.changed_at >= since,
+            ProjectHistory.changed_at <= until,
+        )
         .order_by(ProjectHistory.changed_at.desc())
         .limit(50)
         .all()
@@ -268,57 +277,115 @@ def _recent_change_items(db: Session, project: Project, since: dt.datetime) -> l
         text = f"{labels[row.field_name]}: {old_value} → {new_value}"
         items.append((row.changed_at, text))
 
-    completed_contacts = (
-        db.query(ProjectStageProgress, WorkflowStage)
-        .join(WorkflowStage, WorkflowStage.id == ProjectStageProgress.stage_id)
-        .filter(
-            ProjectStageProgress.project_id == project.id,
-            ProjectStageProgress.contact_done.is_(True),
-            ProjectStageProgress.contact_done_at >= since,
-        )
-        .all()
-    )
-    for progress, stage in completed_contacts:
-        items.append(
-            (
-                progress.contact_done_at,
-                f"Ponto de contacto concluído: {html.escape(stage.title)}",
-            )
-        )
-
-    completed_subtasks = (
-        db.query(ProjectSubtaskProgress, WorkflowSubtask, WorkflowStage)
-        .join(WorkflowSubtask, WorkflowSubtask.id == ProjectSubtaskProgress.subtask_id)
-        .join(WorkflowStage, WorkflowStage.id == WorkflowSubtask.stage_id)
-        .filter(
-            ProjectSubtaskProgress.project_id == project.id,
-            ProjectSubtaskProgress.done.is_(True),
-            ProjectSubtaskProgress.done_at >= since,
-        )
-        .all()
-    )
-    for progress, subtask, stage in completed_subtasks:
-        items.append(
-            (
-                progress.done_at,
-                f"Subtarefa concluída: {html.escape(subtask.title)} ({html.escape(stage.title)})",
-            )
-        )
-
     items.sort(key=lambda item: _date_key(item[0]), reverse=True)
     return [f"<li>{text}</li>" for _, text in items[:20]]
 
 
-def _body_html(db: Session, project: Project, config: ClientReportConfig, now: dt.datetime | None = None) -> str:
+def _as_utc(value: dt.datetime) -> dt.datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=dt.timezone.utc)
+    return value.astimezone(dt.timezone.utc)
+
+
+def _as_lisbon(value: dt.datetime) -> dt.datetime:
+    return _as_utc(value).astimezone(LISBON)
+
+
+def _report_period_start(db: Session, project: Project, reference: dt.datetime) -> dt.datetime:
+    """Use the latest successful send; before the first send use the existing 7-day window."""
+    candidates = (
+        db.query(ClientReportSend.sent_at)
+        .filter(
+            ClientReportSend.project_id == project.id,
+            ClientReportSend.status == "sent",
+            ClientReportSend.sent_at.isnot(None),
+        )
+        .order_by(ClientReportSend.sent_at.desc())
+        .all()
+    )
+    reference_key = _date_key(reference)
+    last_sent = next(
+        (sent_at for (sent_at,) in candidates if sent_at is not None and _date_key(sent_at) <= reference_key),
+        None,
+    )
+    return _as_utc(last_sent) if last_sent is not None else _as_utc(reference) - dt.timedelta(days=7)
+
+
+def _completed_work_section(
+    db: Session,
+    project: Project,
+    ctx: AuthContext,
+    *,
+    since: dt.datetime,
+    until: dt.datetime,
+) -> str:
+    weeks = completed_tasks_by_week(
+        db,
+        ctx,
+        from_date=_as_lisbon(since).date(),
+        to_date=_as_lisbon(until).date(),
+        project_id=project.id,
+    )
+    since_key = _date_key(since)
+    until_key = _date_key(until)
+    grouped: list[str] = []
+    for week in weeks:
+        entries: list[tuple[dt.datetime, str]] = []
+        for pm in week.pms:
+            for task in pm.tasks:
+                if task.project_id != project.id:
+                    continue
+                completed_key = _date_key(task.completed_at)
+                if not since_key <= completed_key <= until_key:
+                    continue
+                completed_date = _as_lisbon(task.completed_at).strftime("%d/%m/%Y")
+                entries.append(
+                    (
+                        completed_key,
+                        f"<li>{completed_date} — Tarefa: {html.escape(task.title)}</li>",
+                    )
+                )
+            for step in pm.process_steps:
+                completed_key = _date_key(step.completed_at)
+                if not since_key <= completed_key <= until_key:
+                    continue
+                completed_date = _as_lisbon(step.completed_at).strftime("%d/%m/%Y")
+                if step.kind == "stage":
+                    label = f"Etapa concluída: {html.escape(step.title)}"
+                else:
+                    label = f"Subtarefa concluída: {html.escape(step.title)}"
+                    if step.stage_title:
+                        label += f" (etapa: {html.escape(step.stage_title)})"
+                entries.append((completed_key, f"<li>{completed_date} — {label}</li>"))
+        if not entries:
+            continue
+        entries.sort(key=lambda item: (item[0], item[1]))
+        start = week.week_start.strftime("%d/%m/%Y")
+        end = week.week_end.strftime("%d/%m/%Y")
+        grouped.append(
+            f"<h3>Semana ISO {week.iso_year}-W{week.iso_week:02d} ({start}–{end})</h3>"
+            f"<ul>{''.join(text for _, text in entries)}</ul>"
+        )
+    if not grouped:
+        grouped.append("<p>Sem trabalho concluído neste período</p>")
+    return f"<h2>Trabalho concluído</h2>{''.join(grouped)}"
+
+
+def _body_html(
+    db: Session,
+    project: Project,
+    config: ClientReportConfig,
+    ctx: AuthContext,
+    now: dt.datetime | None = None,
+) -> str:
     """Constrói apenas campos de processo/obra explicitamente permitidos."""
-    reference = now or dt.datetime.now(dt.timezone.utc)
-    if reference.tzinfo is None:
-        reference = reference.replace(tzinfo=dt.timezone.utc)
-    since = reference - dt.timedelta(days=7)
+    reference = _as_utc(now or dt.datetime.now(dt.timezone.utc))
+    since = _report_period_start(db, project, reference)
     phase, stage = _phase_and_stage(db, project)
-    changes = _recent_change_items(db, project, since)
+    changes = _recent_change_items(db, project, since, reference)
     if not changes:
-        changes = ["<li>Sem alterações registadas esta semana.</li>"]
+        changes = ["<li>Sem alterações registadas neste período.</li>"]
+    completed_work = _completed_work_section(db, project, ctx, since=since, until=reference)
 
     stages = db.query(WorkflowStage).order_by(WorkflowStage.sort_order, WorkflowStage.id).all()
     progress = {
@@ -351,7 +418,8 @@ def _body_html(db: Session, project: Project, config: ClientReportConfig, now: d
         "<html><body>"
         f"<h1>Relatório semanal — {html.escape(project.name)}</h1>"
         f"<p><strong>Fase:</strong> {html.escape(phase)}<br><strong>Etapa:</strong> {html.escape(stage)}</p>"
-        f"<h2>Feito na semana</h2><ul>{''.join(changes)}</ul>"
+        f"<h2>Alterações registadas</h2><ul>{''.join(changes)}</ul>"
+        f"{completed_work}"
         f"<h2>Próximos passos</h2><ul>{''.join(next_steps)}</ul>"
         f"<h2>Datas previstas</h2><ul>{dates_html}</ul>"
         f"<h2>Nota do PM</h2><p>{note}</p>"
@@ -456,7 +524,7 @@ def preview_report(db: Session, project_id: uuid.UUID, ctx: AuthContext) -> dict
     iso_week = current_iso_week()
     return {
         "subject": _subject(project, iso_week),
-        "body_html": _body_html(db, project, config),
+        "body_html": _body_html(db, project, config, ctx),
         "from_email": from_email,
         "to": list(config.to_emails or []),
         "cc": list(config.cc_emails or []),
@@ -578,7 +646,7 @@ def send_report(
     existing = _find_existing_send(db, project.id, iso_week)
     if existing is not None:
         return existing
-    body = _body_html(db, project, config, now=now)
+    body = _body_html(db, project, config, ctx, now=now)
     subject = _subject(project, iso_week)
     skipped = _resolve_or_skip(db, project, config, iso_week, trigger, body, subject)
     if skipped is not None:
@@ -660,7 +728,11 @@ def expire_pending_reviews(db: Session, *, now: dt.datetime | None = None) -> in
 def list_reports(db: Session, ctx: AuthContext, *, status: str | None = None, pm_person_id: uuid.UUID | None = None) -> list[dict]:
     if not ctx.has_permission(REPORT_VIEW) and not ctx.has_permission(REPORT_MANAGE):
         raise ClientReportForbidden(f"Permissão em falta: {REPORT_VIEW}.")
-    query = db.query(Project, ClientReportConfig).join(ClientReportConfig, ClientReportConfig.project_id == Project.id)
+    query = (
+        db.query(Project, ClientReportConfig)
+        .join(ClientReportConfig, ClientReportConfig.project_id == Project.id)
+        .filter(Project.deleted_at.is_(None))
+    )
     if pm_person_id is not None:
         query = query.filter(Project.pm_person_id == pm_person_id)
     if not (ctx.has_permission("project.view_all") or ctx.has_permission("project.edit_all")):

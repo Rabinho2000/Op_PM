@@ -123,6 +123,66 @@ def test_unknown_fields_are_rejected(api_client):
     assert _create(api_client, cor_favorita="azul").status_code == 422
 
 
+def test_supplier_company_links_allow_shared_and_unclassified_filters(api_client):
+    shared = _create(api_client, name="Fornecedor Partilhado", company_codes=["solcor", "verde_milenar"]).json()
+    unclassified = _create(api_client, name="Fornecedor Sem Empresa").json()
+    for code in ("solcor", "verde_milenar"):
+        response = api_client.get("/api/suppliers", params={"company_code": code}, headers=_h(CHEFE))
+        assert response.status_code == 200
+        ids = {supplier["id"] for supplier in response.json()}
+        assert shared["id"] in ids and unclassified["id"] not in ids
+    response = api_client.get("/api/suppliers", params={"company_code": "unclassified"}, headers=_h(CHEFE))
+    assert response.status_code == 200
+    ids = {supplier["id"] for supplier in response.json()}
+    assert unclassified["id"] in ids and shared["id"] not in ids
+    assert shared["company_codes"] == ["solcor", "verde_milenar"]
+    assert unclassified["company_codes"] == []
+
+
+def test_company_code_patch_validates_omission_and_clear(api_client):
+    created = _create(api_client, company_codes=["solcor"]).json()
+    omitted = api_client.patch(f"/api/suppliers/{created['id']}", json={"notes": "preserva"}, headers=_h(CHEFE))
+    assert omitted.status_code == 200 and omitted.json()["company_codes"] == ["solcor"]
+    cleared = api_client.patch(f"/api/suppliers/{created['id']}", json={"company_codes": []}, headers=_h(CHEFE))
+    assert cleared.status_code == 200 and cleared.json()["company_codes"] == []
+    assert api_client.patch(f"/api/suppliers/{created['id']}", json={"company_codes": None}, headers=_h(CHEFE)).status_code == 422
+    assert api_client.patch(f"/api/suppliers/{created['id']}", json={"company_codes": ["inventada"]}, headers=_h(CHEFE)).status_code == 422
+    assert api_client.patch(f"/api/suppliers/{created['id']}", json={"company_codes": "solcor"}, headers=_h(CHEFE)).status_code == 422
+
+
+def test_company_permissions_default_list_and_overlapping_replacements(db_session, api_client):
+    from app.models.identity import User
+    from app.models.people import Person
+
+    no_permissions_person = Person(display_name="Pessoa Sintética Sem Permissões", is_active=True)
+    db_session.add(no_permissions_person)
+    db_session.flush()
+    no_permissions_user = User(
+        person_id=no_permissions_person.id,
+        email="sem.permissao@example.invalid",
+        is_active=True,
+    )
+    db_session.add(no_permissions_user)
+    db_session.flush()
+
+    assert api_client.get("/api/suppliers").status_code in (401, 403)
+    assert api_client.get("/api/suppliers", headers=_h("sem.permissao@example.invalid")).status_code == 403
+    # The map-only reader retains list/filter access and cannot classify.
+    assert api_client.get("/api/suppliers?company_code=solcor", headers=_h(COMERCIAL)).status_code == 200
+    assert api_client.post("/api/suppliers", json={"name": "Negado"}, headers=_h(COMERCIAL)).status_code == 403
+
+    supplier = _create(api_client, name="Transição Empresas", company_codes=["solcor"]).json()
+    shared = api_client.patch(f"/api/suppliers/{supplier['id']}", json={"company_codes": ["solcor", "verde_milenar"]}, headers=_h(CHEFE))
+    assert shared.status_code == 200 and shared.json()["company_codes"] == ["solcor", "verde_milenar"]
+    assert len([s for s in api_client.get("/api/suppliers", headers=_h(CHEFE)).json() if s["id"] == supplier["id"]]) == 1
+    reduced = api_client.patch(f"/api/suppliers/{supplier['id']}", json={"company_codes": ["verde_milenar"]}, headers=_h(CHEFE))
+    assert reduced.status_code == 200 and reduced.json()["company_codes"] == ["verde_milenar"]
+    assert api_client.get(f"/api/suppliers/{supplier['id']}", headers=_h(CHEFE)).json()["company_codes"] == ["verde_milenar"]
+    cleared = api_client.patch(f"/api/suppliers/{supplier['id']}", json={"company_codes": []}, headers=_h(CHEFE))
+    assert cleared.status_code == 200 and cleared.json()["company_codes"] == []
+    assert supplier["id"] in {s["id"] for s in api_client.get("/api/suppliers?company_code=unclassified", headers=_h(CHEFE)).json()}
+
+
 # --- edição e desativação ---------------------------------------------------------
 
 
@@ -376,6 +436,23 @@ def test_loader_matches_names_ignoring_case_and_accents(db_session):
     summary = load_suppliers(db_session, [{"name": "EFICACIA solar", "phone": "210000000"}])
     assert summary["created"] == 0 and summary["updated"] == 1
     assert db_session.query(Supplier).filter(Supplier.name.ilike("%efic%")).count() == 1
+
+
+def test_loader_company_replay_preserves_omitted_and_replaces_overlaps(db_session):
+    load_suppliers(db_session, [{"name": "Loader Empresas", "company_codes": ["solcor"]}])
+    supplier = db_session.query(Supplier).filter(Supplier.name == "Loader Empresas").one()
+    assert [link.company_code for link in supplier.company_associations] == ["solcor"]
+    load_suppliers(db_session, [{"name": "Loader Empresas"}])
+    db_session.refresh(supplier)
+    assert [link.company_code for link in supplier.company_associations] == ["solcor"]
+    assert load_suppliers(db_session, [{"name": "Loader Empresas", "company_codes": ["solcor", "verde_milenar"]}])["updated"] == 1
+    db_session.refresh(supplier)
+    assert [link.company_code for link in supplier.company_associations] == ["solcor", "verde_milenar"]
+    assert load_suppliers(db_session, [{"name": "Loader Empresas", "company_codes": ["verde_milenar"]}])["updated"] == 1
+    db_session.refresh(supplier)
+    assert [link.company_code for link in supplier.company_associations] == ["verde_milenar"]
+    invalid = load_suppliers(db_session, [{"name": "Loader Empresas", "company_codes": ["outra"]}])
+    assert invalid["invalid"] and "Loader Empresas" in invalid["invalid"][0]
 
 
 def test_loader_cli_refuses_a_file_git_would_track(tmp_path, monkeypatch, capsys):

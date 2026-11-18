@@ -58,9 +58,11 @@ function renderTimeline(work: WorkItem, onOpenProject = vi.fn(), onPlanChange = 
           installers={[INSTALLER]}
           window={windowFrom("month_days", "2028-02-17")}
           zoom="month_days"
+          density="normal"
           today="2028-02-17"
           statuses={[STATUS]}
           showIdle={false}
+          selectedInstallerIds={[]}
           onOpenProject={onOpenProject}
           onPlanChange={onPlanChange}
         />

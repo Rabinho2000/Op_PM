@@ -10,10 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.schemas.dashboard import DashboardSummary
+from app.schemas.dashboard import DashboardSummary, DashboardWorks
 from app.security.current_user import get_auth_context
 from app.security.permissions import AuthContext, is_installer_readonly_scope
-from app.services.dashboard import compute_dashboard_summary
+from app.services.dashboard import compute_dashboard_summary, compute_dashboard_works
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -26,3 +26,13 @@ def get_dashboard_summary(
     if is_installer_readonly_scope(ctx):
         raise HTTPException(status_code=403, detail="Sem permissão para ver o dashboard.")
     return compute_dashboard_summary(db, ctx)
+
+
+@router.get("/works", response_model=DashboardWorks)
+def get_dashboard_works(
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+) -> DashboardWorks:
+    if is_installer_readonly_scope(ctx):
+        raise HTTPException(status_code=403, detail="Sem permissão para ver o dashboard.")
+    return compute_dashboard_works(db, ctx)

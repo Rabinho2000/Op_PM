@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, listSupplierMaterialTypes, listSuppliers, Supplier, SupplierFilters, SupplierMaterialType } from "../api/client";
+import { ApiError, listSupplierMaterialTypes, listSuppliers, Supplier, SupplierCompanyCode, SupplierFilters, SupplierMaterialType } from "../api/client";
+import "./Suppliers.css";
 import Icon from "../components/Icon";
 import SupplierFormModal from "../components/SupplierForm";
+import SupplierDetailModal from "../components/SupplierDetailModal";
 import { useToast } from "../components/Toast";
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader } from "../components/ui";
 import { useSession } from "../session/SessionContext";
@@ -13,9 +15,10 @@ interface Filters {
   search: string;
   materialType: string;
   active: ActiveFilter;
+  company: "all" | SupplierCompanyCode | "unclassified";
 }
 
-const EMPTY_FILTERS: Filters = { search: "", materialType: "", active: "active" };
+const EMPTY_FILTERS: Filters = { search: "", materialType: "", active: "active", company: "all" };
 
 // Os filtros são aplicados pelo servidor (GET /api/suppliers).
 export function toApiFilters(f: Filters): SupplierFilters {
@@ -23,6 +26,7 @@ export function toApiFilters(f: Filters): SupplierFilters {
     q: f.search.trim() || undefined,
     material_type: f.materialType || undefined,
     is_active: f.active === "all" ? undefined : f.active === "active",
+    company_code: f.company === "all" ? undefined : f.company,
   };
 }
 
@@ -38,6 +42,7 @@ export default function Suppliers() {
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [editing, setEditing] = useState<Supplier | "new" | null>(null);
+  const [detail, setDetail] = useState<Supplier | null>(null);
 
   useEffect(() => {
     listSupplierMaterialTypes()
@@ -50,25 +55,25 @@ export default function Suppliers() {
     return () => window.clearTimeout(handle);
   }, [filters.search]);
 
-  const { materialType, active } = filters;
+  const { materialType, active, company } = filters;
   useEffect(() => {
     let cancelled = false;
     setError(null);
     setSuppliers(null);
-    listSuppliers(toApiFilters({ search: debouncedSearch, materialType, active }))
+    listSuppliers(toApiFilters({ search: debouncedSearch, materialType, active, company }))
       .then((result) => !cancelled && setSuppliers(result))
       .catch((e) => !cancelled && setError(e instanceof ApiError ? e.detail : "Não foi possível contactar o servidor."));
     return () => {
       cancelled = true;
     };
-  }, [debouncedSearch, materialType, active, reloadKey]);
+  }, [debouncedSearch, materialType, active, company, reloadKey]);
 
   const set = <K extends keyof Filters>(key: K, value: Filters[K]) => setFilters((f) => ({ ...f, [key]: value }));
   const hasFilters = JSON.stringify(filters) !== JSON.stringify(EMPTY_FILTERS);
   const knownTypeNames = useMemo(() => types.map((t) => t.name), [types]);
 
   return (
-    <>
+    <div className="suppliers-page">
       <PageHeader
         title="Fornecedores"
         subtitle="Contactos, materiais e localização dos fornecedores."
@@ -82,6 +87,24 @@ export default function Suppliers() {
       />
 
       <form className="toolbar" role="search" aria-label="Filtros de fornecedores" onSubmit={(e) => e.preventDefault()}>
+        <div className="suppliers-company-tabs" role="group" aria-label="Empresa">
+          {([
+            ["all", "Todos"],
+            ["solcor", "Solcor"],
+            ["verde_milenar", "Verde Milenar"],
+            ["unclassified", "Por classificar"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className="btn btn--sm"
+              aria-pressed={filters.company === value}
+              onClick={() => set("company", value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <div className="field field--wide">
           <label htmlFor="s-search">Pesquisar</label>
           <div className="search">
@@ -165,7 +188,14 @@ export default function Suppliers() {
                   {suppliers.map((s) => (
                     <tr key={s.id}>
                       <td>
-                        <span className="cell-title">{s.name}</span>
+                        <button
+                          type="button"
+                          className="link-button cell-title"
+                          onClick={() => setDetail(s)}
+                          aria-label={`Ver detalhe de ${s.name}`}
+                        >
+                          {s.name}
+                        </button>
                         <span className="cell-sub">
                           {s.website && (
                             <a href={s.website} target="_blank" rel="noreferrer noopener">
@@ -246,6 +276,8 @@ export default function Suppliers() {
         )}
       </div>
 
+      {detail && <SupplierDetailModal supplier={detail} onClose={() => setDetail(null)} />}
+
       {editing !== null && (
         <SupplierFormModal
           supplier={editing === "new" ? null : editing}
@@ -258,6 +290,6 @@ export default function Suppliers() {
           }}
         />
       )}
-    </>
+    </div>
   );
 }

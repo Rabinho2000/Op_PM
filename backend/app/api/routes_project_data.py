@@ -28,13 +28,18 @@ from app.security.permissions import (
     can_edit_project_installation_data,
     can_edit_project_licensing_data,
     can_view_project_communication_data,
+    can_view_project_credentials,
     can_view_project_installation_data,
     can_view_project_licensing_data,
+    can_view_project_surplus_contracts,
 )
 from app.services.project_data import (
     ENTITY_TYPE_COMMUNICATION,
+    ENTITY_TYPE_CREDENTIAL,
     ENTITY_TYPE_INSTALLATION,
     ENTITY_TYPE_LICENSING,
+    ENTITY_TYPE_SURPLUS,
+    derive_licensing_state,
     get_communication_data,
     get_installation_data,
     get_licensing_data,
@@ -85,6 +90,12 @@ def update_installation_data_endpoint(
     return ProjectInstallationDataRead.model_validate(data)
 
 
+def _licensing_read(data) -> ProjectLicensingDataRead:
+    read = ProjectLicensingDataRead.model_validate(data)
+    read.licensing_state = derive_licensing_state(data)
+    return read
+
+
 @router.get("/{project_id}/licensing-data", response_model=ProjectLicensingDataRead)
 def get_licensing_data_endpoint(
     project_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
@@ -95,7 +106,7 @@ def get_licensing_data_endpoint(
     data = get_licensing_data(db, project_id)
     if data is None:
         return ProjectLicensingDataRead(project_id=project_id)
-    return ProjectLicensingDataRead.model_validate(data)
+    return _licensing_read(data)
 
 
 @router.patch("/{project_id}/licensing-data", response_model=ProjectLicensingDataRead)
@@ -110,7 +121,7 @@ def update_licensing_data_endpoint(
         raise HTTPException(status_code=403, detail="Sem permissão para editar dados de licenciamento.")
     changes = body.model_dump(exclude_unset=True)
     data = upsert_licensing_data(db, project_id=project_id, changes=changes, changed_by_person_id=ctx.person_id)
-    return ProjectLicensingDataRead.model_validate(data)
+    return _licensing_read(data)
 
 
 @router.get("/{project_id}/communication-data", response_model=ProjectCommunicationDataRead)
@@ -146,7 +157,9 @@ def update_communication_data_endpoint(
 @router.get("/{project_id}/data-history", response_model=list[ProjectDataHistoryRead])
 def get_data_history_endpoint(
     project_id: uuid.UUID,
-    entity_type: str | None = Query(default=None, description="installation | licensing | communication"),
+    entity_type: str | None = Query(
+        default=None, description="installation | licensing | communication | credential | surplus"
+    ),
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[ProjectDataHistoryRead]:
@@ -155,6 +168,8 @@ def get_data_history_endpoint(
         ENTITY_TYPE_INSTALLATION: can_view_project_installation_data(ctx, project),
         ENTITY_TYPE_LICENSING: can_view_project_licensing_data(ctx, project),
         ENTITY_TYPE_COMMUNICATION: can_view_project_communication_data(ctx, project),
+        ENTITY_TYPE_CREDENTIAL: can_view_project_credentials(ctx, project),
+        ENTITY_TYPE_SURPLUS: can_view_project_surplus_contracts(ctx, project),
     }
     if entity_type is not None:
         if entity_type not in permissions_by_type:

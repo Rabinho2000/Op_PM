@@ -1,6 +1,6 @@
 // Notificações breves ("Tarefa concluída", erros de gravação) — região
 // aria-live para leitores de ecrã.
-import { createContext, ReactNode, useCallback, useContext, useMemo, useRef, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import Icon from "./Icon";
 
 type ToastTone = "success" | "error" | "info";
@@ -26,15 +26,30 @@ const ToastContext = createContext<ToastApi>({ notify: () => undefined });
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
   const nextId = useRef(1);
+  const timers = useRef(new Map<number, number>());
 
-  const dismiss = useCallback((id: number) => setItems((current) => current.filter((t) => t.id !== id)), []);
+  const dismiss = useCallback((id: number) => {
+    const timer = timers.current.get(id);
+    if (timer !== undefined) window.clearTimeout(timer);
+    timers.current.delete(id);
+    setItems((current) => current.filter((t) => t.id !== id));
+  }, []);
+
+  // Limpa temporizadores pendentes ao desmontar para não atualizar estado depois do unmount.
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
+      pending.forEach((timer) => window.clearTimeout(timer));
+      pending.clear();
+    };
+  }, []);
 
   const notify = useCallback(
     (message: string, tone: ToastTone = "success", action?: ToastAction) => {
       const id = nextId.current++;
       setItems((current) => [...current, { id, tone, message, action }]);
       // Com ação (ex. "Anular") fica mais tempo visível.
-      window.setTimeout(() => dismiss(id), action ? 9000 : 4500);
+      timers.current.set(id, window.setTimeout(() => dismiss(id), action ? 9000 : 4500));
     },
     [dismiss]
   );

@@ -15,9 +15,35 @@ from app.models.inventory import (
     InventoryCatalogHistory,
     InventoryItem,
     InventoryLocation,
+    INVENTORY_OWNER_SOLCOR,
+    INVENTORY_OWNERS,
 )
 from app.models.project import Project
 from app.models.supplier import Supplier
+from app.schemas.inventory_catalog import normalize_inventory_category
+
+
+def inventory_item_section_label(item: InventoryItem) -> str:
+    """Etiqueta canónica da subsecção, calculada a partir dos dados do artigo."""
+    try:
+        category = normalize_inventory_category(item.category)
+    except ValueError:
+        category = item.category
+    subcategory = (item.subcategory or "").strip()
+    manufacturer = (item.manufacturer or "").strip()
+    model = (item.model or "").strip()
+
+    if category in {"Cabos DC", "Cabos AC"}:
+        if item.cross_section_mm2 is not None:
+            value = format(Decimal(item.cross_section_mm2).normalize(), "f")
+            return f"{value} mm²"
+        return subcategory or "Sem secção"
+    if category in {"Inversores", "Baterias"}:
+        return manufacturer or subcategory or "Sem marca"
+    if category == "Painéis":
+        label = " ".join(value for value in (manufacturer, model) if value)
+        return label or subcategory or "Sem marca"
+    return subcategory or "Geral"
 
 
 class CatalogError(ValueError):
@@ -43,6 +69,7 @@ def _raise_catalog_integrity_error(
     if central and (
         "uq_inventory_locations_one_active_central" in message
         or "inventory_locations.location_type" in message
+        or "inventory_locations.owner" in message
     ):
         raise CentralLocationInvariantError("Só pode existir uma localização central ativa.") from exc
     if "unique" in message or "uq_inventory" in message:
@@ -174,6 +201,15 @@ def update_inventory_item_atomic(
         raise CatalogError("O artigo de inventário não existe.")
     db.refresh(locked_item)
     item = locked_item
+    if "category" in changes:
+        requested_category = changes["category"]
+        try:
+            changes = {**changes, "category": normalize_inventory_category(requested_category)}
+        except ValueError as exc:
+            # Permitir que um formulário que reenvie uma categoria histórica
+            # desconhecida sem alteração edite os outros campos do artigo.
+            if requested_category != item.category:
+                raise CatalogError(str(exc)) from exc
     if "sku" in changes:
         sku = str(changes["sku"])
         if _find_item_by_sku(db, sku, exclude_id=item.id) is not None:
@@ -231,11 +267,12 @@ def _find_location_by_code(
     return query.one_or_none()
 
 
-def _active_central_locations(db: Session) -> list[InventoryLocation]:
+def _active_central_locations(db: Session, owner: str = INVENTORY_OWNER_SOLCOR) -> list[InventoryLocation]:
     return (
         db.query(InventoryLocation)
         .filter(
             InventoryLocation.location_type == LOCATION_TYPE_CENTRAL,
+            InventoryLocation.owner == owner,
             InventoryLocation.is_active.is_(True),
         )
         .all()
@@ -270,9 +307,13 @@ def create_inventory_location(
     if _find_location_by_code(db, code) is not None:
         raise DuplicateCatalogValueError("Já existe uma localização com este código.")
     location_type = str(data["location_type"])
+    owner = str(data.get("owner", INVENTORY_OWNER_SOLCOR))
+    if owner not in INVENTORY_OWNERS:
+        raise CatalogError("Proprietário de inventário inválido.")
+    data = {**data, "owner": owner}
     project_id = data.get("project_id")  # type: ignore[assignment]
     _validate_location_reference(db, location_type=location_type, project_id=project_id)  # type: ignore[arg-type]
-    active_central_count = len(_active_central_locations(db))
+    active_central_count = len(_active_central_locations(db, owner))
     if location_type == LOCATION_TYPE_CENTRAL:
         if active_central_count != 0:
             raise CentralLocationInvariantError("Só pode existir uma localização central ativa.")
@@ -340,12 +381,17 @@ def update_inventory_location_atomic(
             raise DuplicateCatalogValueError("Já existe uma localização com este código.")
 
     location_type = str(changes.get("location_type", location.location_type))
+    owner = str(changes.get("owner", location.owner))
+    if owner not in INVENTORY_OWNERS:
+        raise CatalogError("Proprietário de inventário inválido.")
+    if location.location_type == LOCATION_TYPE_CENTRAL and owner != location.owner:
+        raise CatalogError("O proprietário da localização central não pode ser alterado.")
     project_id = changes.get("project_id", location.project_id)  # type: ignore[assignment]
     requested_active = changes.get("is_active", location.is_active)
     final_active = bool(requested_active) and not deactivate
     _validate_location_reference(db, location_type=location_type, project_id=project_id)  # type: ignore[arg-type]
 
-    active_centrals = _active_central_locations(db)
+    active_centrals = _active_central_locations(db, owner)
     proposed_active_central_count = len(active_centrals)
     if location.id in {current.id for current in active_centrals}:
         proposed_active_central_count -= 1

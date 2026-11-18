@@ -57,7 +57,7 @@ export default function Installers() {
   }
 
   return (
-    <>
+    <div className="installers-page">
       <PageHeader
         title="Instaladores"
         subtitle="Subempreiteiros, as suas equipas e os respetivos chefes de equipa."
@@ -174,7 +174,7 @@ export default function Installers() {
           }}
         />
       )}
-    </>
+    </div>
   );
 }
 
