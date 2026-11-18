@@ -164,13 +164,10 @@ Formato: **ID — título** · `ficheiro:linha` · problema → impacto → corr
 - **Impacto:** erros `database is locked`, perda de escrita na primeira gravação da ficha de segurança, e garantias de concorrência validadas num motor que não é o de produção.
 - **Correção:** migrar para PostgreSQL (o projeto já suporta e o CI já testa). Até lá, aplicar o padrão de "UPDATE vazio" que o inventário e o banco de horas já usam.
 
-**A9 — Os backups não cobrem os ficheiros e ficam no mesmo host**
-- Script de utilizador do servidor (fora do repo): faz `sqlite.backup` das 2 BDs 4 vezes por dia, guarda 14 dias e corre `integrity_check`. Isto está bem feito.
-- **Problema:** `project_photos/`, `inventory/` (documentos) e `outbox/` **não** entram no backup. Não há cópia fora do servidor nem teste de restauro documentado, e o repo não documenta o backup.
-- **Correção:**
-  - Incluir os diretórios de ficheiros (tar ou rsync).
-  - Ter uma cópia off-site cifrada.
-  - Fazer um ensaio de restauro trimestral e escrever o runbook em `docs/`.
+**A9 — Os backups não cobrem os ficheiros e ficam no mesmo host** — *parcialmente resolvido (Fase 1, 2026-11-18)*
+- O script de utilizador do servidor (fora do repo) passou a guardar, por execução, a BD (`sqlite.backup` + `integrity_check`, como antes), um tar.gz com todos os ficheiros do volume (`project_photos/`, `inventory/`, `outbox/` e outros), um manifesto (tabelas/linhas e ficheiros/bytes por diretório) e o `sha256` de cada artefacto. Retenção de 14 dias para tudo, falha com código diferente de zero e marca `LAST_OK`. Há um script de ensaio de restauro (volume descartável + `alembic current` + contagens contra o manifesto) e o runbook em [`BACKUP_RESTORE.md`](BACKUP_RESTORE.md).
+- **Em aberto:** continua a não haver cópia fora do servidor (decisão atual: só local) nem cifra dos backups; alerta ativo por falha; variante PostgreSQL do backup quando A8 for executado; ensaio trimestral.
+- **Correção (resto):** cópia off-site cifrada e ensaio de restauro trimestral registado.
 
 **A10 — A produção corre a partir de código por commitar**
 - `git status` mostra 318 entradas (M e ??), incluindo 17 migrações Alembic novas e 13 routers novos. A branch local `snapshot/op-pm-production-2026-11-09` guarda uma cópia e não foi enviada ao GitHub. Isto está correto, porque contém IDs de tenant e o repo é público.
@@ -317,7 +314,7 @@ O CI corre o pytest em SQLite e em PostgreSQL 16, e no frontend `tsc`, `vitest` 
 |---|---|---|---|
 | 11 | Novo compose de produção: `APP_ENV=production`, sem `demo-setup`, `migrate` separado com backup prévio, `SECRET_KEY` real, JIT desligado | C1, A7 | 2 d |
 | 12 | Migrar de SQLite para PostgreSQL (o caminho de migração já existe), com ensaio em staging | A8 | 3–4 d |
-| 13 | Backups: incluir fotos, documentos e outbox; cópia off-site cifrada; ensaio de restauro; runbook | A9 | 1–2 d |
+| 13 | Backups: incluir fotos, documentos e outbox; cópia off-site cifrada; ensaio de restauro; runbook | A9 | 1–2 d (fotos/documentos/outbox, ensaio e runbook feitos; falta off-site) |
 | 14 | Defaults fail-closed (`APP_ENV=production` por omissão) | A7 | 0,5 d |
 | 15 | Testes: autenticação em todas as rotas, validador Entra real, drift entre migrações e modelos, scheduler | Secção 4 | 2–3 d |
 | 16 | CI: ruff, mypy (gradual), `pip-audit`/`npm audit`, gitleaks, Trivy, Dependabot, `npm ci`, build do Dockerfile de produção, `permissions:` | M9, M10 | 1–2 d |
@@ -363,7 +360,7 @@ O CI corre o pytest em SQLite e em PostgreSQL 16, e no frontend `tsc`, `vitest` 
 **Dados**
 - [ ] PostgreSQL em produção (A8)
 - [ ] Migrações separadas do seed, com backup prévio automático (C1)
-- [ ] Backups com fotos e documentos, off-site, restauro ensaiado (A9)
+- [ ] Backups com fotos e documentos, restauro ensaiado e runbook (feitos); off-site cifrado (falta) (A9)
 - [ ] CHECKs na BD para vocabulários e quantidades; e-mail único sem distinção de maiúsculas (M7, M8)
 - [x] Cadeia Alembic linear, com um só head
 
