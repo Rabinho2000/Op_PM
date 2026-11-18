@@ -48,7 +48,7 @@ calendar_event_assignees = Table(
     "calendar_event_assignees",
     Base.metadata,
     Column("event_id", GUID(), ForeignKey("calendar_events.id", ondelete="CASCADE"), primary_key=True),
-    Column("person_id", GUID(), ForeignKey("people.id"), primary_key=True),
+    Column("person_id", GUID(), ForeignKey("people.id"), primary_key=True, index=True),
 )
 
 
@@ -67,11 +67,13 @@ class CalendarEvent(UUIDPk, TimestampMixin, Base):
     # Categoria é um código estável do catálogo da API; não depende de
     # títulos livres do Processo nem de integração externa.
     category: Mapped[str] = mapped_column(String(32), default="other", nullable=False)
+    # Índices criados pela migração f5a7c9d1e3b2; declarados aqui para o
+    # modelo e o Alembic não divergirem (tests/test_alembic_schema.py).
     process_stage_id: Mapped[uuid.UUID | None] = mapped_column(
-        GUID(), ForeignKey("workflow_stages.id"), nullable=True
+        GUID(), ForeignKey("workflow_stages.id"), nullable=True, index=True
     )
     process_subtask_id: Mapped[uuid.UUID | None] = mapped_column(
-        GUID(), ForeignKey("workflow_subtasks.id"), nullable=True
+        GUID(), ForeignKey("workflow_subtasks.id"), nullable=True, index=True
     )
     title: Mapped[str] = mapped_column(String(256), nullable=False)
     starts_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)

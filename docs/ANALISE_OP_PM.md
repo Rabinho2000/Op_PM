@@ -157,6 +157,7 @@ Formato: **ID — título** · `ficheiro:linha` · problema → impacto → corr
 - `backend/app/config.py:28, 46-50, 65-68, 83-87`: `APP_ENV=local`, `AUTH_ENABLED=false`, `SECRET_KEY` público e SQLite por omissão.
 - **Impacto:** se `APP_ENV` for omitido ou estiver mal escrito, a API aceita `X-Dev-User-Email` e qualquer pessoa pode fazer-se passar pelo administrador.
 - **Correção:** por omissão, `APP_ENV=production`, e exigir `APP_ENV=local` de forma explícita para desenvolvimento. Em alternativa, recusar o arranque quando `APP_ENV` não está definido.
+- **Estado (Fase 1, frente A):** ✅ resolvido pela alternativa: `APP_ENV` é obrigatório e a app, o Alembic e as CLIs recusam arrancar sem ele (`ConfigurationError`). Os outros defaults (`AUTH_ENABLED`, `SECRET_KEY`, SQLite) só são aceitáveis em `local`/`test`, que agora têm de ser pedidos de forma explícita.
 
 **A8 — Produção em SQLite com dois processos a escrever, e locks que o SQLite ignora**
 - `docker-compose.tailscale.yml:31, 51, 74` (o backend e o scheduler usam o mesmo ficheiro); `backend/app/services/safety_sheet.py:125-142` (`with_for_update()` sem efeito em SQLite; o comentário diz o contrário). Os testes de concorrência só correm em PostgreSQL.
@@ -185,7 +186,7 @@ Formato: **ID — título** · `ficheiro:linha` · problema → impacto → corr
 |---|---|---|
 | M1 | `frontend/docker/nginx.demo.conf`, `backend/app/main.py:55` | `/docs` e `/openapi.json` estão acessíveis sem login no tailnet (confirmado: HTTP 200), o que expõe o mapa completo da API. → Usar `docs_url=None` fora de local, ou deixar de os encaminhar no nginx. |
 | M2 | `frontend/docker/nginx*.conf`, `frontend/Dockerfile*` | Não há CSP, HSTS, X-Frame-Options nem `nosniff`, e falta `server_tokens off` (o nginx anuncia a versão 1.27.5). O nginx corre como root. O motor de cabos é executado através de um `<script src=blob:>` com acesso a toda a página, incluindo os tokens MSAL em `sessionStorage`. → Acrescentar os cabeçalhos, usar `nginxinc/nginx-unprivileged` e uma CSP com `blob:` restrito. Em alternativa, correr o motor num Web Worker ou num iframe isolado. |
-| M3 | `backend/app/security/entra_auth.py:122,138`; `current_user.py:109-117` | Uma falha de JWKS ou de rede chega ao utilizador como 401 "token inválido". O frontend mostra então "sessão expirada". O `PyJWKClient` não tem timeout. → Devolver 503 com log e definir um timeout explícito. |
+| M3 | `backend/app/security/entra_auth.py:122,138`; `current_user.py:109-117` | Uma falha de JWKS ou de rede chega ao utilizador como 401 "token inválido". O frontend mostra então "sessão expirada". O `PyJWKClient` não tem timeout. → Devolver 503 com log e definir um timeout explícito. **✅ Backend resolvido na Fase 1 (frente A):** timeout de 5 s no `PyJWKClient`, falha de ligação ou JWKS inutilizável → 503 com `logger.warning`; tokens inválidos continuam 401. O frontend não trata o 503 como sessão expirada. |
 | M4 | `frontend/src/pages/ProjectDetail.tsx:790,793`; `CableDesignEditor.tsx:311,314-315,352-353`; `Vacations.tsx:328-332`; `InstallerAccessPages.tsx:120` | `.catch(() => [])`: um erro de rede ou um 403 aparece como "sem histórico", "sem tarefas", "sem revisões" ou "ninguém ausente". → Mostrar um estado de erro por secção, com botão para tentar de novo. |
 | M5 | `backend/app/schemas/projects.py:119-135` | `ProjectUpdate` não tem os limites de `ProjectCreate` (lat/lon, `power_kwp`, `max_length`) e aceita `{"name": null}`, o que dá um 500 por violação de NOT NULL. → Usar tipos `Annotated` partilhados e rejeitar `None` nos campos obrigatórios. |
 | M6 | `frontend/src/session/installerAccess.ts:17`; `components/Layout.tsx:57,60`; `backend/app/security/permissions.py:163` | Há drift de permissões: `inventory.manage`, `process.view_own`, `process.update_own` e o papel `admin` não existem no catálogo. Como as permissões são strings livres (`AuthContext.require(code: str)`, cerca de 185 chamadas), um erro de escrita nega o acesso em silêncio. → Criar `Perm(StrEnum)`, gerar o tipo TypeScript e escrever um teste que confirme que cada literal existe no catálogo. |
@@ -239,12 +240,12 @@ Formato: **ID — título** · `ficheiro:linha` · problema → impacto → corr
 |---|---|---|---|
 | 9 | Scheduler (`client_report_scheduler.py`, `cli/client_reports.py`) | 58 % / **0 %** | Um ciclo de 300 s não pode saltar a hora configurada. Uma falha a meio do ciclo não reverte os envios anteriores. Correr `run_due` em paralelo não deve gerar dois envios. Testar o contexto de sistema com as permissões certas e o comportamento do loop perante exceções. |
 | 8 | `adapters/graph_mail.py` | **0 %** | Formato do pedido de token (form-urlencoded). Resposta sem `access_token`. Erros 4xx e 5xx devem dar `failed` e manter a nota. Segredo em falta. |
-| 8 | `RealEntraTokenValidator` | Não testado (só o mock) | Token RS256 assinado com outra chave. Token com `alg: none`. `kid` desconhecido. JWKS indisponível. Token mock rejeitado em modo real. `exp` ou `iat` em falta. |
-| 7 | Autenticação em todas as rotas | Correto hoje, mas nada impede uma regressão | Percorrer `app.routes`, exigir `get_current_user` na árvore de dependências (allowlist: `/` e `/health`) e confirmar que um GET sem cabeçalho recebe 401. Montar uma matriz papel × rota. `routes_installer_access.py` não tem nenhum teste de 403/404. |
-| 7 | Modelos vs. migrações | `conftest` usa `create_all` | Correr `alembic upgrade head` numa BD vazia e depois `compare_metadata`. Verificar que há um só head (hoje é `a6c8e0f2d4b1`). |
+| 8 | `RealEntraTokenValidator` | ✅ Testado na Fase 1 (`tests/test_auth_entra_real_validator.py`) com um `PyJWKClient` falso, incluindo `alg: none`, HS256 com a chave pública, `tid` de outro tenant e JWKS indisponível (503) | Token RS256 assinado com outra chave. Token com `alg: none`. `kid` desconhecido. JWKS indisponível. Token mock rejeitado em modo real. `exp` ou `iat` em falta. |
+| 7 | Autenticação em todas as rotas | ✅ `tests/test_routes_require_auth.py` (Fase 1). Falta a matriz papel × rota | Percorrer `app.routes`, exigir `get_current_user` na árvore de dependências (allowlist: `/` e `/health`) e confirmar que um GET sem cabeçalho recebe 401. Montar uma matriz papel × rota. `routes_installer_access.py` não tem nenhum teste de 403/404. |
+| 7 | Modelos vs. migrações | ✅ `tests/test_alembic_schema.py` (Fase 1; head único + drift). `conftest` continua a usar `create_all` | Correr `alembic upgrade head` numa BD vazia e depois `compare_metadata`. Verificar que há um só head (hoje é `a6c8e0f2d4b1`). |
 | 7 | Importação de notas vs. allowlist (A5) | Sem teste | Um Comercial aplica notas a um projeto existente: deve dar 403, ou os campos administrativos devem ser ignorados. |
 | 6 | Banco de horas em SQLite | Concorrência só testada em PostgreSQL | Duas threads a gravar para a mesma pessoa: o saldo final tem de ficar consistente. Isto importa porque a produção é SQLite. |
-| 6 | `secret_box` | Só o caso "sem chave" | Chave mal formada. Dados cifrados com outra chave. Rotação de chave. |
+| 6 | `secret_box` | ✅ `tests/test_secret_box.py` (Fase 1): chave mal formada e chave errada; a rotação de chave não existe, só está testado que a troca dá erro tratado | Chave mal formada. Dados cifrados com outra chave. Rotação de chave. |
 | 5 | Frontend: MSAL e sessão | Só `client.dev-login.test.ts` | `acquireTokenSilent` → `InteractionRequiredAuthError` → redirecionamento. Um 401 limpa a sessão. Testes de `SessionContext` e `Login`. |
 | 4 | ClickUp / Sales Support | Mock testado | Quando o adaptador for real: rate limit (429), idempotência da promoção e erro de custom field em falta. |
 
@@ -322,6 +323,14 @@ O CI corre o pytest em SQLite e em PostgreSQL 16, e no frontend `tsc`, `vitest` 
 | 16 | CI: ruff, mypy (gradual), `pip-audit`/`npm audit`, gitleaks, Trivy, Dependabot, `npm ci`, build do Dockerfile de produção, `permissions:` | M9, M10 | 1–2 d |
 | 17 | JWKS: 503 com log e timeout; estados de erro no frontend em vez de listas vazias | M3, M4 | 1–2 d |
 
+**Estado da Fase 1 — frente A, backend (2026-11-18, branch `fase1/backend-hardening`, sem deploy):**
+
+| # | Estado | Notas |
+|---|---|---|
+| 14 | ✅ | Escolhida a alternativa "recusar o arranque": `APP_ENV` sem valor por omissão. Em `main`/`alembic`/CLIs sem `APP_ENV` há uma `ConfigurationError` com mensagem clara. O CI tem de definir `APP_ENV` nos passos do Alembic. |
+| 15 | ◐ Parcial | Feitos: autenticação em todas as rotas, validador Entra real, drift migrações/modelos (corrigidos 3 índices em falta no modelo) e `secret_box`. Falta o scheduler. |
+| 17 | ◐ Parcial | Backend feito (503 + log + timeout). Faltam os estados de erro no frontend (M4). |
+
 ### Fase 2 — Trabalho estrutural (≈ 3–5 semanas)
 
 | # | Ação | Resolve | Esforço |
@@ -344,12 +353,12 @@ O CI corre o pytest em SQLite e em PostgreSQL 16, e no frontend `tsc`, `vitest` 
 - [x] Segredos de projeto cifrados (Fernet), falha fechada, revelação auditada
 - [x] Uploads validados pelo conteúdo, sem path traversal
 - [ ] Instância real em `APP_ENV=production` com o hardening ativo (C1)
-- [ ] Defaults fail-closed (A7)
+- [x] Defaults fail-closed (A7): `APP_ENV` obrigatório
 - [ ] JIT por email desligado depois de ligar todos os utilizadores (C1)
 - [ ] Importação de notas respeita a allowlist de campos (A5)
 - [ ] `/docs` e `/openapi.json` fechados; CSP, HSTS e cabeçalhos de segurança; nginx sem root (M1, M2)
 - [ ] Chave de teste fora do código da aplicação (M13)
-- [ ] Teste automático "todas as rotas exigem auth" e testes do validador real
+- [x] Teste automático "todas as rotas exigem auth" e testes do validador real
 
 **Dados**
 - [ ] PostgreSQL em produção (A8)
@@ -377,7 +386,7 @@ O CI corre o pytest em SQLite e em PostgreSQL 16, e no frontend `tsc`, `vitest` 
 - [x] Pytest em SQLite + PostgreSQL; vitest; tsc; build; smoke test da demo
 - [x] Lint e typecheck do backend (ruff, mypy gradual), auditoria de dependências (pip-audit, npm audit), scan de segredos (gitleaks) e de imagens (Trivy, ainda só informativo)
 - [x] Limiar de cobertura (85 %)
-- [ ] Teste de drift entre modelos e migrações
+- [x] Teste de drift entre modelos e migrações (só tipos e nulidade; os `server_default` ficam por alinhar)
 - [ ] Teste intermitente B4 corrigido
 
 **Documentação**

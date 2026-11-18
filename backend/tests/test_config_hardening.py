@@ -5,6 +5,11 @@ teste (que continuam a apontar para 'test'/SQLite — ver conftest.py).
 """
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -218,3 +223,67 @@ def test_dev_header_mechanism_works_in_test_environment(db_session):
 
     resolved = get_current_user(x_dev_user_email=any_user.email, db=db, settings=get_settings())
     assert resolved.id == any_user.id
+
+
+# --- A7: APP_ENV obrigatório (fail-closed) ---
+
+_BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+
+def _run_python_without_app_env(code: str, tmp_path: Path, **extra_env: str) -> subprocess.CompletedProcess:
+    """Corre `code` num processo novo, sem APP_ENV e a partir de uma pasta
+    vazia (sem `.env` que o possa fornecer)."""
+    env = {k: v for k, v in os.environ.items() if k != "APP_ENV"}
+    env["PYTHONPATH"] = str(_BACKEND_DIR)
+    env.update(extra_env)
+    return subprocess.run(
+        [sys.executable, "-c", code], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60
+    )
+
+
+def test_settings_require_app_env(monkeypatch, tmp_path):
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.chdir(tmp_path)  # sem .env à mão
+    with pytest.raises(ValidationError, match="APP_ENV"):
+        Settings()
+
+
+def test_app_refuses_to_start_without_app_env(tmp_path):
+    result = _run_python_without_app_env("import app.main", tmp_path)
+    assert result.returncode != 0
+    assert "ConfigurationError" in result.stderr
+    assert "APP_ENV não está definido" in result.stderr
+
+
+def test_app_refuses_to_start_with_unknown_app_env(tmp_path):
+    result = _run_python_without_app_env("import app.main", tmp_path, APP_ENV="prod")
+    assert result.returncode != 0
+    assert "APP_ENV não está definido (ou tem um valor inválido)" in result.stderr
+
+
+def test_cli_refuses_to_start_without_app_env(tmp_path):
+    # As CLIs partilham o `get_settings()`; o `demo` é a que mexe em dados.
+    result = _run_python_without_app_env("from app.cli import demo; demo.main(['setup'])", tmp_path)
+    assert result.returncode != 0
+    assert "APP_ENV não está definido" in result.stderr
+
+
+def test_alembic_refuses_to_run_without_app_env(tmp_path):
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(_BACKEND_DIR / "alembic.ini"), "current"],
+        cwd=tmp_path,
+        env={**{k: v for k, v in os.environ.items() if k != "APP_ENV"}, "PYTHONPATH": str(_BACKEND_DIR)},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode != 0
+    assert "APP_ENV não está definido" in result.stderr
+
+
+def test_error_message_never_leaks_other_settings(tmp_path):
+    result = _run_python_without_app_env(
+        "import app.main", tmp_path, SECRET_KEY="valor-secreto-que-nao-deve-aparecer"
+    )
+    assert result.returncode != 0
+    assert "valor-secreto-que-nao-deve-aparecer" not in result.stderr + result.stdout

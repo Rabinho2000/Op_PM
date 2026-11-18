@@ -181,7 +181,7 @@ python -m venv .venv
 # Linux/Mac:            source .venv/bin/activate
 pip install -r requirements.txt   # lock com hashes (Python 3.12, o da imagem Docker)
 
-cp .env.example .env   # ajustar se necessário; os valores por omissão já funcionam localmente
+cp .env.example .env   # ajustar se necessário; já traz APP_ENV=local (obrigatório: sem APP_ENV a app e as CLIs recusam arrancar)
 
 python -m alembic upgrade head      # cria o schema (SQLite local em ./data/)
 python -m app.migration.seed_dev    # semeia dados sintéticos de desenvolvimento
@@ -336,6 +336,9 @@ Ativar qualquer uma destas para chamadas reais é trabalho de uma fase futura �
 - Nenhum dado de produção — só fixtures sintéticas (ver `backend/fixtures/`).
 - `.gitignore` bloqueia `.env`, `.secrets/`, `data/`, `files/`, backups e bases de
   dados locais.
+- **`APP_ENV` é obrigatório e não tem valor por omissão** (fail-closed): sem ele — ou com
+  um valor desconhecido — a aplicação, o Alembic e as CLIs recusam arrancar com uma mensagem
+  clara, em vez de caírem em `local` (onde o cabeçalho `X-Dev-User-Email` substitui a autenticação).
 - **A aplicação recusa-se a arrancar em `APP_ENV=staging`/`production`** se
   `AUTH_ENABLED=false`, `SECRET_KEY` for o valor de desenvolvimento (ou vazio),
   `DATABASE_URL` for SQLite, `ENTRA_VALIDATION_MODE` não for `real`,
