@@ -1,0 +1,55 @@
+# Atualizações automáticas (M10): semanais e agrupadas, para a revisão ser
+# um PR por ecossistema e não dezenas de PRs soltos.
+#
+# - pip: /backend tem requirements.in -> requirements.txt (lock com
+#   hashes). Ao aceitar um PR, confirmar que o lock foi regenerado.
+# - docker: atualiza tag e digest das imagens base (FROM ...@sha256:...).
+# - github-actions: atualiza o SHA fixado e o comentário com a tag.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      backend-python:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      frontend-npm:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      docker-backend:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      docker-frontend:
+        patterns: ["*"]

@@ -179,7 +179,7 @@ python -m venv .venv
 # Windows (PowerShell): .venv\Scripts\Activate.ps1
 # Windows (Git Bash):   source .venv/Scripts/activate
 # Linux/Mac:            source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt   # lock com hashes (Python 3.12, o da imagem Docker)
 
 cp .env.example .env   # ajustar se necessário; os valores por omissão já funcionam localmente
 
@@ -223,6 +223,13 @@ defina `AUTH_ENABLED=true` e `ENTRA_VALIDATION_MODE=mock` (só válido em `local
 ver `docs/DECISIONS.md` D-024) e envie `Authorization: Bearer <token>`, assinado com
 `app.security.entra_auth.issue_mock_token(...)`. Com um tenant real disponível, deixe
 `ENTRA_VALIDATION_MODE=real` (omissão) e defina `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID`.
+
+> **Dependências do backend.** `requirements.in` e `requirements-postgres.in`
+> são as fontes (intervalos); `requirements.txt` e `requirements-postgres.txt`
+> são o lock com hashes, gerado e não editado à mão. Para o regenerar, a
+> partir de `backend/` (cabeçalho de cada ficheiro tem o comando exato):
+> `uv pip compile requirements.in --generate-hashes --universal --python-version 3.12 --no-header -o requirements.txt`.
+> `requirements-dev.txt` (ruff, mypy, pip-audit) só serve o CI.
 
 ### PostgreSQL real (opcional, para validar contra a base de dados-alvo)
 

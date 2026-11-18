@@ -17,7 +17,8 @@
 # desliga isto por omissão fora de `vite dev`/testes; isto é só mais uma
 # barreira, redundante de propósito).
 
-FROM node:22-slim AS build
+# node:22-slim — digest do índice multi-arquitetura; o Dependabot (docker) atualiza tag e digest.
+FROM node:22-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -42,7 +43,8 @@ ENV VITE_API_BASE_URL=${VITE_API_BASE_URL} \
 RUN npm run build
 
 
-FROM nginx:1.27-alpine AS runtime
+# nginx:1.27-alpine — digest do índice multi-arquitetura; o Dependabot (docker) atualiza tag e digest.
+FROM nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 AS runtime
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 

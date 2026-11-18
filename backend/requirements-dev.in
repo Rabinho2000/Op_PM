@@ -1,0 +1,5 @@
+# Ferramentas de CI do backend (lint, tipos, auditoria de dependências).
+# Não entram na imagem Docker. Ver requirements-dev.txt (lock com hashes).
+ruff>=0.17,<0.18
+mypy>=2.4,<3.0
+pip-audit>=2.10,<3.0
