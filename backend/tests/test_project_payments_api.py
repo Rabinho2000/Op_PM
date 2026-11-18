@@ -78,6 +78,8 @@ def test_payment_route_role_matrix(api_client, db_session, account, get_status, 
         installer = Installer(name="Instalador sintético de teste", name_key="instalador sintetico de teste")
         db_session.add(installer)
         db_session.flush()
+        # O PostgreSQL impõe a FK composta (installer_id, installer_team_id); o SQLite não.
+        project.installer_team_id = None
         project.installer_id = installer.id
         db_session.add(InstallerAccessMembership(person_id=user.person_id, installer_id=installer.id))
         db_session.flush()

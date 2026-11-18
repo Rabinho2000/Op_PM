@@ -139,7 +139,9 @@ def save_safety_sheet(
         .populate_existing()
         .options(joinedload(ProjectSafetySheet.workers))
         .filter(ProjectSafetySheet.project_id == project_id)
-        .with_for_update()
+        # `of=`: o PostgreSQL recusa FOR UPDATE sobre o lado anulável do
+        # LEFT OUTER JOIN do joinedload (FeatureNotSupported); bloqueia-se só a ficha.
+        .with_for_update(of=ProjectSafetySheet)
         .one_or_none()
     )
     current_version = sheet.version if sheet is not None else 0
