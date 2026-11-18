@@ -58,6 +58,7 @@ def test_defaults_are_per_user_and_work_preferences_do_not_change_planning_prefe
         "lifecycle_status": [],
         "pm_person_id": None,
         "installer_id": None,
+        "installer_ids": [],
         "team_id": None,
         "show_idle": False,
     }
@@ -82,6 +83,7 @@ def test_defaults_are_per_user_and_work_preferences_do_not_change_planning_prefe
         "lifecycle_status": [],
         "pm_person_id": None,
         "installer_id": None,
+        "installer_ids": [],
         "team_id": None,
         "show_idle": False,
     }
@@ -131,6 +133,7 @@ def test_patch_omission_preserves_and_nullable_ids_can_be_cleared_atomically(db_
         "lifecycle_status": ["construcao", "preparacao"],
         "pm_person_id": None,
         "installer_id": None,
+        "installer_ids": [],
         "team_id": None,
         "show_idle": False,
     }

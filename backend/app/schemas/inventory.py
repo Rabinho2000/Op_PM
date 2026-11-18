@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -15,7 +16,14 @@ class InventoryLocationRead(BaseModel):
     name: str
     location_type: str
     project_id: uuid.UUID | None
+    owner: Literal["solcor", "verde_milenar"]
     is_active: bool
+
+
+class InventoryLocationStockRead(BaseModel):
+    location_id: uuid.UUID | None
+    location_name: str
+    physical_stock: Decimal
 
 
 class InventoryItemRead(BaseModel):
@@ -26,6 +34,13 @@ class InventoryItemRead(BaseModel):
     name: str
     unit: str
     category: str | None = None
+    manufacturer: str | None = None
+    model: str | None = None
+    subcategory: str | None = None
+    power_w: Decimal | None = None
+    cross_section_mm2: Decimal | None = None
+    section_label: str = "Geral"
+    has_photo: bool = False
     min_stock: Decimal
     preferred_supplier_id: uuid.UUID | None
     lead_time_days: int | None
@@ -37,6 +52,40 @@ class InventoryItemRead(BaseModel):
     available_stock: Decimal = Decimal("0")
     total_reserved: Decimal = Decimal("0")
     below_min_stock: bool = False
+    location_stocks: list[InventoryLocationStockRead] = Field(default_factory=list)
+
+
+class InventoryItemDocumentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    item_id: uuid.UUID
+    kind: Literal["datasheet", "manual", "guia", "outro"]
+    title: str
+    filename: str
+    content_type: str
+    size: int
+    created_by_person_id: uuid.UUID | None
+    created_at: dt.datetime
+
+
+class InventoryCategoryImageRead(BaseModel):
+    name: str
+    has_custom_image: bool
+    image_version: str | None = None
+
+
+class InventoryCategoryUnitStockRead(BaseModel):
+    unit: str
+    total_stock: Decimal
+
+
+class InventoryCategorySummaryRead(BaseModel):
+    category: str
+    owner: Literal["solcor", "verde_milenar"]
+    item_count: int
+    stock_by_unit: list[InventoryCategoryUnitStockRead] = Field(default_factory=list)
+    low_stock_count: int
 
 
 class InventoryMovementRead(BaseModel):
@@ -72,6 +121,7 @@ class InventoryMovementCreate(BaseModel):
     movement_type: str
     quantity: Decimal = Field(max_digits=14, decimal_places=3)
     location_id: uuid.UUID | None = None
+    destination_location_id: uuid.UUID | None = None
     reference: str = ""
     unit_cost: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     idempotency_key: str | None = None
@@ -84,6 +134,7 @@ class ProjectInventoryOperationCreate(BaseModel):
     quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=3)
     reference: str = ""
     idempotency_key: str | None = None
+    owner: Literal["solcor", "verde_milenar"] = "solcor"
 
 
 class ProjectInventoryMovementReverse(BaseModel):

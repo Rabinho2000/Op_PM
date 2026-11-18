@@ -22,13 +22,18 @@ import datetime as dt
 import uuid
 from decimal import Decimal
 
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.performance import GOAL_METRICS, PERIOD_TYPES, GoalPeriod, GoalPeriodHistory
-from app.models.project import Project
+from app.models.project import Project, ProjectStageProgress, ProjectSubtaskProgress
 from app.models.project_data import ProjectLicensingData
 from app.models.task import STATUS_DONE, TASK_TYPE_COMISSIONAMENTO, Task
+from app.models.workflow import WorkflowStage, WorkflowSubtask
 from app.security.permissions import AuthContext
+from app.services.projects import visible_projects_query
+from app.services.tasks import visible_tasks_query
+from app.utils.timezones import LISBON_TZ, today_lisbon
 
 ZERO = Decimal("0")
 
@@ -75,6 +80,7 @@ def _completed_projects_query(db: Session, *, start: dt.date, end: dt.date, pm_p
             Task.task_type == TASK_TYPE_COMISSIONAMENTO,
             Task.status == STATUS_DONE,
             Task.completed_at.isnot(None),
+            Project.deleted_at.is_(None),
         )
     )
     if pm_person_id is not None:
@@ -85,6 +91,216 @@ def _completed_projects_query(db: Session, *, start: dt.date, end: dt.date, pm_p
         for task, project in rows
         if start <= task.completed_at.date() <= end
     ]
+
+
+@dataclasses.dataclass
+class CompletedTaskItem:
+    id: uuid.UUID
+    title: str
+    project_id: uuid.UUID
+    project_name: str
+    completed_at: dt.datetime
+
+
+@dataclasses.dataclass
+class CompletedProcessStepItem:
+    title: str
+    completed_at: dt.datetime
+    kind: str
+    stage_title: str | None = None
+
+
+@dataclasses.dataclass
+class CompletedTasksWeeklyPm:
+    pm_person_id: uuid.UUID | None
+    pm_display_name: str | None
+    tasks: list[CompletedTaskItem] = dataclasses.field(default_factory=list)
+    process_steps: list[CompletedProcessStepItem] = dataclasses.field(default_factory=list)
+    subtask_count: int = 0
+
+
+@dataclasses.dataclass
+class CompletedTasksWeeklyWeek:
+    iso_year: int
+    iso_week: int
+    week_start: dt.date
+    week_end: dt.date
+    pms: list[CompletedTasksWeeklyPm]
+
+
+def _week_start(day: dt.date) -> dt.date:
+    return day - dt.timedelta(days=day.weekday())
+
+
+def _lisbon_date(value: dt.datetime) -> dt.date:
+    """Converte timestamps da BD (SQLite pode devolvê-los sem fuso) para Lisboa."""
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=dt.timezone.utc)
+    return aware.astimezone(LISBON_TZ).date()
+
+
+def _weekly_group(
+    groups: dict[dt.date, dict[tuple[uuid.UUID | None, str | None], CompletedTasksWeeklyPm]],
+    *,
+    week_start: dt.date,
+    project: Project,
+) -> CompletedTasksWeeklyPm:
+    key = (project.pm_person_id, project.pm.display_name if project.pm else None)
+    return groups[week_start].setdefault(
+        key,
+        CompletedTasksWeeklyPm(pm_person_id=key[0], pm_display_name=key[1]),
+    )
+
+
+def completed_tasks_by_week(
+    db: Session,
+    ctx: AuthContext,
+    *,
+    from_date: dt.date | None = None,
+    to_date: dt.date | None = None,
+    project_id: uuid.UUID | None = None,
+) -> list[CompletedTasksWeeklyWeek]:
+    """Agrega conclusões datadas por semana ISO de Lisboa e PM do projeto.
+
+    A interseção das duas queries de âmbito é intencional: `visible_tasks_query`
+    limita a origem das tarefas e `visible_projects_query`, além de garantir o
+    PM do agrupamento, exclui projetos inativos/removidos logicamente. Só
+    `completed_at`/`done_at` são datas de conclusão; `updated_at` nunca é um
+    substituto para uma conclusão histórica. `project_id`, quando indicado por
+    um serviço que já autorizou o acesso ao projeto, restringe a agregação a
+    esse projeto sem exigir permissões de consulta de tarefas no utilizador que
+    pré-visualiza um relatório de cliente.
+    """
+    effective_to = to_date or today_lisbon()
+    effective_from = from_date or (_week_start(effective_to) - dt.timedelta(days=49))
+    if effective_from > effective_to:
+        raise PerformanceError("O início do intervalo não pode ser posterior ao fim.")
+
+    first_week = _week_start(effective_from)
+    last_week = _week_start(effective_to)
+    week_starts: list[dt.date] = []
+    cursor = first_week
+    while cursor <= last_week:
+        week_starts.append(cursor)
+        cursor += dt.timedelta(days=7)
+    groups = {week: {} for week in week_starts}
+
+    visible_project_ids = (
+        visible_projects_query(db, ctx)
+        .filter(Project.is_active.is_(True))
+        .with_entities(Project.id)
+        .subquery()
+    )
+    visible_project_select = select(visible_project_ids.c.id)
+
+    task_query = visible_tasks_query(db, ctx) if project_id is None else db.query(Task)
+    task_filters = [
+        Task.project_id.in_(visible_project_select),
+        Task.status == STATUS_DONE,
+        Task.completed_at.isnot(None),
+    ]
+    if project_id is not None:
+        task_filters.append(Task.project_id == project_id)
+    tasks = (
+        task_query
+        .filter(*task_filters)
+        .options(joinedload(Task.project).joinedload(Project.pm))
+        .all()
+    )
+    for task in tasks:
+        if task.completed_at is None:
+            continue
+        completed_date = _lisbon_date(task.completed_at)
+        if not effective_from <= completed_date <= effective_to:
+            continue
+        project = task.project
+        pm = _weekly_group(groups, week_start=_week_start(completed_date), project=project)
+        pm.tasks.append(
+            CompletedTaskItem(
+                id=task.id,
+                title=task.title,
+                project_id=project.id,
+                project_name=project.name,
+                completed_at=task.completed_at,
+            )
+        )
+
+    stage_rows = (
+        db.query(ProjectStageProgress, Project, WorkflowStage)
+        .join(Project, ProjectStageProgress.project_id == Project.id)
+        .join(WorkflowStage, WorkflowStage.id == ProjectStageProgress.stage_id)
+        .filter(
+            Project.id.in_(visible_project_select),
+            ProjectStageProgress.contact_done.is_(True),
+            ProjectStageProgress.contact_done_at.isnot(None),
+        )
+    )
+    if project_id is not None:
+        stage_rows = stage_rows.filter(Project.id == project_id)
+    for progress, project, stage in stage_rows.options(joinedload(Project.pm)).all():
+        if progress.contact_done_at is None:
+            continue
+        completed_date = _lisbon_date(progress.contact_done_at)
+        if not effective_from <= completed_date <= effective_to:
+            continue
+        pm = _weekly_group(groups, week_start=_week_start(completed_date), project=project)
+        pm.process_steps.append(
+            CompletedProcessStepItem(
+                title=stage.title,
+                completed_at=progress.contact_done_at,
+                kind="stage",
+            )
+        )
+
+    # ProjectSubtaskProgress.done_at is the timestamp of the effective
+    # transition to done. Legacy/inferred records without it are excluded.
+    subtask_rows = (
+        db.query(ProjectSubtaskProgress, Project, WorkflowSubtask, WorkflowStage)
+        .join(Project, ProjectSubtaskProgress.project_id == Project.id)
+        .join(WorkflowSubtask, WorkflowSubtask.id == ProjectSubtaskProgress.subtask_id)
+        .join(WorkflowStage, WorkflowStage.id == WorkflowSubtask.stage_id)
+        .filter(
+            Project.id.in_(visible_project_select),
+            ProjectSubtaskProgress.done.is_(True),
+            ProjectSubtaskProgress.done_at.isnot(None),
+        )
+    )
+    if project_id is not None:
+        subtask_rows = subtask_rows.filter(Project.id == project_id)
+    for progress, project, subtask, stage in subtask_rows.options(joinedload(Project.pm)).all():
+        if progress.done_at is None:
+            continue
+        completed_date = _lisbon_date(progress.done_at)
+        if not effective_from <= completed_date <= effective_to:
+            continue
+        pm = _weekly_group(groups, week_start=_week_start(completed_date), project=project)
+        pm.subtask_count += 1
+        pm.process_steps.append(
+            CompletedProcessStepItem(
+                title=subtask.title,
+                completed_at=progress.done_at,
+                kind="subtask",
+                stage_title=stage.title,
+            )
+        )
+
+    result: list[CompletedTasksWeeklyWeek] = []
+    for week in week_starts:
+        pms = list(groups[week].values())
+        for pm in pms:
+            pm.tasks.sort(key=lambda item: (item.completed_at.isoformat(), item.title, str(item.id)))
+            pm.process_steps.sort(key=lambda item: (item.completed_at.isoformat(), item.kind, item.title))
+        pms.sort(key=lambda item: (item.pm_display_name is None, item.pm_display_name or ""))
+        iso = week.isocalendar()
+        result.append(
+            CompletedTasksWeeklyWeek(
+                iso_year=iso.year,
+                iso_week=iso.week,
+                week_start=week,
+                week_end=week + dt.timedelta(days=6),
+                pms=pms,
+            )
+        )
+    return result
 
 
 def _realized_value(
@@ -100,7 +316,7 @@ def _realized_value(
         query = (
             db.query(ProjectLicensingData, Project)
             .join(Project, ProjectLicensingData.project_id == Project.id)
-            .filter(ProjectLicensingData.certificate_date.isnot(None))
+            .filter(ProjectLicensingData.certificate_date.isnot(None), Project.deleted_at.is_(None))
         )
         if pm_person_id is not None:
             query = query.filter(Project.pm_person_id == pm_person_id)

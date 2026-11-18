@@ -86,6 +86,7 @@ def test_successful_commit_returns_precommit_payload_without_postcommit_read(
         "lifecycle_status": ["construcao"] if existing else [],
         "pm_person_id": None,
         "installer_id": None,
+        "installer_ids": [],
         "team_id": None,
         "show_idle": True,
     }

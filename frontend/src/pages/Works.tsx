@@ -1,5 +1,6 @@
 import LifecycleMultiSelect from "../components/LifecycleMultiSelect";
-import { MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import InstallerMultiSelect from "../components/InstallerMultiSelect";
+import { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useSearchParams, useNavigate } from "react-router-dom";
 import {
   ApiError,
@@ -26,26 +27,59 @@ import Icon from "../components/Icon";
 import { useLifecycleStatuses, LifecycleBadge } from "../components/LifecycleStatus";
 import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, PageHeader } from "../components/ui";
 import { useToast } from "../components/Toast";
-import WorksTimeline from "../components/WorksTimeline";
+import WorksTimeline, { type WorksDensity } from "../components/WorksTimeline";
 import { todayIsoLisbon } from "../utils/dates";
 import { defaultWindow, formatIsoPt, shiftWindow, windowFrom, Zoom, ZOOMS } from "../utils/worksTimeline";
 import { useSession } from "../session/SessionContext";
 import "./Works.css";
 
 const ZOOM_KEYS = Object.keys(ZOOMS) as Zoom[];
+const DENSITY_KEYS: WorksDensity[] = ["compacto", "normal", "grande"];
+const DENSITY_STORAGE_PREFIX = "op:works-density:";
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
 const VIEW_QUERY_KEYS = ["zoom", "from", "pm", "estado", "inst", "equipa", "idle"] as const;
-type ViewState = { zoom: Zoom; from: string | null; pm: string; lifecycle: string[]; installerId: string; teamId: string; showIdle: boolean };
+type ViewState = { zoom: Zoom; from: string | null; pm: string; lifecycle: string[]; installerIds: string[]; teamId: string; showIdle: boolean };
 type PreferenceStatus = "loading" | "ready" | "error";
 type ScrollSnapshot = { left: number; top: number; timelineLeft: number | null };
-const FALLBACK_VIEW: ViewState = { zoom: "months", from: null, pm: "", lifecycle: [], installerId: "", teamId: "", showIdle: false };
-const DEFAULT_PREFERENCE: WorksPreferences = { zoom: "month_days", lifecycle_status: [], pm_person_id: null, installer_id: null, team_id: null, show_idle: false };
+const FALLBACK_VIEW: ViewState = { zoom: "months", from: null, pm: "", lifecycle: [], installerIds: [], teamId: "", showIdle: false };
+const DEFAULT_PREFERENCE: WorksPreferences = { zoom: "month_days", lifecycle_status: [], pm_person_id: null, installer_ids: [], team_id: null, show_idle: false };
+
+function readWorksDensity(accountKey: string): WorksDensity {
+  try {
+    const saved = window.localStorage.getItem(`${DENSITY_STORAGE_PREFIX}${accountKey}`);
+    return DENSITY_KEYS.includes(saved as WorksDensity) ? (saved as WorksDensity) : "normal";
+  } catch {
+    return "normal";
+  }
+}
+
+function persistWorksDensity(accountKey: string, density: WorksDensity) {
+  try {
+    window.localStorage.setItem(`${DENSITY_STORAGE_PREFIX}${accountKey}`, density);
+  } catch {
+    // A indisponibilidade do armazenamento local não deve bloquear o calendário.
+  }
+}
+
+function handleTimelineViewportKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+  if (event.target !== event.currentTarget || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
+  const scroller = event.currentTarget.querySelector<HTMLElement>(".works__scroll");
+  if (!scroller) return;
+  const distance = Math.max(120, Math.round(scroller.clientWidth * 0.8));
+  scroller.scrollLeft += event.key === "ArrowRight" ? distance : -distance;
+  event.preventDefault();
+}
 
 // Any recognized URL key makes the URL a complete, shareable view. Missing
 // keys intentionally use viewFromParams defaults instead of leaking a saved
 // preference into a partial link.
 function hasViewQuery(params: URLSearchParams): boolean {
   return VIEW_QUERY_KEYS.some((key) => params.has(key));
+}
+
+function installerIdsFromPreference(preference: { installer_ids?: string[]; installer_id?: string | null }): string[] {
+  if (Array.isArray(preference.installer_ids)) return [...new Set(preference.installer_ids.filter(Boolean))];
+  return preference.installer_id ? [preference.installer_id] : [];
 }
 
 function viewFromParams(params: URLSearchParams): ViewState {
@@ -57,18 +91,18 @@ function viewFromParams(params: URLSearchParams): ViewState {
     from: from && ISO_RE.test(from) ? from : null,
     pm: params.get("pm") ?? "",
     lifecycle: params.getAll("estado"),
-    installerId: params.get("inst") ?? "",
+    installerIds: [...new Set(params.getAll("inst").filter(Boolean))],
     teamId: params.get("equipa") ?? "",
     showIdle: params.get("idle") === "1",
   };
 }
 
 function viewFromPreference(preference: WorksPreferences): ViewState {
-  return { zoom: preference.zoom, from: null, pm: preference.pm_person_id ?? "", lifecycle: preference.lifecycle_status ?? [], installerId: preference.installer_id ?? "", teamId: preference.team_id ?? "", showIdle: preference.show_idle };
+  return { zoom: preference.zoom, from: null, pm: preference.pm_person_id ?? "", lifecycle: preference.lifecycle_status ?? [], installerIds: installerIdsFromPreference(preference), teamId: preference.team_id ?? "", showIdle: preference.show_idle };
 }
 
 function preferenceFromView(view: ViewState): WorksPreferences {
-  return { zoom: view.zoom, lifecycle_status: view.lifecycle, pm_person_id: view.pm || null, installer_id: view.installerId || null, team_id: view.teamId || null, show_idle: view.showIdle };
+  return { zoom: view.zoom, lifecycle_status: view.lifecycle, pm_person_id: view.pm || null, installer_ids: view.installerIds, team_id: view.teamId || null, show_idle: view.showIdle };
 }
 
 // Calendário de obras por instalador e equipa (D-072). Todo o estado (janela,
@@ -82,6 +116,10 @@ export default function Works() {
   const statuses = useLifecycleStatuses();
   const { notify } = useToast();
   const accountKey = me?.user_id ?? me?.email ?? "anonymous";
+  const [density, setDensity] = useState<WorksDensity>(() => readWorksDensity(accountKey));
+  useEffect(() => {
+    setDensity(readWorksDensity(accountKey));
+  }, [accountKey]);
   const [view, setView] = useState<ViewState>(() => (hasViewQuery(params) ? viewFromParams(params) : FALLBACK_VIEW));
   const [viewReady, setViewReady] = useState(() => hasViewQuery(params));
   const [preferenceStatus, setPreferenceStatus] = useState<PreferenceStatus>(() => (hasViewQuery(params) ? "ready" : "loading"));
@@ -105,13 +143,14 @@ export default function Works() {
   const paramsRef = useRef(params);
   paramsRef.current = params;
   const paramSignature = params.toString();
-  const lastWrittenParams = useRef(paramSignature);
+  const observedParamSignature = useRef(paramSignature);
   const zoom = view.zoom;
   const fromParam = view.from;
   const win = useMemo(() => (fromParam ? windowFrom(zoom, fromParam) : defaultWindow(zoom, today)), [zoom, fromParam, today]);
   const pm = view.pm;
   const lifecycle = view.lifecycle;
-  const installerId = view.installerId;
+  const installerIds = view.installerIds;
+  const installerKey = installerIds.join(",");
   const teamId = view.teamId;
   const showIdle = view.showIdle;
 
@@ -168,7 +207,13 @@ export default function Works() {
     if ("from" in patch) next.from = patch.from as string | null;
     if ("pm" in patch) next.pm = (patch.pm as string | null) ?? "";
     if ("estado" in patch) next.lifecycle = Array.isArray(patch.estado) ? patch.estado : [];
-    if ("inst" in patch) next.installerId = (patch.inst as string | null) ?? "";
+    if ("inst" in patch) {
+      next.installerIds = Array.isArray(patch.inst) ? [...new Set(patch.inst.filter(Boolean))] : patch.inst ? [patch.inst] : [];
+      if (!("equipa" in patch) && next.teamId && installers.length > 0) {
+        const scope = next.installerIds.length > 0 ? installers.filter((installer) => next.installerIds.includes(installer.id)) : installers;
+        if (!scope.some((installer) => installer.teams.some((team) => team.id === next.teamId))) next.teamId = "";
+      }
+    }
     if ("equipa" in patch) next.teamId = (patch.equipa as string | null) ?? "";
     if ("idle" in patch) next.showIdle = patch.idle === "1";
     setView(next);
@@ -183,20 +228,29 @@ export default function Works() {
     if (next.from) nextParams.set("from", next.from);
     if (next.pm) nextParams.set("pm", next.pm);
     next.lifecycle.forEach((value) => nextParams.append("estado", value));
-    if (next.installerId) nextParams.set("inst", next.installerId);
+    next.installerIds.forEach((value) => nextParams.append("inst", value));
     if (next.teamId) nextParams.set("equipa", next.teamId);
     if (next.showIdle) nextParams.set("idle", "1");
-    lastWrittenParams.current = nextParams.toString();
-    setParams(nextParams, { replace: true });
+    setParams(nextParams);
   }
 
   useEffect(() => {
-    if (paramSignature === lastWrittenParams.current) return;
-    lastWrittenParams.current = paramSignature;
-    setView(viewFromParams(params));
+    if (paramSignature === observedParamSignature.current) return;
+    observedParamSignature.current = paramSignature;
+    const next = viewFromParams(params);
+    if (next.teamId && installers.length > 0) {
+      const scope = next.installerIds.length > 0 ? installers.filter((installer) => next.installerIds.includes(installer.id)) : installers;
+      if (!scope.some((installer) => installer.teams.some((team) => team.id === next.teamId))) {
+        next.teamId = "";
+        const normalizedParams = new URLSearchParams(params);
+        normalizedParams.delete("equipa");
+        setParams(normalizedParams, { replace: true });
+      }
+    }
+    setView(next);
     userInteracted.current = true;
     setViewReady(true);
-  }, [paramSignature, params]);
+  }, [paramSignature, params, installers, setParams]);
 
   const loadPreferences = useCallback(async () => {
     const currentParams = paramsRef.current;
@@ -287,7 +341,7 @@ export default function Works() {
       to: win.to,
       pm_person_id: pm || undefined,
       lifecycle_status: lifecycle.length > 0 ? lifecycle : undefined,
-      installer_id: installerId || undefined,
+      installer_ids: installerIds.length > 0 ? installerIds : undefined,
       team_id: teamId || undefined,
     })
       .then((r) => {
@@ -306,7 +360,7 @@ export default function Works() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewReady, win.from, win.to, pm, lifecycleKey, installerId, teamId, reloadKey]);
+  }, [viewReady, win.from, win.to, pm, lifecycleKey, installerKey, teamId, reloadKey]);
 
   useLayoutEffect(() => {
     const snapshot = scrollRestoreRef.current;
@@ -380,7 +434,7 @@ export default function Works() {
       setViewReady(true);
       const nextParams = new URLSearchParams(params);
       for (const key of VIEW_QUERY_KEYS) nextParams.delete(key);
-      lastWrittenParams.current = nextParams.toString();
+      observedParamSignature.current = nextParams.toString();
       setParams(nextParams, { replace: true });
       setPreferenceSaved(true);
       notify("Vista reposta.", "success");
@@ -423,7 +477,7 @@ export default function Works() {
         zoom: applied.zoom,
         pm: applied.pm_person_id,
         estado: applied.lifecycle_status,
-        inst: applied.installer_id,
+        inst: installerIdsFromPreference(applied),
         equipa: applied.team_id,
         idle: applied.show_idle ? "1" : null,
       });
@@ -476,11 +530,14 @@ export default function Works() {
   }
 
   const teamOptions = useMemo(() => {
-    const scope = installerId ? installers.filter((i) => i.id === installerId) : installers;
-    return scope.flatMap((i) => i.teams.map((t) => ({ id: t.id, label: installerId ? t.name : `${i.name} — ${t.name}` })));
-  }, [installers, installerId]);
+    const scope = installerIds.length > 0 ? installers.filter((installer) => installerIds.includes(installer.id)) : installers;
+    return scope.flatMap((installer) => installer.teams.map((team) => ({
+      id: team.id,
+      label: installerIds.length === 1 ? team.name : `${installer.name} — ${team.name}`,
+    })));
+  }, [installers, installerKey]);
 
-  const hasFilters = Boolean(pm || lifecycle.length > 0 || installerId || teamId);
+  const hasFilters = Boolean(pm || lifecycle.length > 0 || installerIds.length > 0 || teamId);
   const clearFilters = () => update({ pm: null, estado: null, inst: null, equipa: null });
   const openProjectOverlay = (projectId: string) => navigate(`/projects/${projectId}`, { state: { backgroundLocation: location } });
   const handleProjectLinkClick = (projectId: string, event: ReactMouseEvent<HTMLAnchorElement>) => {
@@ -490,7 +547,7 @@ export default function Works() {
   };
 
   return (
-    <div ref={worksRootRef} className="works-page">
+    <div ref={worksRootRef} className={`works-page works-page--density-${density}`} data-density={density}>
       <PageHeader
         title="Calendário de obras"
         subtitle="As obras ao longo do tempo, por instalador e equipa. Arraste uma barra para a mover (ou mude de linha para mudar de instalador/equipa) e as pontas para ajustar as datas."
@@ -504,150 +561,165 @@ export default function Works() {
         </div>
       )}
 
-      <div className="toolbar" role="search" aria-label="Filtros do calendário de obras">
-        <div className="field">
-          <label htmlFor="w-saved-view">Vistas guardadas</label>
-          <select
-            id="w-saved-view"
-            className="select"
-            value={selectedSavedViewId}
-            onChange={(e) => setSelectedSavedViewId(e.target.value)}
-            disabled={savedViewsLoading}
-          >
-            <option value="">{savedViewsLoading ? "A carregar…" : "Selecionar vista guardada"}</option>
-            {savedViews.map((savedView) => (
-              <option key={savedView.id} value={savedView.id}>
-                {savedView.name}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            className="btn btn--sm btn--ghost"
-            onClick={() => void handleApplySavedView()}
-            disabled={!selectedSavedViewId || savedViewsApplyingId !== null}
-          >
-            {savedViewsApplyingId ? "A aplicar…" : "Aplicar vista"}
-          </button>
-          {selectedSavedViewId && (
-            <>
-              <button
-                type="button"
-                className="btn btn--sm btn--ghost"
-                onClick={() => void handleRenameSavedView()}
-                disabled={savedViewsManagingId !== null || savedViewsApplyingId !== null}
-              >
-                {savedViewsManagingId === selectedSavedViewId ? "A renomear…" : "Renomear vista"}
-              </button>
-              <button
-                type="button"
-                className="btn btn--sm btn--ghost"
-                onClick={() => void handleDeleteSavedView()}
-                disabled={savedViewsManagingId !== null || savedViewsApplyingId !== null}
-              >
-                {savedViewsManagingId === selectedSavedViewId ? "A gerir…" : "Eliminar vista"}
-              </button>
-            </>
-          )}
-          {savedViewsError && <span className="small text-danger" role="alert">{savedViewsError}</span>}
-        </div>
-        <div className="field">
-          <span className="field__label" id="w-zoom-label">
-            Escala
-          </span>
-          <div className="segmented" role="group" aria-labelledby="w-zoom-label">
-            {ZOOM_KEYS.map((z) => (
-              <button
-                key={z}
-                type="button"
-                className={z === zoom ? "is-active" : ""}
-                aria-pressed={z === zoom}
-                onClick={() => update({ zoom: z === "months" ? null : z, from: null })}
-              >
-                {ZOOMS[z].label}
-              </button>
-            ))}
+      <section className="works__controls" aria-label="Controlos do calendário de obras">
+        <div className="works__saved-views">
+          <div className="field works__saved-view-field">
+            <label htmlFor="w-saved-view">Vistas guardadas</label>
+            <select
+              id="w-saved-view"
+              className="select"
+              value={selectedSavedViewId}
+              onChange={(e) => setSelectedSavedViewId(e.target.value)}
+              disabled={savedViewsLoading}
+            >
+              <option value="">{savedViewsLoading ? "A carregar…" : "Selecionar vista guardada"}</option>
+              {savedViews.map((savedView) => (
+                <option key={savedView.id} value={savedView.id}>
+                  {savedView.name}
+                </option>
+              ))}
+            </select>
+            {savedViewsError && <span className="small text-danger" role="alert">{savedViewsError}</span>}
+          </div>
+          <div className="works__saved-view-actions">
+            <button
+              type="button"
+              className="btn btn--sm btn--ghost"
+              onClick={() => void handleApplySavedView()}
+              disabled={!selectedSavedViewId || savedViewsApplyingId !== null}
+            >
+              {savedViewsApplyingId ? "A aplicar…" : "Aplicar vista"}
+            </button>
+            {selectedSavedViewId && (
+              <>
+                <button
+                  type="button"
+                  className="btn btn--sm btn--ghost"
+                  onClick={() => void handleRenameSavedView()}
+                  disabled={savedViewsManagingId !== null || savedViewsApplyingId !== null}
+                >
+                  {savedViewsManagingId === selectedSavedViewId ? "A renomear…" : "Renomear vista"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--sm btn--ghost"
+                  onClick={() => void handleDeleteSavedView()}
+                  disabled={savedViewsManagingId !== null || savedViewsApplyingId !== null}
+                >
+                  {savedViewsManagingId === selectedSavedViewId ? "A gerir…" : "Eliminar vista"}
+                </button>
+              </>
+            )}
           </div>
         </div>
-        <div className="field">
-          <span className="field__label" id="w-nav-label">
-            Período
-          </span>
-          <div className="segmented" role="group" aria-labelledby="w-nav-label">
-            <button type="button" aria-label="Período anterior" onClick={() => update({ from: shiftWindow(zoom, win.from, -1).from })}>
-              <Icon name="chevronLeft" size={16} />
-            </button>
-            <button type="button" onClick={() => update({ from: null })}>
-              Hoje
-            </button>
-            <button type="button" aria-label="Período seguinte" onClick={() => update({ from: shiftWindow(zoom, win.from, 1).from })}>
-              <Icon name="chevronRight" size={16} />
-            </button>
+
+        <div className="works__view-controls">
+          <div className="field works__scale-control">
+            <span className="field__label" id="w-zoom-label">Escala</span>
+            <div className="segmented" role="group" aria-labelledby="w-zoom-label">
+              {ZOOM_KEYS.map((z) => (
+                <button
+                  key={z}
+                  type="button"
+                  className={z === zoom ? "is-active" : ""}
+                  aria-pressed={z === zoom}
+                  onClick={() => update({ zoom: z === "months" ? null : z, from: null })}
+                >
+                  {ZOOMS[z].label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="field works__density-control">
+            <span className="field__label" id="w-density-label">Densidade</span>
+            <div className="segmented" role="group" aria-labelledby="w-density-label">
+              {DENSITY_KEYS.map((choice) => (
+                <button
+                  key={choice}
+                  type="button"
+                  aria-pressed={choice === density}
+                  onClick={() => {
+                    setDensity(choice);
+                    persistWorksDensity(accountKey, choice);
+                  }}
+                >
+                  {choice[0].toUpperCase() + choice.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="field works__period-control">
+            <span className="field__label" id="w-nav-label">Período</span>
+            <div className="segmented" role="group" aria-labelledby="w-nav-label">
+              <button type="button" aria-label="Período anterior" onClick={() => update({ from: shiftWindow(zoom, win.from, -1).from })}>
+                <Icon name="chevronLeft" size={16} />
+              </button>
+              <button type="button" onClick={() => update({ from: null })}>Hoje</button>
+              <button type="button" aria-label="Período seguinte" onClick={() => update({ from: shiftWindow(zoom, win.from, 1).from })}>
+                <Icon name="chevronRight" size={16} />
+              </button>
+            </div>
           </div>
         </div>
-        <div className="field">
-          <label htmlFor="w-pm">PM</label>
-          <select id="w-pm" className="select" value={pm} onChange={(e) => update({ pm: e.target.value || null })}>
-            <option value="">Todos os PM</option>
-            {people.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.display_name}
-                {p.is_active ? "" : " (inativo)"}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="w-inst">Instalador</label>
-          <select
+
+        <div className="works__filters" role="search" aria-label="Filtros do calendário de obras">
+          <div className="field">
+            <label htmlFor="w-pm">PM</label>
+            <select id="w-pm" className="select" value={pm} onChange={(e) => update({ pm: e.target.value || null })}>
+              <option value="">Todos os PM</option>
+              {people.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.display_name}
+                  {p.is_active ? "" : " (inativo)"}
+                </option>
+              ))}
+            </select>
+          </div>
+          <InstallerMultiSelect
             id="w-inst"
-            className="select"
-            value={installerId}
-            onChange={(e) => update({ inst: e.target.value || null, equipa: null })}
-          >
-            <option value="">Todos os instaladores</option>
-            {installers.map((i) => (
-              <option key={i.id} value={i.id}>
-                {i.name}
-                {i.is_active ? "" : " (inativo)"}
-              </option>
-            ))}
-          </select>
+            label="Instalador"
+            value={installerIds}
+            installers={installers}
+            onChange={(next) => update({ inst: next })}
+          />
+          <div className="field">
+            <label htmlFor="w-team">Equipa</label>
+            <select id="w-team" className="select" value={teamId} onChange={(e) => update({ equipa: e.target.value || null })}>
+              <option value="">Todas as equipas</option>
+              {teamOptions.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <LifecycleMultiSelect id="w-estado" label="Estado da obra" value={lifecycle} onChange={(next) => update({ estado: next })} statuses={statuses} />
         </div>
-        <div className="field">
-          <label htmlFor="w-team">Equipa</label>
-          <select id="w-team" className="select" value={teamId} onChange={(e) => update({ equipa: e.target.value || null })}>
-            <option value="">Todas as equipas</option>
-            {teamOptions.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <LifecycleMultiSelect id="w-estado" label="Estado da obra" value={lifecycle} onChange={(next) => update({ estado: next })} statuses={statuses} />
-        <div className="toolbar__end">
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.85rem" }}>
+
+        <div className="works__toolbar-footer">
+          <label className="works__idle-toggle">
             <input type="checkbox" checked={showIdle} onChange={(e) => update({ idle: e.target.checked ? "1" : null })} />
             Mostrar equipas sem obras
           </label>
-          {hasFilters && (
-            <button type="button" className="btn btn--ghost" onClick={clearFilters}>
-              <Icon name="x" size={16} /> Limpar filtros
+          <div className="works__toolbar-actions">
+            {hasFilters && (
+              <button type="button" className="btn btn--ghost" onClick={clearFilters}>
+                <Icon name="x" size={16} /> Limpar filtros
+              </button>
+            )}
+            <button type="button" className="btn btn--sm btn--ghost" onClick={() => void handleCreateSavedView()} disabled={savedViewsSaving}>
+              {savedViewsSaving ? "A guardar…" : "Guardar vista atual como…"}
             </button>
-          )}
-          <button type="button" className="btn btn--sm btn--ghost" onClick={() => void handleCreateSavedView()} disabled={savedViewsSaving}>
-            {savedViewsSaving ? "A guardar…" : "Guardar vista atual como…"}
-          </button>
-          <button type="button" className="btn btn--sm" onClick={handleSavePreferences} disabled={preferenceSaving || preferenceStatus === "loading"}>
-            {preferenceSaving ? "A guardar…" : preferenceSaved ? "Vista fixada" : "Fixar vista"}
-          </button>
-          <button type="button" className="btn btn--sm btn--ghost" onClick={() => void handleResetPreferences()} disabled={preferenceSaving}>
-            Repor vista
-          </button>
-          {savedViewsActionError && <span className="small text-danger" role="alert">{savedViewsActionError}</span>}
+            <button type="button" className="btn btn--sm btn--primary" onClick={handleSavePreferences} disabled={preferenceSaving || preferenceStatus === "loading"}>
+              {preferenceSaving ? "A guardar…" : preferenceSaved ? "Vista fixada" : "Fixar vista"}
+            </button>
+            <button type="button" className="btn btn--sm btn--ghost" onClick={() => void handleResetPreferences()} disabled={preferenceSaving}>
+              Repor vista
+            </button>
+            {savedViewsActionError && <span className="small text-danger" role="alert">{savedViewsActionError}</span>}
+          </div>
         </div>
-      </div>
+      </section>
 
       {refreshing && data && (
         <div role="status" aria-label="A atualizar obras…" aria-live="polite" className="small muted">
@@ -668,12 +740,19 @@ export default function Works() {
 
       {data && (
         <>
-          <p className="small muted" aria-live="polite" style={{ margin: "0 0 8px" }}>
-            {formatIsoPt(win.from)} a {formatIsoPt(win.to)} · {data.summary.works} obra{data.summary.works === 1 ? "" : "s"}
-            {data.summary.conflicts > 0 && <> · <strong className="text-danger">{data.summary.conflicts} em conflito</strong></>}
-            {data.summary.estimated > 0 && <> · {data.summary.estimated} com datas estimadas</>}
-            {data.summary.unscheduled > 0 && <> · {data.summary.unscheduled} por planear</>}
-          </p>
+          <div className="works__timeline-meta">
+            <p className="small muted" aria-live="polite">
+              {formatIsoPt(win.from)} a {formatIsoPt(win.to)} · {data.summary.works} obra{data.summary.works === 1 ? "" : "s"}
+              {data.summary.conflicts > 0 && <> · <strong className="text-danger">{data.summary.conflicts} em conflito</strong></>}
+              {data.summary.estimated > 0 && <> · {data.summary.estimated} com datas estimadas</>}
+              {data.summary.unscheduled > 0 && <> · {data.summary.unscheduled} por planear</>}
+            </p>
+            {(data.works.length > 0 || showIdle) && (
+              <p className="works__scroll-instructions" id="works-scroll-help">
+                Desloque horizontalmente para ver o período completo; com o calendário focado, use as setas ← e →.
+              </p>
+            )}
+          </div>
 
           {data.works.length === 0 && !showIdle ? (
             <div className="card">
@@ -695,18 +774,29 @@ export default function Works() {
               />
             </div>
           ) : (
-            <div className="card" style={{ overflow: "hidden" }}>
-              <WorksTimeline
-                works={data.works}
-                installers={installers}
-                window={win}
-                zoom={zoom}
-                today={today}
-                statuses={statuses}
-                showIdle={showIdle}
-                onPlanChange={changePlan}
-                onOpenProject={(projectId) => openProjectOverlay(projectId)}
-              />
+            <div className="card works__timeline-card" style={{ overflow: "hidden" }}>
+              <div
+                className="works__timeline-viewport"
+                role="group"
+                aria-label="Linha do tempo. Use as setas esquerda e direita para deslocar horizontalmente."
+                aria-describedby="works-scroll-help"
+                tabIndex={0}
+                onKeyDown={handleTimelineViewportKeyDown}
+              >
+                <WorksTimeline
+                  works={data.works}
+                  installers={installers}
+                  window={win}
+                  zoom={zoom}
+                  density={density}
+                  today={today}
+                  statuses={statuses}
+                  showIdle={showIdle}
+                  selectedInstallerIds={installerIds}
+                  onPlanChange={changePlan}
+                  onOpenProject={(projectId) => openProjectOverlay(projectId)}
+                />
+              </div>
             </div>
           )}
 

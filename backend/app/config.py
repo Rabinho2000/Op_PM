@@ -16,7 +16,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["local", "test", "staging", "production"]
@@ -67,6 +67,15 @@ class Settings(BaseSettings):
         alias="DATABASE_URL",
     )
 
+    # Ferramenta embebida de dimensionamento: ficheiro privado opcional,
+    # servido apenas pelo endpoint protegido por `cable_design.view_costs`.
+    cable_tool_file: Path | None = Field(default=None, alias="CABLE_TOOL_FILE")
+    # Fotografias principais de projetos. O volume /app/data já existe em produção;
+    # o subdiretório é privado e pode ser redirecionado em testes via env.
+    project_photo_dir: Path = Field(default=Path("/app/data/project_photos"), alias="PROJECT_PHOTO_DIR")
+    # Pasta privada de fotografias e documentos do catálogo de inventário.
+    inventory_file_dir: Path = Field(default=Path("/app/data/inventory"), alias="INVENTORY_FILE_DIR")
+
     # --- Autenticação (Microsoft Entra ID) ---
     entra_tenant_id: str = Field(default="", alias="ENTRA_TENANT_ID")
     entra_client_id: str = Field(default="", alias="ENTRA_CLIENT_ID")
@@ -99,6 +108,13 @@ class Settings(BaseSettings):
     # resolved_entra_jit_link_by_email(): True em local/test, False em
     # staging/produção, a menos que definido aqui de propósito (D-029).
     entra_jit_link_by_email: bool | None = Field(default=None, alias="ENTRA_JIT_LINK_BY_EMAIL")
+
+    @field_validator("cable_tool_file", mode="before")
+    @classmethod
+    def _empty_cable_tool_file_is_none(cls, value: object) -> object:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        return value
 
     def resolved_entra_issuer(self) -> str:
         return self.entra_issuer or f"https://login.microsoftonline.com/{self.entra_tenant_id}/v2.0"
@@ -140,6 +156,11 @@ class Settings(BaseSettings):
     claude_enabled: bool = Field(default=False, alias="CLAUDE_ENABLED")
     claude_api_key: str = Field(default="", alias="CLAUDE_API_KEY")
     claude_model: str = Field(default="claude-sonnet-5", alias="CLAUDE_MODEL")
+
+    # --- Cifra das credenciais de portais por projeto (ver docs/PLANO_LICENCIAMENTO_SIM.md) ---
+    # Caminho de ficheiro com a chave Fernet (uma linha). Nunca um valor
+    # inline. Vazio: gravar/revelar uma password falha fechado (503).
+    oppm_secrets_key_file: str = Field(default="", alias="OPPM_SECRETS_KEY_FILE")
 
     # --- Mapa operacional (ver docs/MAP_AND_PLANNING.md) ---
     # Sem provider configurado, GET /api/map/data continua a devolver os

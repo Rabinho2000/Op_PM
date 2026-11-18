@@ -1,0 +1,200 @@
+.cable-tab__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.cable-tab__hint {
+  max-width: 90ch;
+}
+
+.cable-sld-viewer {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.cable-sld-viewer__controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cable-sld-viewer__zoom {
+  min-width: 48px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.cable-sld-viewer__viewport {
+  min-height: 360px;
+  max-height: min(70vh, 760px);
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--document-surface);
+  cursor: grab;
+  touch-action: none;
+}
+
+.cable-sld-viewer__viewport:active {
+  cursor: grabbing;
+}
+
+.cable-sld-viewer__canvas {
+  transform-origin: top left;
+  will-change: transform;
+}
+
+.cable-sld-viewer__canvas > svg {
+  display: block;
+  max-width: none;
+  background: var(--document-surface);
+}
+
+.cable-boards-list {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.cable-board {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: none;
+}
+
+.cable-board__header,
+.cable-board__totals {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cable-board__header h3 {
+  margin: 0;
+}
+
+.cable-board__header p {
+  margin: 4px 0 0;
+}
+
+.cable-board__grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.85fr) minmax(0, 1.6fr);
+  gap: 20px;
+  padding: 16px;
+}
+
+.cable-board__space {
+  min-width: 0;
+}
+
+.cable-board-space {
+  display: block;
+  min-height: 180px;
+  overflow: visible;
+  background: var(--document-surface);
+}
+
+.cable-board__details h4,
+.cable-board__components h4 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+}
+
+.cable-board__details h4:not(:first-child) {
+  margin-top: 18px;
+}
+
+.cable-board__table {
+  font-size: 0.86rem;
+}
+
+.cable-board__table th,
+.cable-board__table td {
+  white-space: normal;
+  vertical-align: top;
+}
+
+.cable-board__radius {
+  margin: 14px 0 0;
+}
+
+.cable-board__notes {
+  margin: 14px 0 0;
+  padding-left: 20px;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+.cable-board__components {
+  padding: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.cable-board__totals {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
+  color: var(--text-muted);
+}
+
+.cable-board__totals strong {
+  color: var(--text);
+}
+
+.cable-equipment__tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 560px;
+  margin: 16px 0;
+}
+
+.cable-equipment__tools label {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.cable-equipment__tools input {
+  flex: 1;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.cable-equipment__tabs {
+  margin-bottom: 16px;
+}
+
+.cable-equipment__panel {
+  min-width: 0;
+}
+
+.cable-equipment__table {
+  min-width: 980px;
+  font-size: 0.84rem;
+}
+
+@media (max-width: 860px) {
+  .cable-board__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cable-equipment__tools {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

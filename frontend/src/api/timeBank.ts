@@ -35,6 +35,24 @@ export interface TimeBankSummary {
 
 export type TimeBankProvenance = TimeBankJsonObject;
 
+export interface TimeBankMyEntryCreateInput {
+  work_date: string;
+  start_minute: number;
+  end_minute: number;
+  lunch_taken: boolean;
+}
+
+export interface TimeBankMyEntryPreview {
+  work_date: string;
+  calculation_mode: string;
+  balance_seconds: number;
+  warnings: TimeBankWarning[];
+  duplicate: boolean;
+}
+
+export type MyTimeBankEntryCreateInput = TimeBankMyEntryCreateInput;
+export type MyTimeBankEntryPreview = TimeBankMyEntryPreview;
+
 export interface TimeBankEntryRead {
   id: string;
   person_id: string;
@@ -53,6 +71,7 @@ export interface TimeBankEntryRead {
   created_by_user_id: string;
   occurred_at: string;
   reversal_of_id: string | null;
+  is_reversed: boolean;
 }
 
 export interface TimeBankAdjustmentRead {
@@ -67,12 +86,23 @@ export interface TimeBankAdjustmentRead {
   created_by_user_id: string;
   occurred_at: string;
   reversal_of_id: string | null;
+  is_reversed: boolean;
 }
 
 export interface TimeBankPage<T> {
   items: T[];
   total: number;
 }
+
+export interface TimeBankNoteRead {
+  id: string;
+  person_id: string;
+  body: string;
+  created_at: string;
+  author_display_name: string;
+}
+
+export type TimeBankNotePage = TimeBankPage<TimeBankNoteRead>;
 
 export interface TimeBankEntryCreateInput {
   person_id: string;
@@ -135,6 +165,7 @@ export interface TimeBankFilters {
   toDate?: string;
   limit?: number;
   offset?: number;
+  includeAnnulled?: boolean;
 }
 
 function queryString(values: Record<string, string | number | null | undefined>): string {
@@ -147,6 +178,12 @@ function queryString(values: Record<string, string | number | null | undefined>)
 }
 
 export const listTimeBankPeople = () => apiGet<TimeBankPerson[]>("/api/time-bank/people");
+
+export const listTimeBankNotes = (personId: string, limit = 20, offset = 0) =>
+  apiGet<TimeBankNotePage>(`/api/time-bank/notes${queryString({ person_id: personId, limit, offset })}`);
+
+export const createTimeBankNote = (personId: string, body: string) =>
+  apiPost<TimeBankNoteRead>("/api/time-bank/notes", { person_id: personId, body });
 
 export const getTimeBankSummary = ({
   personId,
@@ -169,6 +206,7 @@ export const listTimeBankEntries = (filters: TimeBankFilters = {}) =>
       to_date: filters.toDate,
       limit: filters.limit ?? 100,
       offset: filters.offset ?? 0,
+      include_annulled: filters.includeAnnulled === undefined ? undefined : String(filters.includeAnnulled),
     })}`
   );
 
@@ -180,11 +218,21 @@ export const listTimeBankAdjustments = (filters: TimeBankFilters = {}) =>
       to_date: filters.toDate,
       limit: filters.limit ?? 100,
       offset: filters.offset ?? 0,
+      include_annulled: filters.includeAnnulled === undefined ? undefined : String(filters.includeAnnulled),
     })}`
   );
 
 export const createTimeBankEntry = (payload: TimeBankEntryCreateInput) =>
   apiPost<TimeBankEntryRead>("/api/time-bank/entries", payload);
+
+export const previewMyTimeBankEntry = (payload: TimeBankMyEntryCreateInput) =>
+  apiPost<TimeBankMyEntryPreview>("/api/time-bank/my-entries/preview", payload);
+
+export const createMyTimeBankEntry = (payload: TimeBankMyEntryCreateInput) =>
+  apiPost<TimeBankEntryRead>("/api/time-bank/my-entries", payload);
+
+export const reverseMyTimeBankEntry = (entryId: string, reason: string) =>
+  apiPost<TimeBankEntryRead>(`/api/time-bank/my-entries/${encodeURIComponent(entryId)}/reverse`, { reason });
 
 export const reverseTimeBankEntry = (id: string, payload: { reason: string }) =>
   apiPost<TimeBankEntryRead>(`/api/time-bank/entries/${encodeURIComponent(id)}/reverse`, payload);

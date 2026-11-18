@@ -184,7 +184,8 @@ export const apiPut = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "PUT", body: JSON.stringify(body) });
 export const apiPost = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "POST", body: body !== undefined ? JSON.stringify(body) : undefined });
-export const apiDelete = <T>(path: string) => request<T>(path, { method: "DELETE" });
+export const apiDelete = <T>(path: string, body?: unknown) =>
+  request<T>(path, { method: "DELETE", ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
 export const apiUpload = <T>(path: string, formData: FormData) => requestUpload<T>(path, formData);
 
 export { ApiError };
@@ -254,6 +255,13 @@ export interface Person {
 
 export const listPeople = () => apiGet<Person[]>("/api/people");
 
+export interface EligibleProjectManager {
+  id: string;
+  display_name: string;
+}
+
+export const listEligibleProjectManagers = () => apiGet<EligibleProjectManager[]>("/api/projects/eligible-managers");
+
 // --- /api/projects ---
 
 export interface Project {
@@ -290,6 +298,9 @@ export interface Project {
   upac_connection_date_raw: string | null;
   award_year_raw: string | null;
   is_active: boolean;
+  deleted_at: string | null;
+  deleted_by_person_id: string | null;
+  entered_at: string | null;
   notes: string;
   has_pm: boolean;
   has_email: boolean;
@@ -311,9 +322,33 @@ export interface Project {
   can_manage_tasks: boolean;
   can_change_status: boolean;
   can_plan_work: boolean;
+  has_project_photo: boolean;
+  can_edit_project_photo: boolean;
+  can_delete: boolean;
+  can_restore: boolean;
   installer_name: string | null;
   installer_team_name: string | null;
   installer_team_leader_name: string | null;
+  // Licenciamento (D-105): flags efetivas calculadas no servidor (permissão + âmbito do projeto).
+  // O frontend não as deduz de /api/me nem de editable_fields.
+  can_edit_credentials: boolean;
+  can_reveal_credentials: boolean;
+  can_edit_sim_cards: boolean;
+  can_reveal_sim_secrets: boolean;
+  can_edit_surplus_contracts: boolean;
+  payments?: ProjectPayments | null;
+  can_edit_payments?: boolean;
+}
+
+export type PaymentMilestoneCode = "adjudicacao" | "entrada_obra" | "fim_obra" | "certificado_final";
+export type ProjectPayments = Record<PaymentMilestoneCode, boolean>;
+
+export interface ProjectPaymentMilestone {
+  milestone: PaymentMilestoneCode;
+  label: string;
+  received: boolean;
+  marked_at: string | null;
+  marked_by: string | null;
 }
 
 export type ProjectStatus = Project["status"];
@@ -348,6 +383,37 @@ export interface ProjectFilters {
   start_to?: string;
 }
 
+export interface ProjectCreateInput {
+  name: string;
+  client_name?: string;
+  client_contact?: string;
+  client_email?: string;
+  address?: string;
+  lat?: number;
+  lon?: number;
+  power_kwp?: number;
+  power_raw?: string;
+  pm_person_id?: string;
+  start_date?: string;
+  lifecycle_status?: string | null;
+  role?: string;
+  equipment_notes?: string;
+  injection_notes?: string;
+  om_notes?: string;
+  commercial_assumptions?: string;
+  award_year_raw?: string;
+  notes?: string;
+}
+
+export interface ProjectNameCandidate {
+  id: string;
+  name: string;
+}
+
+export const createProject = (body: ProjectCreateInput) => apiPost<Project>("/api/projects", body);
+export const checkProjectName = (name: string) =>
+  apiGet<ProjectNameCandidate[]>(`/api/projects/check-name?name=${encodeURIComponent(name)}`);
+
 export function listProjects(filters: ProjectFilters = {}): Promise<Project[]> {
   const params = new URLSearchParams();
   if (filters.pm_person_id) params.set("pm_person_id", filters.pm_person_id);
@@ -365,6 +431,28 @@ export const getProject = (id: string) => apiGet<Project>(`/api/projects/${id}`)
 export const updateProject = (id: string, changes: Partial<Project>) =>
   apiPatch<Project>(`/api/projects/${id}`, changes);
 export const getProjectHistory = (id: string) => apiGet<ProjectHistoryEntry[]>(`/api/projects/${id}/history`);
+export const getProjectPayments = (id: string) =>
+  apiGet<ProjectPaymentMilestone[]>(`/api/projects/${id}/payments`);
+export const updateProjectPayment = (id: string, milestone: PaymentMilestoneCode, received: boolean) =>
+  apiPut<ProjectPaymentMilestone>(`/api/projects/${id}/payments/${milestone}`, { received });
+export async function getProjectPhotoBlob(id: string): Promise<Blob> {
+  const res = await fetch(`${API_BASE_URL}/api/projects/${id}/photo`, { headers: await authHeaders() });
+  if (!res.ok) {
+    await handleResponse<void>(res);
+    throw new Error("Não foi possível carregar a fotografia.");
+  }
+  return res.blob();
+}
+export const uploadProjectPhoto = (id: string, file: File) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  return requestUpload<{ has_project_photo: boolean; content_type: string }>(`/api/projects/${id}/photo`, formData);
+};
+export const deleteProjectPhoto = (id: string) => apiDelete<void>(`/api/projects/${id}/photo`);
+export const deleteProject = (id: string, reason: string) =>
+  apiDelete<void>(`/api/projects/${id}`, { reason });
+export const listDeletedProjects = () => apiGet<Project[]>("/api/projects/deleted");
+export const restoreProject = (id: string) => apiPost<Project>(`/api/projects/${id}/restore`);
 
 // --- Instaladores, equipas e plano de obra (D-071) ---
 export interface InstallerTeam {
@@ -553,6 +641,7 @@ export interface ProcessStage {
   end_day: number | null;
   planned_start: string | null;
   planned_end: string | null;
+  completed_at: string | null;
   // done | overdue | active | upcoming | no_date
   status: string;
   can_update?: boolean;
@@ -592,6 +681,8 @@ export interface ProcessRead {
 export const getProjectProcess = (projectId: string) => apiGet<ProcessRead>(`/api/projects/${projectId}/process`);
 export const setProcessSubtaskDone = (projectId: string, subtaskId: string, done: boolean) =>
   apiPatch<ProcessRead>(`/api/projects/${projectId}/process/subtasks/${subtaskId}`, { done });
+export const setProcessStageSubtasksDone = (projectId: string, stageId: string, done: boolean) =>
+  apiPatch<ProcessRead>(`/api/projects/${projectId}/process/stages/${stageId}/subtasks`, { done });
 export const setProcessContactDone = (projectId: string, stageId: string, done: boolean) =>
   apiPatch<ProcessRead>(`/api/projects/${projectId}/process/stages/${stageId}/contact`, { done });
 
@@ -648,6 +739,8 @@ export interface WorksFilters {
   to: string;
   pm_person_id?: string;
   lifecycle_status?: string[];
+  installer_ids?: string[];
+  /** Legacy single-installer input; serialized using the canonical repeated installer_ids parameter. */
   installer_id?: string;
   team_id?: string;
 }
@@ -658,7 +751,9 @@ export interface WorksPreferences {
   zoom: WorksZoom;
   lifecycle_status: string[];
   pm_person_id: string | null;
-  installer_id: string | null;
+  installer_ids?: string[];
+  /** Present in old API responses and as a compatibility alias in current responses. */
+  installer_id?: string | null;
   team_id: string | null;
   show_idle: boolean;
 }
@@ -673,7 +768,9 @@ export interface SavedWorksView {
   zoom: WorksZoom;
   lifecycle_status: string[];
   pm_person_id: string | null;
-  installer_id: string | null;
+  installer_ids?: string[];
+  /** Present in old API responses and as a compatibility alias in current responses. */
+  installer_id?: string | null;
   team_id: string | null;
   show_idle: boolean;
   created_at: string;
@@ -695,7 +792,7 @@ export const applySavedWorksView = (id: string) =>
 export function getWorksCalendar(filters: WorksFilters): Promise<WorksCalendar> {
   const params = new URLSearchParams({ from: filters.from, to: filters.to });
   if (filters.pm_person_id) params.set("pm_person_id", filters.pm_person_id);
-  if (filters.installer_id) params.set("installer_id", filters.installer_id);
+  for (const id of filters.installer_ids ?? (filters.installer_id ? [filters.installer_id] : [])) params.append("installer_ids", id);
   if (filters.team_id) params.set("team_id", filters.team_id);
   for (const s of filters.lifecycle_status ?? []) params.append("lifecycle_status", s);
   return apiGet<WorksCalendar>(`/api/works/calendar?${params.toString()}`);
@@ -743,12 +840,14 @@ export interface TeamsView {
 export interface WorksTeamsFilters {
   date: string;
   days: number;
+  installer_ids?: string[];
+  /** Legacy single-installer input; serialized using the canonical repeated installer_ids parameter. */
   installer_id?: string;
 }
 
 export function getWorksTeams(filters: WorksTeamsFilters): Promise<TeamsView> {
   const params = new URLSearchParams({ date: filters.date, days: String(filters.days) });
-  if (filters.installer_id) params.set("installer_id", filters.installer_id);
+  for (const id of filters.installer_ids ?? (filters.installer_id ? [filters.installer_id] : [])) params.append("installer_ids", id);
   return apiGet<TeamsView>(`/api/works/teams?${params.toString()}`);
 }
 
@@ -1084,6 +1183,40 @@ export const approveAbsence = (id: string) => apiPost<Absence>(`/api/absences/${
 export const rejectAbsence = (id: string, note: string) => apiPost<Absence>(`/api/absences/${id}/reject`, { note });
 export const cancelAbsence = (id: string) => apiPost<Absence>(`/api/absences/${id}/cancel`);
 
+// --- /api/holidays ---
+
+export type HolidayScope = "nacional" | "municipal" | "empresa";
+
+export interface Holiday {
+  id: string;
+  date: string;
+  name: string;
+  scope: HolidayScope;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HolidayCreatePayload {
+  date: string;
+  name: string;
+  scope: HolidayScope;
+}
+
+export function listHolidays(from?: string, to?: string, includeInactive = false): Promise<Holiday[]> {
+  const params = new URLSearchParams();
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  if (includeInactive) params.set("include_inactive", "true");
+  const query = params.toString();
+  return apiGet<Holiday[]>(`/api/holidays${query ? `?${query}` : ""}`);
+}
+
+export const createHoliday = (payload: HolidayCreatePayload) => apiPost<Holiday>("/api/holidays", payload);
+export const updateHoliday = (id: string, payload: Partial<HolidayCreatePayload> & { is_active?: boolean }) =>
+  apiPatch<Holiday>(`/api/holidays/${id}`, payload);
+export const deleteHoliday = (id: string) => apiDelete<Holiday>(`/api/holidays/${id}`);
+
 // --- /api/dashboard ---
 
 export interface ProjectMini {
@@ -1150,16 +1283,60 @@ export interface DashboardSummary {
   pending_absences_count: number | null;
 }
 
+export interface DashboardWorkProject {
+  id: string;
+  name: string;
+  expected_start_date: string | null;
+  pm_display_name: string | null;
+  installer_display_name: string | null;
+  team_display_name: string | null;
+  next_task_title: string | null;
+  next_task_due_date: string | null;
+}
+
+export interface DashboardWorks {
+  construction: DashboardWorkProject[];
+  preparation: DashboardWorkProject[];
+}
+
 export const getDashboardSummary = () => apiGet<DashboardSummary>("/api/dashboard/summary");
+export const getDashboardWorks = () => apiGet<DashboardWorks>("/api/dashboard/works");
 
 // --- Inventário (MVP de Operações) ---
+
+export type InventoryOwner = "solcor" | "verde_milenar";
+export type InventoryLocationType = "central" | "project" | "vehicle" | "supplier" | "office";
+
+export const INVENTORY_OWNER_STORAGE_KEY = "op_pm_inventory_owner";
+
+export function getStoredInventoryOwner(): InventoryOwner {
+  try {
+    const stored = localStorage.getItem(INVENTORY_OWNER_STORAGE_KEY);
+    return stored === "verde_milenar" ? "verde_milenar" : "solcor";
+  } catch {
+    return "solcor";
+  }
+}
+
+export interface InventoryLocationStock {
+  location_id: string | null;
+  location_name: string;
+  physical_stock: string;
+}
 
 export interface InventoryItem {
   id: string;
   sku: string;
   name: string;
   unit: string;
-  category?: string | null;
+  category: string | null;
+  manufacturer?: string | null;
+  model?: string | null;
+  subcategory?: string | null;
+  power_w?: string | null;
+  cross_section_mm2?: string | null;
+  section_label?: string | null;
+  has_photo?: boolean;
   min_stock: string;
   preferred_supplier_id: string | null;
   lead_time_days: number | null;
@@ -1168,31 +1345,136 @@ export interface InventoryItem {
   available_stock: string;
   total_reserved: string;
   below_min_stock: boolean;
+  location_stocks?: InventoryLocationStock[];
 }
 
-export const listInventoryItems = () => apiGet<InventoryItem[]>("/api/inventory/items");
+export const listInventoryCategories = () => apiGet<string[]>("/api/inventory/categories");
+
+export interface InventoryCategoryImageInfo {
+  name: string;
+  has_custom_image: boolean;
+  image_version: string | null;
+}
+
+export interface InventoryCategoryImageUploadResult extends InventoryCategoryImageInfo {
+  content_type: string;
+}
+
+export const listInventoryCategoryDetails = () =>
+  apiGet<InventoryCategoryImageInfo[]>("/api/inventory/categories/details");
+
+export type InventoryItemDocumentKind = "datasheet" | "manual" | "guia" | "outro";
+
+export interface InventoryItemDocument {
+  id: string;
+  item_id: string;
+  kind: InventoryItemDocumentKind;
+  title: string;
+  filename: string;
+  content_type: string;
+  size: number;
+  created_by_person_id: string;
+  created_at: string;
+}
+
+async function getAuthenticatedBlob(path: string): Promise<Blob> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    headers: await authHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    await handleResponse<void>(res);
+    throw new Error("Não foi possível carregar a imagem.");
+  }
+  return res.blob();
+}
+
+export const getInventoryItemPhotoBlob = (itemId: string) =>
+  getAuthenticatedBlob(`/api/inventory/items/${encodeURIComponent(itemId)}/photo`);
+
+export const listInventoryItemDocuments = (itemId: string) =>
+  apiGet<InventoryItemDocument[]>(`/api/inventory/items/${encodeURIComponent(itemId)}/documents`);
+
+export const getInventoryItemDocumentBlob = (itemId: string, documentId: string) =>
+  getAuthenticatedBlob(
+    `/api/inventory/items/${encodeURIComponent(itemId)}/documents/${encodeURIComponent(documentId)}/download`,
+  );
+
+export const uploadInventoryItemDocument = (
+  itemId: string,
+  kind: InventoryItemDocumentKind,
+  title: string,
+  file: File,
+) => {
+  const formData = new FormData();
+  formData.append("kind", kind);
+  formData.append("title", title);
+  formData.append("file", file);
+  return apiUpload<InventoryItemDocument>(
+    `/api/inventory/items/${encodeURIComponent(itemId)}/documents`, formData,
+  );
+};
+
+export const deleteInventoryItemDocument = (itemId: string, documentId: string) =>
+  apiDelete<void>(
+    `/api/inventory/items/${encodeURIComponent(itemId)}/documents/${encodeURIComponent(documentId)}`,
+  );
+
+export const uploadInventoryItemPhoto = (itemId: string, file: File) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiUpload<{ has_photo: boolean; content_type: string }>(
+    `/api/inventory/items/${encodeURIComponent(itemId)}/photo`, formData,
+  );
+};
+
+export const deleteInventoryItemPhoto = (itemId: string) =>
+  apiDelete<void>(`/api/inventory/items/${encodeURIComponent(itemId)}/photo`);
+
+export const getInventoryCategoryImageBlob = (category: string, imageVersion?: string | null) => {
+  const versionQuery = imageVersion ? `?version=${encodeURIComponent(imageVersion)}` : "";
+  return getAuthenticatedBlob(
+    `/api/inventory/categories/${encodeURIComponent(category)}/image${versionQuery}`,
+  );
+};
+
+export const uploadInventoryCategoryImage = (category: string, file: File) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiUpload<InventoryCategoryImageUploadResult>(
+    `/api/inventory/categories/${encodeURIComponent(category)}/image`, formData,
+  );
+};
+
+export const deleteInventoryCategoryImage = (category: string) =>
+  apiDelete<void>(`/api/inventory/categories/${encodeURIComponent(category)}/image`);
+
+export const listInventoryItems = (owner: InventoryOwner = "solcor") =>
+  apiGet<InventoryItem[]>(`/api/inventory/items?owner=${owner}`);
 
 export interface InventoryLocation {
   id: string;
   code: string;
   name: string;
-  location_type: "central" | "project" | "vehicle" | "supplier" | "office" | string;
+  location_type: InventoryLocationType;
   project_id: string | null;
+  owner: InventoryOwner;
   is_active: boolean;
 }
 
 export interface InventoryCatalogHistoryEntry {
   id: string;
-  entity_type: "item" | "location" | string;
+  entity_type: "item" | "location";
   entity_id: string;
-  action: "create" | "edit" | "deactivate" | string;
+  action: "create" | "edit" | "deactivate";
   changes: Record<string, unknown>;
   changed_by_person_id: string | null;
   changed_by_person_name: string | null;
   changed_at: string;
 }
 
-export const listInventoryLocations = () => apiGet<InventoryLocation[]>("/api/inventory/locations");
+export const listInventoryLocations = (owner: InventoryOwner = "solcor") =>
+  apiGet<InventoryLocation[]>(`/api/inventory/locations?owner=${owner}`);
 
 export const listInventoryCatalogHistory = (filters: { entity_id?: string; entity_type?: "item" | "location" } = {}) => {
   const params = new URLSearchParams();
@@ -1202,29 +1484,42 @@ export const listInventoryCatalogHistory = (filters: { entity_id?: string; entit
   return apiGet<InventoryCatalogHistoryEntry[]>(`/api/inventory/catalog-history${query ? `?${query}` : ""}`);
 };
 
-export const createInventoryItem = (payload: {
+export interface InventoryItemCreate {
   sku: string;
   name: string;
-  unit: string;
+  unit?: string;
   category?: string | null;
+  manufacturer?: string | null;
+  model?: string | null;
+  subcategory?: string | null;
+  power_w?: string | null;
+  cross_section_mm2?: string | null;
   min_stock?: string;
   preferred_supplier_id?: string | null;
   lead_time_days?: number | null;
-}) => apiPost<InventoryItem>("/api/inventory/items", payload);
+}
 
-export const updateInventoryItem = (
-  id: string,
-  payload: Partial<{
-    sku: string;
-    name: string;
-    unit: string;
-    category: string | null;
-    min_stock: string;
-    preferred_supplier_id: string | null;
-    lead_time_days: number | null;
-    is_active: boolean;
-  }>,
-) => apiPatch<InventoryItem>(`/api/inventory/items/${id}`, payload);
+export interface InventoryItemUpdate {
+  sku?: string;
+  name?: string;
+  unit?: string;
+  category?: string | null;
+  manufacturer?: string | null;
+  model?: string | null;
+  subcategory?: string | null;
+  power_w?: string | null;
+  cross_section_mm2?: string | null;
+  min_stock?: string;
+  preferred_supplier_id?: string | null;
+  lead_time_days?: number | null;
+  is_active?: boolean;
+}
+
+export const createInventoryItem = (payload: InventoryItemCreate) =>
+  apiPost<InventoryItem>("/api/inventory/items", payload);
+
+export const updateInventoryItem = (id: string, payload: InventoryItemUpdate) =>
+  apiPatch<InventoryItem>(`/api/inventory/items/${id}`, payload);
 
 export const reactivateInventoryItem = (id: string) =>
   apiPatch<InventoryItem>(`/api/inventory/items/${id}`, { is_active: true });
@@ -1232,33 +1527,42 @@ export const reactivateInventoryItem = (id: string) =>
 export const deactivateInventoryItem = (id: string) =>
   apiPost<InventoryItem>(`/api/inventory/items/${id}/deactivate`);
 
-export const createInventoryLocation = (payload: {
+export interface InventoryLocationCreate {
   code: string;
   name: string;
-  location_type: "central" | "project" | "vehicle" | "supplier" | "office";
+  location_type: InventoryLocationType;
   project_id?: string | null;
-}) => apiPost<InventoryLocation>("/api/inventory/locations", payload);
+  owner?: InventoryOwner;
+}
 
-export const updateInventoryLocation = (
-  id: string,
-  payload: Partial<{
-    code: string;
-    name: string;
-    location_type: "central" | "project" | "vehicle" | "supplier" | "office";
-    project_id: string | null;
-    is_active: boolean;
-  }>,
-) => apiPatch<InventoryLocation>(`/api/inventory/locations/${id}`, payload);
+export interface InventoryLocationUpdate {
+  code?: string;
+  name?: string;
+  location_type?: InventoryLocationType;
+  project_id?: string | null;
+  owner?: InventoryOwner | null;
+  is_active?: boolean;
+}
+
+export const createInventoryLocation = (payload: InventoryLocationCreate) =>
+  apiPost<InventoryLocation>("/api/inventory/locations", payload);
+
+export const updateInventoryLocation = (id: string, payload: InventoryLocationUpdate) =>
+  apiPatch<InventoryLocation>(`/api/inventory/locations/${id}`, payload);
 
 export const deactivateInventoryLocation = (id: string) =>
   apiPost<InventoryLocation>(`/api/inventory/locations/${id}/deactivate`);
 
-export const createOpeningStock = (payload: {
+export interface OpeningStockCreate {
   item_id: string;
   quantity: string;
   reference: string;
   idempotency_key: string;
-}) => apiPost<InventoryMovement>("/api/inventory/opening-stock", payload);
+  location_id?: string | null;
+}
+
+export const createOpeningStock = (payload: OpeningStockCreate, owner: InventoryOwner = "solcor") =>
+  apiPost<InventoryMovement>(`/api/inventory/opening-stock?owner=${owner}`, payload);
 
 // --- Pedidos de material a fornecedores (D-067) ---
 // A máquina de estados vive no servidor: `allowed_actions` diz o que ESTE
@@ -1380,31 +1684,37 @@ export interface InventoryMovement {
   unit_cost: string | null;
   reference: string;
   idempotency_key: string | null;
+  reversal_of_movement_id: string | null;
   created_by_person_id: string | null;
   created_at: string;
   item_name: string | null;
   project_name: string | null;
-  reversal_of_movement_id?: string | null;
+}
+
+export interface InventoryMovementCreate {
+  item_id: string;
+  movement_type: string;
+  quantity: string;
+  location_id?: string | null;
+  destination_location_id?: string | null;
+  reference?: string;
+  unit_cost?: string | null;
+  idempotency_key?: string | null;
 }
 
 export function listInventoryMovements(
-  filters: { item_id?: string; project_id?: string; movement_type?: string } = {},
+  filters: { item_id?: string; project_id?: string; movement_type?: string; owner?: InventoryOwner } = {},
 ): Promise<InventoryMovement[]> {
   const params = new URLSearchParams();
   if (filters.item_id) params.set("item_id", filters.item_id);
   if (filters.project_id) params.set("project_id", filters.project_id);
   if (filters.movement_type) params.set("movement_type", filters.movement_type);
-  const qs = params.toString();
-  return apiGet<InventoryMovement[]>(`/api/inventory/movements${qs ? `?${qs}` : ""}`);
+  params.set("owner", filters.owner ?? "solcor");
+  return apiGet<InventoryMovement[]>(`/api/inventory/movements?${params.toString()}`);
 }
 
-export const createCentralMovement = (payload: {
-  item_id: string;
-  movement_type: "entrada" | "ajuste";
-  quantity: string;
-  reference?: string;
-  unit_cost?: string;
-}) => apiPost<InventoryMovement>("/api/inventory/movements", payload);
+export const createCentralMovement = (payload: InventoryMovementCreate) =>
+  apiPost<InventoryMovement>("/api/inventory/movements", payload);
 
 export interface ProjectMaterialRequirement {
   id: string;
@@ -1413,7 +1723,9 @@ export interface ProjectMaterialRequirement {
   quantity_required: string;
   notes: string;
   source: string;
+  created_by_person_id: string | null;
   created_at: string;
+  updated_at: string;
   item_name: string | null;
   item_unit: string | null;
   reserved: string;
@@ -1422,8 +1734,6 @@ export interface ProjectMaterialRequirement {
   available_stock_sufficient: boolean;
 }
 
-// Material fisicamente na instalação (D-064) — independente da reserva:
-// inclui excedentes sem "necessidade" associada.
 export interface ProjectOnSite {
   item_id: string;
   item_name: string | null;
@@ -1438,41 +1748,64 @@ export interface ProjectInventorySummary {
   on_site: ProjectOnSite[];
 }
 
-export const getProjectInventory = (projectId: string) =>
-  apiGet<ProjectInventorySummary>(`/api/projects/${projectId}/inventory`);
+export const getProjectInventory = (projectId: string, owner: InventoryOwner = "solcor") =>
+  apiGet<ProjectInventorySummary>(`/api/projects/${projectId}/inventory?owner=${owner}`);
+
+export interface ProjectMaterialRequirementCreate {
+  item_id: string;
+  quantity_required: string;
+  notes?: string;
+}
+
+export interface ProjectMaterialRequirementUpdate {
+  quantity_required?: string;
+  notes?: string;
+}
 
 export const createMaterialRequirement = (
   projectId: string,
-  payload: { item_id: string; quantity_required: string; notes?: string },
-) => apiPost<ProjectMaterialRequirement>(`/api/projects/${projectId}/inventory/requirements`, payload);
+  payload: ProjectMaterialRequirementCreate,
+  owner: InventoryOwner = "solcor",
+) => apiPost<ProjectMaterialRequirement>(`/api/projects/${projectId}/inventory/requirements?owner=${owner}`, payload);
 
 export const updateMaterialRequirement = (
   projectId: string,
   requirementId: string,
-  payload: { quantity_required?: string; notes?: string },
+  payload: ProjectMaterialRequirementUpdate,
 ) => apiPatch<ProjectMaterialRequirement>(`/api/projects/${projectId}/inventory/requirements/${requirementId}`, payload);
+
+export interface ProjectInventoryOperationCreate {
+  item_id: string;
+  quantity: string;
+  reference?: string;
+  idempotency_key?: string | null;
+  owner?: InventoryOwner;
+}
 
 function projectInventoryOperation(
   projectId: string,
   action: "reserve" | "consume" | "release" | "return" | "deliver" | "collect",
-  payload: { item_id: string; quantity: string; reference?: string },
+  payload: ProjectInventoryOperationCreate,
 ) {
-  return apiPost<InventoryMovement>(`/api/projects/${projectId}/inventory/${action}`, payload);
+  return apiPost<InventoryMovement>(`/api/projects/${projectId}/inventory/${action}`, {
+    ...payload,
+    owner: payload.owner ?? "solcor",
+  });
 }
 
-export const reserveProjectMaterial = (projectId: string, payload: { item_id: string; quantity: string; reference?: string }) =>
+export const reserveProjectMaterial = (projectId: string, payload: ProjectInventoryOperationCreate) =>
   projectInventoryOperation(projectId, "reserve", payload);
-export const consumeProjectMaterial = (projectId: string, payload: { item_id: string; quantity: string; reference?: string }) =>
+export const consumeProjectMaterial = (projectId: string, payload: ProjectInventoryOperationCreate) =>
   projectInventoryOperation(projectId, "consume", payload);
-export const releaseProjectMaterial = (projectId: string, payload: { item_id: string; quantity: string; reference?: string }) =>
+export const releaseProjectMaterial = (projectId: string, payload: ProjectInventoryOperationCreate) =>
   projectInventoryOperation(projectId, "release", payload);
-export const returnProjectMaterial = (projectId: string, payload: { item_id: string; quantity: string; reference?: string }) =>
+export const returnProjectMaterial = (projectId: string, payload: ProjectInventoryOperationCreate) =>
   projectInventoryOperation(projectId, "return", payload);
 // Entrega/recolha (D-064): localização física do material. Não alteram o
 // stock central nem a reserva; recolher não pode exceder o que está no local.
-export const deliverProjectMaterial = (projectId: string, payload: { item_id: string; quantity: string; reference?: string }) =>
+export const deliverProjectMaterial = (projectId: string, payload: ProjectInventoryOperationCreate) =>
   projectInventoryOperation(projectId, "deliver", payload);
-export const collectProjectMaterial = (projectId: string, payload: { item_id: string; quantity: string; reference?: string }) =>
+export const collectProjectMaterial = (projectId: string, payload: ProjectInventoryOperationCreate) =>
   projectInventoryOperation(projectId, "collect", payload);
 
 export const reverseProjectMovement = (projectId: string, movementId: string, reason?: string) =>
@@ -1542,6 +1875,47 @@ export interface PerformanceSummary {
   goals: GoalPeriod[];
   portfolio: PortfolioBreakdown;
   yearly: YearlyIndicator[];
+}
+
+export interface CompletedTaskItem {
+  id: string;
+  title: string;
+  project_id: string;
+  project_name: string;
+  completed_at: string;
+}
+
+export interface CompletedTasksWeeklyPm {
+  pm_person_id: string | null;
+  pm_display_name: string | null;
+  task_count: number;
+  subtask_count: number;
+  tasks: CompletedTaskItem[];
+}
+
+export interface CompletedTasksWeekly {
+  iso_year: number;
+  iso_week: number;
+  week_start: string;
+  week_end: string;
+  pms: CompletedTasksWeeklyPm[];
+}
+
+export interface CompletedTasksWeeklyFilters {
+  from?: string;
+  to?: string;
+}
+
+function completedTasksWeeklyFiltersToParams(filters: CompletedTasksWeeklyFilters): string {
+  const params = new URLSearchParams();
+  if (filters.from) params.set("from", filters.from);
+  if (filters.to) params.set("to", filters.to);
+  return params.toString();
+}
+
+export function getCompletedTasksWeekly(filters: CompletedTasksWeeklyFilters = {}): Promise<CompletedTasksWeekly[]> {
+  const qs = completedTasksWeeklyFiltersToParams(filters);
+  return apiGet<CompletedTasksWeekly[]>(`/api/performance/completed-tasks-weekly${qs ? `?${qs}` : ""}`);
 }
 
 export interface PerformanceFilters {
@@ -1676,9 +2050,19 @@ export interface ProjectInstallationData {
   updated_at: string | null;
 }
 
+// Estado derivado no servidor (ver docs/PLANO_LICENCIAMENTO_SIM.md §1). Nunca recalculado no cliente.
+export type LicensingState =
+  | "sem_registo"
+  | "cadastrado"
+  | "certificacao_pedida"
+  | "inspecionado"
+  | "certificado_provisorio"
+  | "certificado_definitivo";
+
 export interface ProjectLicensingData {
   project_id: string;
   upac_number: string | null;
+  upac_registration_date: string | null;
   dgeg_number: string | null;
   cadastro_number: string | null;
   licensing_status: string | null;
@@ -1686,22 +2070,129 @@ export interface ProjectLicensingData {
   certification_request_date: string | null;
   inspecting_entity: string | null;
   inspection_date: string | null;
+  provisional_certificate_date: string | null;
   certificate_date: string | null;
   installer: string | null;
   commercializer: string | null;
   annual_production_kwh: number | null;
   comments: string;
+  licensing_state: LicensingState;
   updated_at: string | null;
 }
 
 export interface ProjectCommunicationData {
   project_id: string;
-  operator: string | null;
-  gsm_m2m_number: string | null;
-  card_identifier: string | null;
   communication_status: string | null;
+  whereversim_login: string | null;
   notes: string;
   updated_at: string | null;
+}
+
+// Credenciais de portais: a leitura nunca traz password (só `has_password`).
+export type PortalCode = "dgeg_login_geral" | "mastervantagem" | "outro";
+
+export interface PortalCredential {
+  id: string;
+  project_id: string;
+  portal: string;
+  username: string;
+  email: string | null;
+  has_password: boolean;
+  updated_at: string | null;
+}
+
+export interface PortalCredentialReveal {
+  id: string;
+  portal: string;
+  username: string;
+  password: string;
+}
+
+export interface PortalCredentialCreate {
+  portal: PortalCode;
+  username: string;
+  email?: string | null;
+  // Omitido = sem password.
+  password?: string;
+}
+
+export interface PortalCredentialUpdate {
+  portal?: PortalCode;
+  username?: string;
+  // Omitido = manter; null = limpar.
+  email?: string | null;
+  // Omitido = manter; string não vazia = substituir; null = remover a password.
+  password?: string | null;
+}
+
+// Cartões SIM (0..n por projeto). A leitura nunca traz PIN/PUK: só `has_pin`/`has_puk`.
+export type SimPurpose = "comunicacoes" | "dados_moveis" | "outro";
+
+export interface SimCard {
+  id: string;
+  project_id: string;
+  purpose: SimPurpose;
+  operator: string | null;
+  phone_number: string | null;
+  iccid: string | null;
+  verified_on_portal: boolean | null;
+  verified_date: string | null;
+  notes: string;
+  has_pin: boolean;
+  has_puk: boolean;
+  updated_at: string | null;
+}
+
+export interface SimCardCreate {
+  purpose: SimPurpose;
+  operator?: string | null;
+  phone_number?: string | null;
+  iccid?: string | null;
+  verified_on_portal?: boolean | null;
+  verified_date?: string | null;
+  notes?: string | null;
+  // Omitido = sem PIN/PUK. String vazia ou null com o campo explícito = sem valor.
+  pin?: string | null;
+  puk?: string | null;
+}
+
+// PATCH: campos omitidos mantêm-se. `pin`/`puk` omitidos = mantêm; `null`/"" = removem.
+export type SimCardUpdate = Partial<SimCardCreate>;
+
+export interface SimCardReveal {
+  id: string;
+  pin: string | null;
+  puk: string | null;
+}
+
+// Contratos de venda de excedente.
+export interface SurplusContract {
+  id: string;
+  project_id: string;
+  commercializer: string | null;
+  contract_type: string | null;
+  contract_sent_date: string | null;
+  signed_received_date: string | null;
+  sent_to_commercializer_date: string | null;
+  status: string | null;
+  duration_months: number | null;
+  start_date: string | null;
+  end_date: string | null;
+  notes: string;
+  updated_at: string | null;
+}
+
+export interface SurplusContractInput {
+  commercializer: string | null;
+  contract_type: string | null;
+  contract_sent_date: string | null;
+  signed_received_date: string | null;
+  sent_to_commercializer_date: string | null;
+  status: string | null;
+  duration_months: number | null;
+  start_date: string | null;
+  end_date: string | null;
+  notes: string | null;
 }
 
 export const getProjectInstallationData = (projectId: string) =>
@@ -1718,6 +2209,142 @@ export const getProjectCommunicationData = (projectId: string) =>
   apiGet<ProjectCommunicationData>(`/api/projects/${projectId}/communication-data`);
 export const updateProjectCommunicationData = (projectId: string, changes: Partial<ProjectCommunicationData>) =>
   apiPatch<ProjectCommunicationData>(`/api/projects/${projectId}/communication-data`, changes);
+
+// --- Ficha de segurança da obra ---
+export type SafetySheetRoofType =
+  | "telha_ceramica"
+  | "chapa_sandwich"
+  | "chapa_simples_fibrocimento"
+  | "laje_terraco"
+  | "solo"
+  | "outro";
+export type SafetySheetAccessMethod = "escada" | "andaime" | "plataforma_elevatoria" | "outro";
+export type SafetySheetRisk =
+  | "queda_altura"
+  | "eletrico_dc_ac"
+  | "fragil_claraboias"
+  | "condicoes_meteorologicas"
+  | "outro";
+export type SafetySheetMeasure =
+  | "linha_vida"
+  | "arnes"
+  | "capacete"
+  | "luvas_dieleticas"
+  | "calcado"
+  | "guarda_corpos"
+  | "outro";
+
+export interface SafetySheetWorker {
+  person_id: string | null;
+  name: string;
+  installer_id: string | null;
+  team_id: string | null;
+}
+
+export interface SafetySheetRead {
+  project_id: string;
+  version: number;
+  roof_type: SafetySheetRoofType | null;
+  roof_other: string | null;
+  approximate_height_m: number | null;
+  access_method: SafetySheetAccessMethod | null;
+  access_other: string | null;
+  risks: SafetySheetRisk[];
+  risk_other: string | null;
+  safety_measures: SafetySheetMeasure[];
+  measure_other: string | null;
+  workers: SafetySheetWorker[];
+  safety_responsible: string | null;
+  emergency_contacts: string | null;
+  observations: string | null;
+  work_start_date: string | null;
+  work_end_date: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface SafetySheetPrefillRead {
+  project_id: string;
+  workers: SafetySheetWorker[];
+}
+
+export interface SafetySheetUpdate {
+  expected_version: number;
+  roof_type: SafetySheetRoofType | null;
+  roof_other: string | null;
+  approximate_height_m: number | null;
+  access_method: SafetySheetAccessMethod | null;
+  access_other: string | null;
+  risks: SafetySheetRisk[];
+  risk_other: string | null;
+  safety_measures: SafetySheetMeasure[];
+  measure_other: string | null;
+  workers: SafetySheetWorker[];
+  safety_responsible: string | null;
+  emergency_contacts: string | null;
+  observations: string | null;
+  work_start_date: string | null;
+  work_end_date: string | null;
+}
+
+export const getSafetySheet = (projectId: string) =>
+  apiGet<SafetySheetRead>(`/api/projects/${projectId}/safety-sheet`);
+export const updateSafetySheet = (projectId: string, body: SafetySheetUpdate) =>
+  apiPut<SafetySheetRead>(`/api/projects/${projectId}/safety-sheet`, body);
+export const prefillSafetySheetWorkers = (projectId: string) =>
+  apiGet<SafetySheetPrefillRead>(`/api/projects/${projectId}/safety-sheet/workers-prefill`);
+
+async function requestHtml(path: string): Promise<string> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    headers: { Accept: "text/html", ...(await authHeaders()) },
+  });
+  if (res.status === 401 && getActiveMsalAccount() !== null) redirectToExpiredSession();
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      detail = formatApiDetail(body.detail) ?? detail;
+    } catch {
+      // Resposta não-JSON: mantém o statusText.
+    }
+    throw new ApiError(res.status, detail);
+  }
+  return res.text();
+}
+
+export const getSafetySheetPrintHtml = (projectId: string) =>
+  requestHtml(`/api/projects/${projectId}/safety-sheet/print`);
+
+export const listProjectCredentials = (projectId: string) =>
+  apiGet<PortalCredential[]>(`/api/projects/${projectId}/credentials`);
+export const createProjectCredential = (projectId: string, body: PortalCredentialCreate) =>
+  apiPost<PortalCredential>(`/api/projects/${projectId}/credentials`, body);
+export const updateProjectCredential = (projectId: string, credentialId: string, body: PortalCredentialUpdate) =>
+  apiPatch<PortalCredential>(`/api/projects/${projectId}/credentials/${credentialId}`, body);
+export const deleteProjectCredential = (projectId: string, credentialId: string) =>
+  apiDelete<void>(`/api/projects/${projectId}/credentials/${credentialId}`);
+export const revealProjectCredential = (projectId: string, credentialId: string) =>
+  apiPost<PortalCredentialReveal>(`/api/projects/${projectId}/credentials/${credentialId}/reveal`);
+
+export const listProjectSimCards = (projectId: string) =>
+  apiGet<SimCard[]>(`/api/projects/${projectId}/sim-cards`);
+export const createProjectSimCard = (projectId: string, body: SimCardCreate) =>
+  apiPost<SimCard>(`/api/projects/${projectId}/sim-cards`, body);
+export const updateProjectSimCard = (projectId: string, simId: string, body: SimCardUpdate) =>
+  apiPatch<SimCard>(`/api/projects/${projectId}/sim-cards/${simId}`, body);
+export const deleteProjectSimCard = (projectId: string, simId: string) =>
+  apiDelete<void>(`/api/projects/${projectId}/sim-cards/${simId}`);
+export const revealProjectSimCard = (projectId: string, simId: string) =>
+  apiPost<SimCardReveal>(`/api/projects/${projectId}/sim-cards/${simId}/reveal`);
+
+export const listSurplusContracts = (projectId: string) =>
+  apiGet<SurplusContract[]>(`/api/projects/${projectId}/surplus-contracts`);
+export const createSurplusContract = (projectId: string, body: Partial<SurplusContractInput>) =>
+  apiPost<SurplusContract>(`/api/projects/${projectId}/surplus-contracts`, body);
+export const updateSurplusContract = (projectId: string, contractId: string, body: Partial<SurplusContractInput>) =>
+  apiPatch<SurplusContract>(`/api/projects/${projectId}/surplus-contracts/${contractId}`, body);
+export const deleteSurplusContract = (projectId: string, contractId: string) =>
+  apiDelete<void>(`/api/projects/${projectId}/surplus-contracts/${contractId}`);
 
 // --- Mapa operacional ---
 
@@ -1949,7 +2576,10 @@ export interface Supplier extends MapSupplier {
   notes: string;
   // Vários tipos por fornecedor, por ordem alfabética.
   material_types: string[];
+  company_codes: SupplierCompanyCode[];
 }
+
+export type SupplierCompanyCode = "solcor" | "verde_milenar";
 
 export interface SupplierInput {
   name: string;
@@ -1968,6 +2598,7 @@ export interface SupplierInput {
   materials: string;
   notes: string;
   material_types: string[];
+  company_codes: SupplierCompanyCode[];
   is_active: boolean;
 }
 
@@ -1982,6 +2613,7 @@ export interface SupplierFilters {
   q?: string;
   material_type?: string;
   is_active?: boolean;
+  company_code?: SupplierCompanyCode | "unclassified";
 }
 
 export function listSuppliers(filters: SupplierFilters = {}): Promise<Supplier[]> {
@@ -1989,6 +2621,7 @@ export function listSuppliers(filters: SupplierFilters = {}): Promise<Supplier[]
   if (filters.q) params.set("q", filters.q);
   if (filters.material_type) params.set("material_type", filters.material_type);
   if (filters.is_active !== undefined) params.set("is_active", String(filters.is_active));
+  if (filters.company_code) params.set("company_code", filters.company_code);
   const qs = params.toString();
   return apiGet<Supplier[]>(`/api/suppliers${qs ? `?${qs}` : ""}`);
 }
@@ -2041,6 +2674,7 @@ export interface CalendarEvent {
   created_at: string;
   project_name: string | null;
   project_url?: string | null;
+  project_context_hidden?: boolean;
   task_title: string | null;
   assigned_to_display_name: string | null;
   assigned_to_display_names?: string[];

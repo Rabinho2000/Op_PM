@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 
 from app.cli.ingest_staging import IngestionError, assert_file_is_not_trackable_by_git
 from app.db import SessionLocal
-from app.models.supplier import Supplier, SupplierContact
+from app.models.supplier import Supplier, SupplierCompanyAssociation, SupplierContact
 from app.schemas.suppliers import SupplierCreate
 from app.services import suppliers as service
 
@@ -63,6 +63,8 @@ def load_suppliers(db: Session, entries: list[dict]) -> dict:
             continue
 
         payload = data.model_dump()
+        has_company_codes = "company_codes" in raw
+        company_codes = payload.pop("company_codes", [])
         contacts_payload = payload.pop("contacts", [])
         existing = service.find_supplier_by_name(db, data.name)
         if existing is None:
@@ -70,6 +72,7 @@ def load_suppliers(db: Session, entries: list[dict]) -> dict:
             supplier = Supplier(**payload)
             supplier.contacts = _build_contacts(contacts_payload)
             supplier.material_types = service.get_or_create_material_types(db, types)
+            supplier.company_associations = [SupplierCompanyAssociation(company_code=code) for code in company_codes]
             db.add(supplier)
             db.flush()
             summary["created"] += 1
@@ -95,6 +98,13 @@ def load_suppliers(db: Session, entries: list[dict]) -> dict:
                 for position, contact in enumerate(new_contacts, start=start_position):
                     contact.position = position
                 existing.contacts.extend(new_contacts)
+                changed = True
+        if has_company_codes:
+            current_codes = {link.company_code for link in existing.company_associations}
+            if current_codes != set(company_codes):
+                existing.company_associations.clear()
+                db.flush()
+                existing.company_associations = [SupplierCompanyAssociation(company_code=code) for code in company_codes]
                 changed = True
         if changed:
             db.flush()

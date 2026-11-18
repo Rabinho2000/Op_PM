@@ -1,0 +1,17 @@
+.installer-multiselect__panel {
+  max-height: min(60vh, 360px);
+  overflow-y: auto;
+}
+
+@media (max-width: 760px) {
+  .installer-multiselect .select {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+
+  .installer-multiselect__option,
+  .installer-multiselect .multiselect__quick .btn {
+    min-height: 44px;
+  }
+}

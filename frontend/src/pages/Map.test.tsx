@@ -185,6 +185,19 @@ describe("classes CSS dos ícones do mapa", () => {
     expect(lightMarkup).toBe(darkMarkup);
   });
 
+  it("preserva os estados do painel em clusters de preparação e construção", () => {
+    const cluster = {
+      getAllChildMarkers: () => [
+        { options: { lifecycleStatus: "preparacao" } },
+        { options: { lifecycleStatus: "construcao" } },
+      ],
+      getChildCount: () => 2,
+    } as unknown as Parameters<typeof clusterIcon>[0];
+    const html = String(clusterIcon(cluster).options.html);
+
+    expect(html).toContain("map-cluster--lifecycle-mixed");
+  });
+
   it.each([
     { attentions: ["green", "yellow"] as MapAttention[], worst: "yellow", count: 2 },
     { attentions: ["green", "yellow", "red"] as MapAttention[], worst: "red", count: 3 },

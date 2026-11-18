@@ -18,6 +18,7 @@ class SavedViewCreate(BaseModel):
     lifecycle_status: list[StrictStr] = Field(default_factory=list)
     pm_person_id: uuid.UUID | None = None
     installer_id: uuid.UUID | None = None
+    installer_ids: list[uuid.UUID] = Field(default_factory=list)
     team_id: uuid.UUID | None = None
     show_idle: StrictBool = False
 
@@ -30,6 +31,7 @@ class SavedViewPatch(BaseModel):
     lifecycle_status: list[StrictStr] | None = None
     pm_person_id: uuid.UUID | None = None
     installer_id: uuid.UUID | None = None
+    installer_ids: list[uuid.UUID] | None = None
     team_id: uuid.UUID | None = None
     show_idle: StrictBool | None = None
 
@@ -43,6 +45,7 @@ class SavedViewRead(BaseModel):
     lifecycle_status: list[str]
     pm_person_id: uuid.UUID | None
     installer_id: uuid.UUID | None
+    installer_ids: list[uuid.UUID]
     team_id: uuid.UUID | None
     show_idle: bool
     created_at: dt.datetime

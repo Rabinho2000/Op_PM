@@ -48,17 +48,23 @@ export function LifecycleStatusControl({
   onChanged: (project: Project) => void;
 }) {
   const { notify } = useToast();
+  const currentStatus = project.lifecycle_status;
+  const knownCurrentStatus = currentStatus ? statuses.some((s) => s.code === currentStatus) : true;
   const [open, setOpen] = useState(false);
   const [choice, setChoice] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  function openDialog() {
-    setChoice(project.lifecycle_status ?? "");
+  function openDialog(nextChoice = project.lifecycle_status ?? "") {
+    setChoice(nextChoice);
     setNote("");
     setError(null);
     setOpen(true);
+  }
+
+  function handleStatusChange(nextChoice: string) {
+    if (nextChoice && nextChoice !== project.lifecycle_status) openDialog(nextChoice);
   }
 
   function handleSubmit(e: FormEvent) {
@@ -84,9 +90,30 @@ export function LifecycleStatusControl({
       <span style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <LifecycleBadge status={project.lifecycle_status} statuses={statuses} />
         {project.can_change_status && (
-          <button type="button" className="btn btn--sm" onClick={openDialog}>
-            Alterar estado
-          </button>
+          <label className="lifecycle-status__select-label">
+            <span className="sr-only">Estado do projeto</span>
+            <select
+              className="select lifecycle-status__select"
+              aria-label="Estado do projeto"
+              value={currentStatus ?? ""}
+              disabled={statuses.length === 0}
+              onChange={(event) => handleStatusChange(event.target.value)}
+            >
+              <option value="" disabled>
+                — estado atual: sem estado —
+              </option>
+              {currentStatus && !knownCurrentStatus && (
+                <option value={currentStatus} disabled>
+                  Estado atual: {currentStatus} (desconhecido)
+                </option>
+              )}
+              {statuses.map((s) => (
+                <option key={s.code} value={s.code}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
       </span>
       {open && (

@@ -75,7 +75,7 @@ def create_saved_view_endpoint(
     _require_view(ctx)
     _require_write(ctx)
     try:
-        return create_saved_view(db, ctx, body.model_dump())
+        return create_saved_view(db, ctx, body.model_dump(exclude_unset=True))
     except SavedViewPermissionError as exc:
         raise _permission_error(exc) from exc
     except SavedViewDuplicateError as exc:

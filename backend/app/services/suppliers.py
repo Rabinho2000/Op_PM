@@ -5,10 +5,17 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import func
+from sqlalchemy import exists, func
 from sqlalchemy.orm import Session
 
-from app.models.supplier import Supplier, SupplierContact, SupplierMaterialType, supplier_material_type_links
+from app.models.supplier import (
+    Supplier,
+    SupplierCompanyAssociation,
+    SupplierContact,
+    SupplierMaterialType,
+    supplier_material_type_links,
+)
+from app.schemas.suppliers import SUPPLIER_COMPANY_CODES
 from app.utils.text import clean_display, normalize_key
 
 
@@ -49,6 +56,7 @@ def list_suppliers(
     q: str | None = None,
     material_type: str | None = None,
     is_active: bool | None = None,
+    company_code: str | None = None,
 ) -> list[Supplier]:
     query = db.query(Supplier)
     if is_active is not None:
@@ -63,6 +71,15 @@ def list_suppliers(
                     SupplierMaterialType.id == supplier_material_type_links.c.material_type_id,
                 )
                 .filter(SupplierMaterialType.name_key == key)
+            )
+        )
+    if company_code == "unclassified":
+        query = query.filter(~exists().where(SupplierCompanyAssociation.supplier_id == Supplier.id))
+    elif company_code in SUPPLIER_COMPANY_CODES:
+        query = query.filter(
+            exists().where(
+                (SupplierCompanyAssociation.supplier_id == Supplier.id)
+                & (SupplierCompanyAssociation.company_code == company_code)
             )
         )
     suppliers = query.order_by(func.lower(Supplier.name)).all()
@@ -109,9 +126,11 @@ def _build_contacts(contacts: list[dict]) -> list[SupplierContact]:
 def create_supplier(db: Session, data: dict) -> Supplier:
     material_types = data.pop("material_types", [])
     contacts = data.pop("contacts", [])
+    company_codes = data.pop("company_codes", [])
     supplier = Supplier(**data)
     supplier.contacts = _build_contacts(contacts)
     supplier.material_types = get_or_create_material_types(db, material_types)
+    supplier.company_associations = [SupplierCompanyAssociation(company_code=code) for code in company_codes]
     db.add(supplier)
     db.commit()
     db.refresh(supplier)
@@ -121,6 +140,7 @@ def create_supplier(db: Session, data: dict) -> Supplier:
 def update_supplier(db: Session, supplier: Supplier, changes: dict) -> Supplier:
     material_types = changes.pop("material_types", None)
     contacts = changes.pop("contacts", None)
+    company_codes = changes.pop("company_codes", None)
     if contacts is not None:
         # A lista enviada substitui a anterior (mesma ordem).
         supplier.contacts = _build_contacts(contacts)
@@ -128,6 +148,12 @@ def update_supplier(db: Session, supplier: Supplier, changes: dict) -> Supplier:
         setattr(supplier, field_name, value)
     if material_types is not None:
         supplier.material_types = get_or_create_material_types(db, material_types)
+    if company_codes is not None:
+        # Delete old links before inserting replacements; shared codes overlap
+        # under the composite key and must not be inserted before DELETE runs.
+        supplier.company_associations.clear()
+        db.flush()
+        supplier.company_associations = [SupplierCompanyAssociation(company_code=code) for code in company_codes]
     db.commit()
     db.refresh(supplier)
     return supplier
