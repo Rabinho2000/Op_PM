@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -228,8 +229,8 @@ def _phase_and_stage(db: Session, project: Project) -> tuple[str, str]:
             phase_name = phase.name
     stages = (
         db.query(WorkflowStage)
-        # `True` literal: SQLAlchemy converte-o em `true()` (sem filtro de fase).
-        .filter(WorkflowStage.phase_id == project.current_phase_id if project.current_phase_id else True)  # type: ignore[arg-type]
+        # Sem fase atual: `true()` (sem filtro de fase).
+        .filter(WorkflowStage.phase_id == project.current_phase_id if project.current_phase_id else true())
         .order_by(WorkflowStage.sort_order, WorkflowStage.id)
         .all()
     )

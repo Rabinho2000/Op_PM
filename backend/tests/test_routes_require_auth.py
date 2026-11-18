@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import re
 
-import pytest
 from fastapi.routing import APIRoute
 
 from app.config import Settings
