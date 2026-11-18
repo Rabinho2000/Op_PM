@@ -331,6 +331,25 @@ O CI corre o pytest em SQLite e em PostgreSQL 16, e no frontend `tsc`, `vitest` 
 | 15 | ◐ Parcial | Feitos: autenticação em todas as rotas, validador Entra real, drift migrações/modelos (corrigidos 3 índices em falta no modelo) e `secret_box`. Falta o scheduler. |
 | 17 | ◐ Parcial | Backend feito (503 + log + timeout). Faltam os estados de erro no frontend (M4). |
 
+**Deploy da Fase 1 (2026-11-18, branch `fase1/integracao`, frentes A a E integradas):**
+- **Testes antes do deploy:**
+  - SQLite: 1 629 passaram, 23 foram ignorados, cobertura acima de 85 %.
+  - PostgreSQL: 1 649 passaram, 3 foram ignorados.
+  - Frontend: `tsc` sem erros e 825 testes Vitest a passar.
+  - ruff e mypy sem erros.
+- **Cutover para PostgreSQL e `APP_ENV=production`:**
+  - Indisponibilidade de cerca de 1 minuto.
+  - A cópia teve contagens e checksums iguais nas 109 tabelas (13 163 linhas), sem nenhuma linha rejeitada.
+  - Testes de fumo: `/health` em `production`/`postgresql`, 401 sem token, `/docs` em 404, 307 projetos e 11 utilizadores.
+  - O SQLite ficou parado no volume e serve de rollback.
+- **nginx:** passou para `stable-alpine` 1.30.7.
+- **Backup:** passou a `pg_dump -Fc`; o restauro foi ensaiado num PostgreSQL descartável e as contagens bateram certo.
+- **Pendentes:**
+  - `ENTRA_JIT_LINK_BY_EMAIL=true` é temporário; retirar quando os 4 utilizadores ativos sem `entra_object_id` tiverem entrado uma vez.
+  - O script de ensaio de restauro (`op_pm_restore_drill.sh`) ainda é para SQLite e tem de ser adaptado ao `pg_dump`.
+  - Falta o off-site.
+  - Alinhar os `server_default` entre modelos e migrações.
+
 ### Fase 2 — Trabalho estrutural (≈ 3–5 semanas)
 
 | # | Ação | Resolve | Esforço |
