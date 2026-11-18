@@ -48,6 +48,12 @@ def _config(direction: str) -> dict[str, object]:
     }
 
 
+def _sent_fields(config: dict[str, object]) -> dict[str, object]:
+    """O serviço completa campos opcionais com valores por defeito (ex.:
+    `row_options`); a comparação usa só os campos que o pedido enviou."""
+    return {key: config.get(key) for key in _config("asc")}
+
+
 def test_concurrent_first_preference_creation_returns_two_api_successes():
     setup = SessionLocal()
     try:
@@ -117,7 +123,7 @@ def test_concurrent_first_preference_creation_returns_two_api_successes():
         assert errors == []
         assert all(response is not None for response in results)
         assert sorted(response.status_code for response in responses) == [200, 200]
-        assert all(response.json()["config"] in payloads for response in responses)
+        assert all(_sent_fields(response.json()["config"]) in payloads for response in responses)
     finally:
         event.remove(engine, "before_cursor_execute", gate_initial_preference_read)
         app.dependency_overrides.pop(get_db, None)
@@ -130,7 +136,7 @@ def test_concurrent_first_preference_creation_returns_two_api_successes():
             .all()
         )
         assert len(rows) == 1
-        assert rows[0].config in payloads
+        assert _sent_fields(rows[0].config) in payloads
     finally:
         readback.close()
         cleanup = SessionLocal()

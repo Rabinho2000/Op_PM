@@ -98,6 +98,9 @@ SECRET_VALUES: dict[str, str] = {
 }
 
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+# Digests hexadecimais (ex.: SHA-256 do ficheiro no histórico): como os UUIDs, podem conter por
+# acaso os 4 dígitos de um PIN fictício sem que isso seja uma fuga.
+_HEX_DIGEST = re.compile(r"\b[0-9a-f]{32,}\b", re.IGNORECASE)
 
 # --- construção do .xlsx sintético ---------------------------------------------------------------
 
@@ -413,7 +416,7 @@ def assert_no_fake_values(*texts: str, tmp_path: Path | None = None, only_secret
     dígitos pode coincidir por acaso com 4 hex de um UUID, e isso não é uma fuga."""
     forbidden = SECRET_VALUES if only_secrets else FAKE_VALUES
     for text in texts:
-        scrubbed = _UUID.sub("<uuid>", text)
+        scrubbed = _HEX_DIGEST.sub("<digest>", _UUID.sub("<uuid>", text))
         if tmp_path is not None:
             scrubbed = scrubbed.replace(str(tmp_path), "<tmp>")
         leaked = sorted(name for name, value in forbidden.items() if value in scrubbed)

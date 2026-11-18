@@ -4,7 +4,7 @@ import json
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.models.installer import InstallerTeam
 from app.models.installer_access import InstallerAccessMembership
@@ -134,10 +134,13 @@ def save_safety_sheet(
     if project is None:
         raise LookupError("Projeto não encontrado.")
 
+    # selectinload, não joinedload: o PostgreSQL recusa FOR UPDATE no lado
+    # nullable de um LEFT OUTER JOIN. O lock fica só na linha da ficha (o
+    # projeto já está bloqueado acima) e os trabalhadores vêm numa 2.ª query.
     sheet = (
         db.query(ProjectSafetySheet)
         .populate_existing()
-        .options(joinedload(ProjectSafetySheet.workers))
+        .options(selectinload(ProjectSafetySheet.workers))
         .filter(ProjectSafetySheet.project_id == project_id)
         .with_for_update()
         .one_or_none()
