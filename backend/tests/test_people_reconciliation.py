@@ -6,7 +6,6 @@ com PM conhecido mas não resolvido.
 """
 from __future__ import annotations
 
-import json
 
 import pytest
 

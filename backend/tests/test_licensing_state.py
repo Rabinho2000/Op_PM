@@ -12,7 +12,6 @@ import sys
 import uuid
 from pathlib import Path
 
-import pytest
 
 from app.models.project import Project
 from app.models.project_data import ProjectLicensingData
@@ -46,7 +45,6 @@ def test_derive_licensing_state_each_stage():
         ("provisional_certificate_date", "certificado_provisorio"),
         ("certificate_date", "certificado_definitivo"),
     ]
-    import datetime as dt
 
     data = ProjectLicensingData()
     for field, expected in stages:
@@ -55,7 +53,6 @@ def test_derive_licensing_state_each_stage():
 
 
 def test_derive_licensing_state_uses_most_advanced_stage_not_order_of_entry():
-    import datetime as dt
 
     data = ProjectLicensingData()
     data.certificate_date = dt.date(2026, 3, 1)

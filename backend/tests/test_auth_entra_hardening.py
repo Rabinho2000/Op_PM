@@ -7,8 +7,6 @@ from __future__ import annotations
 from app.config import Settings
 from app.models.identity import AuthAuditLog, User
 from app.security.entra_auth import (
-    TEST_AUDIENCE,
-    TEST_ISSUER,
     get_token_validator,
     issue_mock_token,
 )

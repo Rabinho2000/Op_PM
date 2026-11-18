@@ -20,6 +20,9 @@ build/
 *.egg-info/
 .pytest_cache/
 .coverage
+.coverage.*
+.ruff_cache/
+.mypy_cache/
 htmlcov/
 *.eml
 *.ics

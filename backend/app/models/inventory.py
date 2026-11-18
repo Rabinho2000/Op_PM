@@ -317,7 +317,7 @@ class MaterialRequest(UUIDPk, TimestampMixin, Base):
     )
     notes: Mapped[str] = mapped_column(Text, default="")
 
-    items: Mapped[list["MaterialRequestItem"]] = relationship(back_populates="request")
+    items: Mapped[list[MaterialRequestItem]] = relationship(back_populates="request")
 
 
 class MaterialRequestItem(UUIDPk, TimestampMixin, Base):
@@ -339,7 +339,7 @@ class MaterialRequestItem(UUIDPk, TimestampMixin, Base):
     # alterando o total. Os TOTAIS continuam a 2 casas (D-018).
     unit_price: Mapped[Decimal | None] = mapped_column(UNIT_PRICE, nullable=True)
 
-    request: Mapped["MaterialRequest"] = relationship(back_populates="items")
+    request: Mapped[MaterialRequest] = relationship(back_populates="items")
 
 
 class MaterialRequestHistory(UUIDPk, Base):

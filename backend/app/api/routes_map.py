@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.models.map_ops import PickupPoint, ProjectIssue
-from app.models.supplier import Supplier
 from app.schemas.map import (
     ConvertIssueToTask,
     MapConfig,

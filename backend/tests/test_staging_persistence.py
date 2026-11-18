@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-from decimal import Decimal
 from pathlib import Path
 
 import pytest

@@ -33,7 +33,7 @@ class UserWorksPreference(UUIDPk, TimestampMixin, Base):
     )
     show_idle: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
-    user: Mapped["User"] = relationship()
+    user: Mapped[User] = relationship()
 
 
 from typing import TYPE_CHECKING

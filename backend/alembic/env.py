@@ -11,7 +11,7 @@ from alembic import context
 # qualquer diretório de trabalho.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import app.models  # noqa: E402  — regista todas as tabelas em Base.metadata
+import app.models  # noqa: E402, F401  — regista todas as tabelas em Base.metadata
 from app.config import get_settings  # noqa: E402
 from app.db import Base  # noqa: E402
 

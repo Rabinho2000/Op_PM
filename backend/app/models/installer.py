@@ -9,12 +9,16 @@ a equipa pertence ao instalador (chave estrangeira composta em `projects`).
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import GUID, Base
 from app.models.base import TimestampMixin, UUIDPk
+
+if TYPE_CHECKING:
+    from app.models.project import ProjectTeamAssignment
 
 
 class Installer(UUIDPk, TimestampMixin, Base):
@@ -25,7 +29,7 @@ class Installer(UUIDPk, TimestampMixin, Base):
     name_key: Mapped[str] = mapped_column(String(256), unique=True, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    teams: Mapped[list["InstallerTeam"]] = relationship(
+    teams: Mapped[list[InstallerTeam]] = relationship(
         back_populates="installer", order_by="InstallerTeam.name_key", lazy="selectin"
     )
 
@@ -46,6 +50,6 @@ class InstallerTeam(UUIDPk, TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     installer: Mapped[Installer] = relationship(back_populates="teams")
-    assignments: Mapped[list["ProjectTeamAssignment"]] = relationship(
+    assignments: Mapped[list[ProjectTeamAssignment]] = relationship(
         back_populates="team", viewonly=True
     )

@@ -161,7 +161,7 @@ class TeamAssignmentUpdate(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _at_least_one(self) -> "TeamAssignmentUpdate":
+    def _at_least_one(self) -> TeamAssignmentUpdate:
         if not self.model_fields_set:
             raise ValueError("Indique pelo menos um campo a alterar.")
         return self
@@ -242,7 +242,7 @@ class WorkPlanUpdate(BaseModel):
     work_dates_estimated: Literal[False] = False
 
     @model_validator(mode="after")
-    def _at_least_one(self) -> "WorkPlanUpdate":
+    def _at_least_one(self) -> WorkPlanUpdate:
         if not self.model_fields_set:
             raise ValueError("Indique pelo menos um campo a alterar.")
         return self

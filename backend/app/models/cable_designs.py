@@ -70,15 +70,15 @@ class CableDesign(UUIDPk, TimestampMixin, Base):
         GUID(), ForeignKey("people.id"), nullable=False
     )
 
-    project: Mapped["Project"] = relationship()
-    created_by: Mapped["Person"] = relationship(foreign_keys=[created_by_person_id])
-    revisions: Mapped[list["CableDesignRevision"]] = relationship(
+    project: Mapped[Project] = relationship()
+    created_by: Mapped[Person] = relationship(foreign_keys=[created_by_person_id])
+    revisions: Mapped[list[CableDesignRevision]] = relationship(
         back_populates="design",
         cascade="all, delete-orphan",
         passive_deletes=True,
         order_by="CableDesignRevision.rev",
     )
-    history: Mapped[list["CableDesignHistory"]] = relationship(
+    history: Mapped[list[CableDesignHistory]] = relationship(
         back_populates="design",
         cascade="all, delete-orphan",
         passive_deletes=True,
@@ -127,8 +127,8 @@ class CableDesignRevision(UUIDPk, TimestampMixin, Base):
     )
 
     design: Mapped[CableDesign] = relationship(back_populates="revisions")
-    approved_by: Mapped["Person | None"] = relationship(foreign_keys=[approved_by_person_id])
-    created_by: Mapped["Person"] = relationship(foreign_keys=[created_by_person_id])
+    approved_by: Mapped[Person | None] = relationship(foreign_keys=[approved_by_person_id])
+    created_by: Mapped[Person] = relationship(foreign_keys=[created_by_person_id])
 
 
 class CableDesignHistory(UUIDPk, Base):
@@ -151,7 +151,7 @@ class CableDesignHistory(UUIDPk, Base):
     )
 
     design: Mapped[CableDesign] = relationship(back_populates="history")
-    actor: Mapped["Person"] = relationship(foreign_keys=[actor_person_id])
+    actor: Mapped[Person] = relationship(foreign_keys=[actor_person_id])
 
 
 from typing import TYPE_CHECKING

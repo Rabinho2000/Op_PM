@@ -32,7 +32,6 @@ from app.security.permissions import (
     PermissionDenied,
     can_create_task,
     can_edit_task,
-    can_view_task,
     has_only_delegated_project_scope,
     is_installer_readonly_scope,
     installer_project_scope_conditions,

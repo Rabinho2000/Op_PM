@@ -45,7 +45,6 @@ def test_holidays_are_listed_by_inclusive_date_interval_and_can_be_deactivated(a
     baseline_outside = api_client.get(outside_url, headers=_headers(COMERCIAL))
     assert baseline_outside.status_code == 200, baseline_outside.text
     baseline_outside_items = baseline_outside.json()
-    baseline_outside_ids = {item["id"] for item in baseline_outside_items}
 
     created = api_client.post(
         "/api/holidays",

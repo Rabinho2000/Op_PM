@@ -4,7 +4,6 @@ Ver app/models/task.py e docs/DECISIONS.md (FASE A do mapa operacional).
 """
 from __future__ import annotations
 
-from app.models.people import Person
 from app.models.project import Project
 from app.models.task import (
     DEFAULT_TASK_TYPE_CATEGORIES,
