@@ -18,6 +18,7 @@ from typing import Literal, get_args
 
 from pydantic import Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 Environment = Literal["local", "test", "staging", "production"]
 
@@ -31,6 +32,17 @@ DEFAULT_DEV_SECRET_KEY = "dev-only-insecure-secret-change-me"
 # nunca com o mecanismo de utilizador de desenvolvimento, segredo por
 # omissão, ou SQLite. Ver docs/DECISIONS.md.
 HARDENED_ENVIRONMENTS: frozenset[Environment] = frozenset({"staging", "production"})
+
+
+def _read_secret_file(variable: str, path: str) -> str:
+    """Lê um segredo de um ficheiro. Falha com mensagem sem o conteúdo."""
+    try:
+        value = Path(path.strip()).read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ValueError(f"{variable}: não foi possível ler o ficheiro ({exc.strerror or type(exc).__name__})") from None
+    if not value:
+        raise ValueError(f"{variable}: o ficheiro está vazio")
+    return value
 
 
 class Settings(BaseSettings):
@@ -51,6 +63,19 @@ class Settings(BaseSettings):
         default=DEFAULT_DEV_SECRET_KEY,
         alias="SECRET_KEY",
         description="Nunca usar o valor por omissão fora de 'local'/'test'.",
+    )
+
+    # Segredos por ficheiro (Docker/Compose secrets): caminho de um ficheiro
+    # que contém o valor (uma linha; espaços/quebras de linha finais são
+    # ignorados). Evita pôr o segredo em variáveis de ambiente (visíveis em
+    # `docker inspect`). Se a variável direta E a variante _FILE estiverem
+    # definidas, o arranque falha: nunca se escolhe uma em silêncio.
+    secret_key_file: str = Field(default="", alias="SECRET_KEY_FILE")
+    database_url_file: str = Field(default="", alias="DATABASE_URL_FILE")
+    database_password_file: str = Field(
+        default="",
+        alias="DATABASE_PASSWORD_FILE",
+        description="Password da BD por ficheiro; só se aplica se DATABASE_URL não trouxer password.",
     )
 
     # Modo demonstração (D-051): só informativo para o frontend (banner
@@ -202,6 +227,34 @@ class Settings(BaseSettings):
         if self.app_env in ("local", "test"):
             return explicit or ["http://localhost:5173", "http://127.0.0.1:5173"]
         return explicit
+
+    @model_validator(mode="after")
+    def _load_secrets_from_files(self) -> Settings:
+        """Resolve SECRET_KEY_FILE, DATABASE_URL_FILE e DATABASE_PASSWORD_FILE.
+
+        Declarado ANTES de `_enforce_hardening_in_non_local_envs` (os
+        validadores 'after' correm pela ordem de declaração), para que a
+        validação de arranque veja sempre os valores finais. As mensagens de
+        erro referem só nomes de variáveis e caminhos, nunca o conteúdo."""
+        if self.secret_key_file.strip():
+            if "secret_key" in self.model_fields_set:
+                raise ValueError("SECRET_KEY e SECRET_KEY_FILE estão ambos definidos; use só um")
+            self.secret_key = _read_secret_file("SECRET_KEY_FILE", self.secret_key_file)
+        if self.database_url_file.strip():
+            if "database_url" in self.model_fields_set:
+                raise ValueError("DATABASE_URL e DATABASE_URL_FILE estão ambos definidos; use só um")
+            self.database_url = _read_secret_file("DATABASE_URL_FILE", self.database_url_file)
+        if self.database_password_file.strip():
+            password = _read_secret_file("DATABASE_PASSWORD_FILE", self.database_password_file)
+            url = make_url(self.database_url)
+            if url.password:
+                raise ValueError(
+                    "DATABASE_PASSWORD_FILE não se aplica: o DATABASE_URL já traz uma password"
+                )
+            if url.get_backend_name() == "sqlite":
+                raise ValueError("DATABASE_PASSWORD_FILE não se aplica a uma base SQLite")
+            self.database_url = url.set(password=password).render_as_string(hide_password=False)
+        return self
 
     @model_validator(mode="after")
     def _enforce_hardening_in_non_local_envs(self) -> Settings:

@@ -45,6 +45,12 @@ def _config(direction: str) -> dict[str, object]:
             "startFrom": "",
             "startTo": "",
         },
+        # A API devolve a configuração normalizada, com as opções de linha por omissão.
+        "row_options": {
+            "show_row_actions": True,
+            "show_warning_tags": True,
+            "inline_controls": True,
+        },
     }
 
 

@@ -94,6 +94,7 @@ Formato: **ID — título** · `ficheiro:linha` · problema → impacto → corr
   - Remover o `demo-setup` deste compose.
   - Fixar `ENTRA_JIT_LINK_BY_EMAIL=false` depois de ligar todos os utilizadores.
   - Definir um `SECRET_KEY` real.
+- **Estado (2026-11-18): preparado, cutover pendente.** `docker-compose.production.example.yml` (genérico) e um compose concreto fora do Git: `APP_ENV=production`, `DEMO_MODE=false`, segredos por ficheiro (`SECRET_KEY_FILE`, `DATABASE_PASSWORD_FILE`), `migrate` à parte (sem seed), PostgreSQL saudável antes do `migrate`. Ensaiado numa cópia; procedimento em `docs/RUNBOOK_CUTOVER_POSTGRES.md`. Falta correr o cutover e decidir a ligação dos utilizadores Entra sem `entra_object_id` (JIT desligado em production).
 
 **C2 — O relatório semanal ao cliente quase nunca dispara e, quando disparar, pode ser enviado em duplicado**
 - `backend/app/services/client_report_scheduler.py:32-35` (exige `hora == hh and minuto == mm`); `docker-compose.tailscale.yml:74` (`--interval 300`); `client_report_scheduler.py:39-47` (`db.rollback()` por projeto, `commit` único no fim).
@@ -158,11 +159,13 @@ Formato: **ID — título** · `ficheiro:linha` · problema → impacto → corr
 - **Impacto:** se `APP_ENV` for omitido ou estiver mal escrito, a API aceita `X-Dev-User-Email` e qualquer pessoa pode fazer-se passar pelo administrador.
 - **Correção:** por omissão, `APP_ENV=production`, e exigir `APP_ENV=local` de forma explícita para desenvolvimento. Em alternativa, recusar o arranque quando `APP_ENV` não está definido.
 - **Estado (Fase 1, frente A):** ✅ resolvido pela alternativa: `APP_ENV` é obrigatório e a app, o Alembic e as CLIs recusam arrancar sem ele (`ConfigurationError`). Os outros defaults (`AUTH_ENABLED`, `SECRET_KEY`, SQLite) só são aceitáveis em `local`/`test`, que agora têm de ser pedidos de forma explícita.
+- **Cutover (frente E):** o compose de produção fixa `APP_ENV=production` de forma explícita; a instância deixa de correr em `local` quando o cutover for feito.
 
 **A8 — Produção em SQLite com dois processos a escrever, e locks que o SQLite ignora**
 - `docker-compose.tailscale.yml:31, 51, 74` (o backend e o scheduler usam o mesmo ficheiro); `backend/app/services/safety_sheet.py:125-142` (`with_for_update()` sem efeito em SQLite; o comentário diz o contrário). Os testes de concorrência só correm em PostgreSQL.
 - **Impacto:** erros `database is locked`, perda de escrita na primeira gravação da ficha de segurança, e garantias de concorrência validadas num motor que não é o de produção.
 - **Correção:** migrar para PostgreSQL (o projeto já suporta e o CI já testa). Até lá, aplicar o padrão de "UPDATE vazio" que o inventário e o banco de horas já usam.
+- **Estado (2026-11-18): preparado, cutover pendente.** CLI `app.cli.migrate_sqlite_to_postgres` (esquema por Alembic, cópia em lotes, checksums por tabela, `--dry-run`, deteção de linhas rejeitáveis). Ensaio sobre um backup real: 109 tabelas e 12 943 linhas copiadas em cerca de 2 s, contagens e checksums iguais, sem linhas rejeitadas. A suíte pytest contra PostgreSQL passou (1596 testes, 0 falhas) depois de corrigidos o `FOR UPDATE` com `joinedload` da ficha de segurança (dava 500 em PostgreSQL) e dois testes que só o PostgreSQL apanha. Falta o cutover real.
 
 **A9 — Os backups não cobrem os ficheiros e ficam no mesmo host** — *parcialmente resolvido (Fase 1, 2026-11-18)*
 - O script de utilizador do servidor (fora do repo) passou a guardar, por execução, a BD (`sqlite.backup` + `integrity_check`, como antes), um tar.gz com todos os ficheiros do volume (`project_photos/`, `inventory/`, `outbox/` e outros), um manifesto (tabelas/linhas e ficheiros/bytes por diretório) e o `sha256` de cada artefacto. Retenção de 14 dias para tudo, falha com código diferente de zero e marca `LAST_OK`. Há um script de ensaio de restauro (volume descartável + `alembic current` + contagens contra o manifesto) e o runbook em [`BACKUP_RESTORE.md`](BACKUP_RESTORE.md).
@@ -312,8 +315,8 @@ O CI corre o pytest em SQLite e em PostgreSQL 16, e no frontend `tsc`, `vitest` 
 
 | # | Ação | Resolve | Esforço |
 |---|---|---|---|
-| 11 | Novo compose de produção: `APP_ENV=production`, sem `demo-setup`, `migrate` separado com backup prévio, `SECRET_KEY` real, JIT desligado | C1, A7 | 2 d |
-| 12 | Migrar de SQLite para PostgreSQL (o caminho de migração já existe), com ensaio em staging | A8 | 3–4 d |
+| 11 | Novo compose de produção: `APP_ENV=production`, sem `demo-setup`, `migrate` separado com backup prévio, `SECRET_KEY` real, JIT desligado (preparado, cutover pendente) | C1, A7 | 2 d |
+| 12 | Migrar de SQLite para PostgreSQL (o caminho de migração já existe), com ensaio em staging (preparado, cutover pendente) | A8 | 3–4 d |
 | 13 | Backups: incluir fotos, documentos e outbox; cópia off-site cifrada; ensaio de restauro; runbook | A9 | 1–2 d (fotos/documentos/outbox, ensaio e runbook feitos; falta off-site) |
 | 14 | Defaults fail-closed (`APP_ENV=production` por omissão) | A7 | 0,5 d |
 | 15 | Testes: autenticação em todas as rotas, validador Entra real, drift entre migrações e modelos, scheduler | Secção 4 | 2–3 d |
