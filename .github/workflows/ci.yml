@@ -46,6 +46,7 @@ jobs:
         working-directory: backend
     env:
       DATABASE_URL: "sqlite:///./data/ci_op_pm.db"
+      APP_ENV: "test"
       # Declarado explicitamente (mesmo aqui, onde já se sabe que é
       # SQLite) para simetria com o job PostgreSQL abaixo e para que
       # tests/test_database_dialect.py também corra aqui, não só lá.
@@ -92,6 +93,7 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: "postgresql+psycopg://op_pm:op_pm_ci_only@localhost:5432/op_pm_ci"
+      APP_ENV: "test"
       # Lido por tests/conftest.py::_prepare_database (pytest.exit duro,
       # antes de qualquer teste correr) e por
       # tests/test_database_dialect.py — a dupla garantia de que este job
