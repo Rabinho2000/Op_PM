@@ -17,9 +17,10 @@ from app.models.project import Project
 from app.models.task import Task, TaskHistory
 from app.schemas.tasks import TaskCreate, TaskHistoryRead, TaskRead, TaskUpdate
 from app.security.current_user import get_auth_context
-from app.security.permissions import AuthContext, PermissionDenied, can_edit_task, is_installer_readonly_scope
+from app.security.permissions import AuthContext, can_edit_task, is_installer_readonly_scope
 from app.services.tasks import InvalidTaskAssignment, InvalidTaskTransition, create_task, get_visible_task, list_tasks
 from app.services.tasks import update_task as update_task_service
+from app.security.guards import permission_denied_message
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -81,7 +82,12 @@ def get_task_endpoint(
     return _to_read(db, task, ctx)
 
 
-@router.post("", response_model=TaskRead, status_code=201)
+@router.post(
+    "",
+    response_model=TaskRead,
+    status_code=201,
+    dependencies=[Depends(permission_denied_message("Sem permissão para criar tarefas neste projeto", with_reason=True))],
+)
 def create_task_endpoint(
     body: TaskCreate,
     db: Session = Depends(get_db),
@@ -91,8 +97,6 @@ def create_task_endpoint(
         raise HTTPException(status_code=403, detail="O papel externo tem acesso somente de leitura.")
     try:
         task = create_task(db, changes=body, ctx=ctx)
-    except PermissionDenied as exc:
-        raise HTTPException(status_code=403, detail=f"Sem permissão para criar tarefas neste projeto: {exc}")
     except InvalidTaskAssignment as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except ValueError as exc:
@@ -100,7 +104,11 @@ def create_task_endpoint(
     return _to_read(db, task, ctx)
 
 
-@router.patch("/{task_id}", response_model=TaskRead)
+@router.patch(
+    "/{task_id}",
+    response_model=TaskRead,
+    dependencies=[Depends(permission_denied_message("Sem permissão para editar esta tarefa", with_reason=True))],
+)
 def update_task_endpoint(
     task_id: uuid.UUID,
     body: TaskUpdate,
@@ -114,8 +122,6 @@ def update_task_endpoint(
         raise HTTPException(status_code=404, detail="Tarefa não encontrada.")
     try:
         updated = update_task_service(db, task=task, changes=body, ctx=ctx)
-    except PermissionDenied as exc:
-        raise HTTPException(status_code=403, detail=f"Sem permissão para editar esta tarefa: {exc}")
     except InvalidTaskTransition as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except InvalidTaskAssignment as exc:

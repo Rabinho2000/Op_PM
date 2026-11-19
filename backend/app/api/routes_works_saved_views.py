@@ -10,8 +10,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.schemas.works_preferences import WorksPreferenceRead
 from app.schemas.works_saved_views import SavedViewCreate, SavedViewPatch, SavedViewRead
-from app.security.current_user import get_auth_context
-from app.security.permissions import AuthContext, can_view_installers, is_installer_readonly_scope
+from app.security.permissions import AuthContext, is_installer_readonly_scope
 from app.services.works_preferences import (
     WorksPreferenceStorageError,
     WorksPreferenceValidationError,
@@ -29,6 +28,7 @@ from app.services.works_saved_views import (
     update_saved_view,
 )
 from app.security.perm import Perm
+from app.security.guards import require_permission
 
 router = APIRouter(prefix="/api/me/works-saved-views", tags=["works-saved-views"])
 
@@ -37,12 +37,12 @@ _DETAIL_WRITE_FAILURE = "Não foi possível guardar a vista do calendário de ob
 _DETAIL_DELETE_FAILURE = "Não foi possível apagar a vista do calendário de obras."
 
 
-def _require_view(ctx: AuthContext) -> None:
-    if not (can_view_installers(ctx) or ctx.has_permission(Perm.WORKS_CALENDAR_VIEW_ASSIGNED_INSTALLER)):
-        raise HTTPException(
-            status_code=403,
-            detail="Sem permissão para ver o calendário de obras.",
-        )
+require_works_view = require_permission(
+    Perm.PROJECT_VIEW_ALL,
+    Perm.PROJECT_VIEW_OWN,
+    Perm.WORKS_CALENDAR_VIEW_ASSIGNED_INSTALLER,
+    detail="Sem permissão para ver o calendário de obras.",
+)
 
 
 def _require_write(ctx: AuthContext) -> None:
@@ -56,9 +56,8 @@ def _permission_error(exc: SavedViewPermissionError) -> HTTPException:
 
 @router.get("", response_model=list[SavedViewRead])
 def get_saved_views_endpoint(
-    db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    db: Session = Depends(get_db), ctx: AuthContext = Depends(require_works_view)
 ) -> list[dict[str, object]]:
-    _require_view(ctx)
     try:
         return list_saved_views(db, ctx)
     except SavedViewPermissionError as exc:
@@ -71,9 +70,8 @@ def get_saved_views_endpoint(
 def create_saved_view_endpoint(
     body: SavedViewCreate,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_works_view),
 ) -> dict[str, object]:
-    _require_view(ctx)
     _require_write(ctx)
     try:
         return create_saved_view(db, ctx, body.model_dump(exclude_unset=True))
@@ -93,9 +91,8 @@ def create_saved_view_endpoint(
 def apply_saved_view_endpoint(
     saved_view_id: uuid.UUID,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_works_view),
 ) -> dict[str, object]:
-    _require_view(ctx)
     _require_write(ctx)
     try:
         return apply_saved_view(db, ctx, saved_view_id)
@@ -118,9 +115,8 @@ def patch_saved_view_endpoint(
     saved_view_id: uuid.UUID,
     body: SavedViewPatch,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_works_view),
 ) -> dict[str, object]:
-    _require_view(ctx)
     _require_write(ctx)
     try:
         return update_saved_view(
@@ -147,9 +143,8 @@ def patch_saved_view_endpoint(
 def delete_saved_view_endpoint(
     saved_view_id: uuid.UUID,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_works_view),
 ) -> Response:
-    _require_view(ctx)
     _require_write(ctx)
     try:
         delete_saved_view(db, ctx, saved_view_id)

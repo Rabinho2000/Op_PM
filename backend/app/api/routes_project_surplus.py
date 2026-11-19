@@ -27,25 +27,19 @@ from app.services.project_data import (
     list_surplus_contracts,
     update_surplus_contract,
 )
-from app.services.projects import get_visible_project
+from app.api.deps import get_visible_project_or_404
+from app.models.project import Project
 
 router = APIRouter(prefix="/api/projects", tags=["project-surplus"], route_class=NoEchoRoute)
-
-_NOT_FOUND = "Projeto não encontrado ou sem permissão para o ver."
-
-
-def _project_or_404(db: Session, project_id: uuid.UUID, ctx: AuthContext):
-    project = get_visible_project(db, ctx, project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail=_NOT_FOUND)
-    return project
 
 
 @router.get("/{project_id}/surplus-contracts", response_model=list[SurplusContractRead])
 def list_surplus_endpoint(
-    project_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> list[SurplusContractRead]:
-    project = _project_or_404(db, project_id, ctx)
     if not can_view_project_surplus_contracts(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para ver contratos de excedente.")
     return [SurplusContractRead.model_validate(c) for c in list_surplus_contracts(db, project_id)]
@@ -56,9 +50,9 @@ def create_surplus_endpoint(
     project_id: uuid.UUID,
     body: SurplusContractCreate,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> SurplusContractRead:
-    project = _project_or_404(db, project_id, ctx)
     if not can_edit_project_surplus_contracts(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para editar contratos de excedente.")
     contract = create_surplus_contract(
@@ -76,9 +70,9 @@ def update_surplus_endpoint(
     contract_id: uuid.UUID,
     body: SurplusContractUpdate,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> SurplusContractRead:
-    project = _project_or_404(db, project_id, ctx)
     if not can_edit_project_surplus_contracts(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para editar contratos de excedente.")
     contract = get_surplus_contract(db, project_id, contract_id)
@@ -98,9 +92,9 @@ def delete_surplus_endpoint(
     project_id: uuid.UUID,
     contract_id: uuid.UUID,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> None:
-    project = _project_or_404(db, project_id, ctx)
     if not can_edit_project_surplus_contracts(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para editar contratos de excedente.")
     contract = get_surplus_contract(db, project_id, contract_id)

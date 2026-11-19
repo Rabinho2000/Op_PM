@@ -11,23 +11,22 @@ from app.db import get_db
 from app.models.holiday import Holiday
 from app.schemas.holidays import HolidayCreate, HolidayRead, HolidayUpdate
 from app.security.current_user import get_auth_context
-from app.security.permissions import AuthContext, PermissionDenied
+from app.security.permissions import AuthContext
 from app.services.holidays import (
     create_holiday,
     deactivate_holiday,
     list_holidays,
-    require_holiday_manage,
     update_holiday,
 )
+from app.security.guards import require_permission
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/holidays", tags=["holidays"])
 
 
-def _require_manage(ctx: AuthContext) -> None:
-    try:
-        require_holiday_manage(ctx)
-    except PermissionDenied as exc:
-        raise HTTPException(status_code=403, detail=f"Sem permissão para gerir feriados: {exc}") from exc
+require_holiday_manage = require_permission(
+    Perm.HOLIDAY_MANAGE, detail="Sem permissão para gerir feriados", with_reason=True
+)
 
 
 @router.get("", response_model=list[HolidayRead])
@@ -53,9 +52,8 @@ def list_holidays_endpoint(
 def create_holiday_endpoint(
     body: HolidayCreate,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_holiday_manage),
 ) -> HolidayRead:
-    _require_manage(ctx)
     holiday = create_holiday(db, changes=body, ctx=ctx)
     return HolidayRead.model_validate(holiday)
 
@@ -65,9 +63,8 @@ def update_holiday_endpoint(
     holiday_id: uuid.UUID,
     body: HolidayUpdate,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_holiday_manage),
 ) -> HolidayRead:
-    _require_manage(ctx)
     holiday = db.get(Holiday, holiday_id)
     if holiday is None:
         raise HTTPException(status_code=404, detail="Feriado não encontrado.")
@@ -79,9 +76,8 @@ def update_holiday_endpoint(
 def delete_holiday_endpoint(
     holiday_id: uuid.UUID,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_holiday_manage),
 ) -> HolidayRead:
-    _require_manage(ctx)
     holiday = db.get(Holiday, holiday_id)
     if holiday is None:
         raise HTTPException(status_code=404, detail="Feriado não encontrado.")

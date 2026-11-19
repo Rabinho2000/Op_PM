@@ -76,7 +76,8 @@ def test_backend_has_no_permission_string_literals() -> None:
                 func = node.func
                 name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
                 if name in _PERMISSION_CALLS:
-                    args = [*node.args, *(kw.value for kw in node.keywords)]
+                    # Os argumentos posicionais (e `permission_code=`) são códigos; `detail=` é texto.
+                    args = [*node.args, *(kw.value for kw in node.keywords if kw.arg in {"permission_code", "code"})]
                     if any(isinstance(a, ast.Constant) and isinstance(a.value, str) for a in args):
                         offenders.append(f"{where}: literal em {name}(...)")
             elif (

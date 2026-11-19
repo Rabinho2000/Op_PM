@@ -50,18 +50,18 @@ from app.services.planning import (
     update_planning_preferences,
 )
 from app.security.perm import Perm
+from app.security.guards import require_permission
 
 router = APIRouter(prefix="/api/planning", tags=["planning"])
 preferences_router = APIRouter(prefix="/api/me", tags=["planning"])
 
 
-def _require_calendar_view(ctx: AuthContext) -> None:
-    if not (
-        ctx.has_permission(Perm.CALENDAR_VIEW)
-        or ctx.has_permission(Perm.CALENDAR_VIEW_ALL_PM)
-        or ctx.has_permission(Perm.WORKS_CALENDAR_VIEW_ASSIGNED_INSTALLER)
-    ):
-        raise HTTPException(status_code=403, detail="Sem permissão para ver o planeamento.")
+require_calendar_view = require_permission(
+    Perm.CALENDAR_VIEW,
+    Perm.CALENDAR_VIEW_ALL_PM,
+    Perm.WORKS_CALENDAR_VIEW_ASSIGNED_INSTALLER,
+    detail="Sem permissão para ver o planeamento.",
+)
 
 
 def _deny_installer_generic_planning(ctx: AuthContext) -> None:
@@ -238,10 +238,9 @@ def _list_events(
 
 @preferences_router.get("/planning-preferences", response_model=PlanningPreferenceRead)
 def get_preferences_endpoint(
-    db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    db: Session = Depends(get_db), ctx: AuthContext = Depends(require_calendar_view)
 ) -> dict[str, object]:
     _deny_installer_generic_planning(ctx)
-    _require_calendar_view(ctx)
     try:
         return get_planning_preferences(db, ctx)
     except SQLAlchemyError as exc:
@@ -255,10 +254,9 @@ def get_preferences_endpoint(
 def patch_preferences_endpoint(
     body: PlanningPreferencePatch,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_calendar_view),
 ) -> dict[str, object]:
     _deny_installer_generic_planning(ctx)
-    _require_calendar_view(ctx)
     _require_calendar_write(ctx)
     try:
         return update_planning_preferences(db, ctx, body.model_dump(exclude_unset=True))
@@ -268,10 +266,9 @@ def patch_preferences_endpoint(
 
 @router.get("/event-categories", response_model=list[CalendarEventCategoryRead])
 def list_event_categories_endpoint(
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_calendar_view),
 ) -> list[CalendarEventCategoryRead]:
     _deny_installer_generic_planning(ctx)
-    _require_calendar_view(ctx)
     return [
         CalendarEventCategoryRead(code=code, label=label, color=color)
         for code, (label, color) in CALENDAR_EVENT_CATEGORIES.items()

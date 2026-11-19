@@ -22,8 +22,7 @@ from app.schemas.imports import (
     FieldImportRecordRead,
     ResolveImportConflictRequest,
 )
-from app.security.current_user import get_auth_context
-from app.security.permissions import AuthContext, can_import_notes
+from app.security.permissions import AuthContext
 from app.services.imports_notes import (
     MAX_UPLOAD_BYTES,
     SENSITIVE_DATA_OMITTED_PLACEHOLDER,
@@ -46,13 +45,13 @@ from app.services.imports_notes import (
     sanitize_document_for_read,
 )
 from app.services.imports_notes import resolve_conflict as resolve_conflict_service
+from app.security.guards import require_permission
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/imports", tags=["imports"])
 
 
-def _require_import_notes(ctx: AuthContext) -> None:
-    if not can_import_notes(ctx):
-        raise HTTPException(status_code=403, detail="Sem permissão para importar notas iniciais.")
+require_import_notes = require_permission(Perm.IMPORT_NOTES, detail="Sem permissão para importar notas iniciais.")
 
 
 def _staging_omission(default: object) -> object:
@@ -193,9 +192,8 @@ def _batch_to_read(batch: FieldImportBatch) -> FieldImportBatchRead:
 async def preview_notes_endpoint(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_import_notes),
 ) -> FieldImportBatchRead:
-    _require_import_notes(ctx)
     content = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(
@@ -220,9 +218,8 @@ async def preview_notes_endpoint(
 
 @router.get("/{batch_id}", response_model=FieldImportBatchRead)
 def get_batch_endpoint(
-    batch_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    batch_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(require_import_notes)
 ) -> FieldImportBatchRead:
-    _require_import_notes(ctx)
     batch = db.query(FieldImportBatch).populate_existing().filter(FieldImportBatch.id == batch_id).one_or_none()
     if batch is None:
         raise HTTPException(status_code=404, detail="Lote de importação não encontrado.")
@@ -237,14 +234,13 @@ def get_batch_endpoint(
 
 @router.get("/{batch_id}/document", response_model=FieldImportDocumentRead)
 def get_batch_document_endpoint(
-    batch_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    batch_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(require_import_notes)
 ) -> FieldImportDocumentRead:
     """Devolve a representação JSON determinística do payload extraído.
 
     O upload HTML nunca é devolvido: a resposta contém apenas texto
     estruturado produzido pelo parser e sanitizado antes do staging.
     """
-    _require_import_notes(ctx)
     batch = db.query(FieldImportBatch).populate_existing().filter(FieldImportBatch.id == batch_id).one_or_none()
     if batch is None:
         raise HTTPException(status_code=404, detail="Lote de importação não encontrado.")
@@ -259,9 +255,8 @@ def get_batch_document_endpoint(
 
 @router.get("/{batch_id}/conflicts", response_model=list[FieldImportConflictRead])
 def list_conflicts_endpoint(
-    batch_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    batch_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(require_import_notes)
 ) -> list[FieldImportConflictRead]:
-    _require_import_notes(ctx)
     batch = db.query(FieldImportBatch).populate_existing().filter(FieldImportBatch.id == batch_id).one_or_none()
     if batch is None:
         raise HTTPException(status_code=404, detail="Lote de importação não encontrado.")
@@ -280,9 +275,8 @@ def resolve_conflict_endpoint(
     conflict_id: uuid.UUID,
     body: ResolveImportConflictRequest,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_import_notes),
 ) -> FieldImportConflictRead:
-    _require_import_notes(ctx)
     try:
         _ensure_clean_import_session(db)
     except NotesImportError as exc:
@@ -308,9 +302,8 @@ def resolve_conflict_endpoint(
 
 @router.post("/notes/apply", response_model=ApplyImportResult)
 def apply_notes_endpoint(
-    body: ApplyImportRequest, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    body: ApplyImportRequest, db: Session = Depends(get_db), ctx: AuthContext = Depends(require_import_notes)
 ) -> ApplyImportResult:
-    _require_import_notes(ctx)
     try:
         _ensure_clean_import_session(db)
     except NotesImportError as exc:

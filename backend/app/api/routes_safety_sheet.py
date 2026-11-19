@@ -17,7 +17,6 @@ from app.schemas.safety_sheet import (
 )
 from app.security.current_user import get_auth_context
 from app.security.permissions import AuthContext, can_edit_project, can_view_project
-from app.services.projects import get_visible_project
 from app.services.safety_sheet import (
     SafetySheetVersionConflict,
     SafetySheetWorkerPersonNotFound,
@@ -28,6 +27,8 @@ from app.services.safety_sheet import (
     save_safety_sheet,
 )
 from app.security.perm import Perm
+from app.api.deps import get_visible_project_or_404
+from app.models.project import Project
 
 router = APIRouter(prefix="/api/projects", tags=["safety-sheet"])
 
@@ -61,13 +62,6 @@ _MEASURE_LABELS = {
     "guarda_corpos": "Guarda-corpos",
     "outro": "Outro",
 }
-
-
-def _get_project_or_404(db: Session, project_id: uuid.UUID, ctx: AuthContext):
-    project = get_visible_project(db, ctx, project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
-    return project
 
 
 def _require_edit(ctx: AuthContext, project) -> None:
@@ -151,9 +145,9 @@ Potência: {_escape(power)}</div>
 def print_safety_sheet_endpoint(
     project_id: uuid.UUID,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> Response:
-    project = _get_project_or_404(db, project_id, ctx)
     sheet_data = safety_sheet_snapshot(project_id, get_safety_sheet(db, project_id))
     pm = db.get(Person, project.pm_person_id) if project.pm_person_id else None
     return Response(content=_print_html(project, sheet_data, pm.display_name if pm else None), media_type="text/html")
@@ -163,32 +157,36 @@ def print_safety_sheet_endpoint(
 def prefill_safety_sheet_workers_endpoint(
     project_id: uuid.UUID,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> SafetySheetPrefillRead:
-    project = _get_project_or_404(db, project_id, ctx)
     return SafetySheetPrefillRead(
         project_id=project_id,
         workers=[SafetySheetWorkerRead.model_validate(worker) for worker in prefill_safety_sheet_workers(db, project)],
     )
 
 
-@router.get("/{project_id}/safety-sheet/history", response_model=list[SafetySheetHistoryRead])
+@router.get(
+    "/{project_id}/safety-sheet/history",
+    response_model=list[SafetySheetHistoryRead],
+    dependencies=[Depends(get_visible_project_or_404)],
+)
 def safety_sheet_history_endpoint(
     project_id: uuid.UUID,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
 ) -> list[SafetySheetHistoryRead]:
-    _get_project_or_404(db, project_id, ctx)
     return [SafetySheetHistoryRead.model_validate(entry.__dict__) for entry in list_safety_sheet_history(db, project_id)]
 
 
-@router.get("/{project_id}/safety-sheet", response_model=SafetySheetRead)
+@router.get(
+    "/{project_id}/safety-sheet",
+    response_model=SafetySheetRead,
+    dependencies=[Depends(get_visible_project_or_404)],
+)
 def get_safety_sheet_endpoint(
     project_id: uuid.UUID,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
 ) -> SafetySheetRead:
-    _get_project_or_404(db, project_id, ctx)
     return SafetySheetRead.model_validate(safety_sheet_snapshot(project_id, get_safety_sheet(db, project_id)))
 
 
@@ -197,9 +195,9 @@ def update_safety_sheet_endpoint(
     project_id: uuid.UUID,
     body: SafetySheetUpdate,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> SafetySheetRead:
-    project = _get_project_or_404(db, project_id, ctx)
     _require_edit(ctx, project)
     try:
         sheet = save_safety_sheet(

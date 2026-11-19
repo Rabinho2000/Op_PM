@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models.holiday import Holiday
 from app.schemas.holidays import HolidayCreate, HolidayUpdate
-from app.security.permissions import AuthContext, PermissionDenied
+from app.security.permissions import AuthContext
 from app.security.perm import Perm
 
 
@@ -68,8 +68,3 @@ def deactivate_holiday(db: Session, *, holiday: Holiday, ctx: AuthContext) -> Ho
     db.commit()
     db.refresh(holiday)
     return holiday
-
-
-def require_holiday_manage(ctx: AuthContext) -> None:
-    if not ctx.has_permission(Perm.HOLIDAY_MANAGE):
-        raise PermissionDenied(Perm.HOLIDAY_MANAGE)

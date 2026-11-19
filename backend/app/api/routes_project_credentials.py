@@ -44,19 +44,11 @@ from app.services.project_data import (
     record_password_reveal,
     update_portal_credential,
 )
-from app.services.projects import get_visible_project
+from app.api.deps import get_visible_project_or_404
+from app.models.project import Project
 
 
 router = APIRouter(prefix="/api/projects", tags=["project-credentials"], route_class=NoEchoRoute)
-
-_NOT_FOUND = "Projeto não encontrado ou sem permissão para o ver."
-
-
-def _project_or_404(db: Session, project_id: uuid.UUID, ctx: AuthContext):
-    project = get_visible_project(db, ctx, project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail=_NOT_FOUND)
-    return project
 
 
 def _to_read(credential: ProjectPortalCredential) -> PortalCredentialRead:
@@ -78,7 +70,11 @@ def _encrypt_or_503(settings: Settings, password: str) -> str:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-def _credential_or_404(db: Session, project_id: uuid.UUID, credential_id: uuid.UUID) -> ProjectPortalCredential:
+def _credential_or_404(
+    db: Session,
+    project_id: uuid.UUID,
+    credential_id: uuid.UUID,
+) -> ProjectPortalCredential:
     credential = get_portal_credential(db, project_id, credential_id)
     if credential is None:
         raise HTTPException(status_code=404, detail="Credencial não encontrada.")
@@ -89,9 +85,9 @@ def _credential_or_404(db: Session, project_id: uuid.UUID, credential_id: uuid.U
 def list_credentials_endpoint(
     project_id: uuid.UUID,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[PortalCredentialRead]:
-    project = _project_or_404(db, project_id, ctx)
     if not can_view_project_credentials(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para ver credenciais de portais.")
     return [_to_read(c) for c in list_portal_credentials(db, project_id)]
@@ -102,10 +98,10 @@ def create_credential_endpoint(
     project_id: uuid.UUID,
     body: PortalCredentialCreate,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
     settings: Settings = Depends(get_settings),
 ) -> PortalCredentialRead:
-    project = _project_or_404(db, project_id, ctx)
     if not can_edit_project_credentials(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para editar credenciais de portais.")
     encrypted = _encrypt_or_503(settings, body.password) if body.password else None
@@ -125,10 +121,10 @@ def update_credential_endpoint(
     credential_id: uuid.UUID,
     body: PortalCredentialUpdate,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
     settings: Settings = Depends(get_settings),
 ) -> PortalCredentialRead:
-    project = _project_or_404(db, project_id, ctx)
     if not can_edit_project_credentials(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para editar credenciais de portais.")
     credential = _credential_or_404(db, project_id, credential_id)
@@ -158,9 +154,9 @@ def delete_credential_endpoint(
     project_id: uuid.UUID,
     credential_id: uuid.UUID,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> None:
-    project = _project_or_404(db, project_id, ctx)
     if not can_edit_project_credentials(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para editar credenciais de portais.")
     credential = _credential_or_404(db, project_id, credential_id)
@@ -173,13 +169,13 @@ def reveal_credential_endpoint(
     credential_id: uuid.UUID,
     response: Response,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
     settings: Settings = Depends(get_settings),
 ) -> PortalCredentialReveal:
     # A password revelada nunca deve ficar em caches intermédias nem do browser.
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
-    project = _project_or_404(db, project_id, ctx)
     if not can_reveal_project_credential(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para revelar credenciais de portais.")
     credential = _credential_or_404(db, project_id, credential_id)
