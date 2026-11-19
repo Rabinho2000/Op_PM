@@ -23,6 +23,7 @@ from app.config import Settings, get_settings
 from app.db import SessionLocal
 from app.logging_setup import configure_logging
 from app.models.identity import User
+from app.utils.email import normalize_email
 from app.security.permissions import AuthContext, load_auth_context
 from app.services.client_report_scheduler import due_configs, run_due, summarize
 from app.services.client_reports import REPORT_MANAGE
@@ -48,7 +49,7 @@ def resolve_system_context(db: Session, settings: Settings) -> AuthContext:
     if email:
         user = (
             db.query(User)
-            .filter(User.is_active.is_(True), func.lower(User.email) == email.lower())
+            .filter(User.is_active.is_(True), func.lower(User.email) == normalize_email(email))
             .one_or_none()
         )
         if user is None:
