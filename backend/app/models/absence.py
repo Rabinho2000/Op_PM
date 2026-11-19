@@ -16,6 +16,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
+from app.models.constraints import vocabulary_check
 
 if TYPE_CHECKING:
     from app.models.people import Person
@@ -36,6 +37,10 @@ ABSENCE_STATUSES: frozenset[str] = frozenset(
 
 class Absence(UUIDPk, TimestampMixin, Base):
     __tablename__ = "absences"
+    __table_args__ = (
+        vocabulary_check("type", ABSENCE_TYPES, name="ck_absences_type"),
+        vocabulary_check("status", ABSENCE_STATUSES, name="ck_absences_status"),
+    )
 
     person_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("people.id"), nullable=False)
     start_date: Mapped[dt.date] = mapped_column(nullable=False)

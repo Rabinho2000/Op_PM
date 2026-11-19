@@ -24,18 +24,30 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.orm import Session
 
-from app.models.inventory import InventoryItem, MaterialRequest, MaterialRequestHistory, MaterialRequestItem
+from app.models.inventory import (
+    MATERIAL_REQUEST_STATUS_ADJUDICADO,
+    MATERIAL_REQUEST_STATUS_APROVADO,
+    MATERIAL_REQUEST_STATUS_CANCELADO,
+    MATERIAL_REQUEST_STATUS_ORCAMENTO_RECEBIDO,
+    MATERIAL_REQUEST_STATUS_PEDIDO_ENVIADO,
+    MATERIAL_REQUEST_STATUS_RASCUNHO,
+    InventoryItem,
+    MaterialRequest,
+    MaterialRequestHistory,
+    MaterialRequestItem,
+)
 from app.models.project import Project
 from app.models.supplier import Supplier
 from app.security.permissions import AuthContext, PermissionDenied, can_edit_project, can_view_project
 from app.services.projects import visible_projects_query
 
-STATUS_RASCUNHO = "rascunho"
-STATUS_PEDIDO_ENVIADO = "pedido_enviado"
-STATUS_ORCAMENTO_RECEBIDO = "orcamento_recebido"
-STATUS_APROVADO = "aprovado"
-STATUS_ADJUDICADO = "adjudicado"
-STATUS_CANCELADO = "cancelado"
+# O vocabulário vive no modelo (de onde sai o CHECK da BD); aqui só os nomes curtos.
+STATUS_RASCUNHO = MATERIAL_REQUEST_STATUS_RASCUNHO
+STATUS_PEDIDO_ENVIADO = MATERIAL_REQUEST_STATUS_PEDIDO_ENVIADO
+STATUS_ORCAMENTO_RECEBIDO = MATERIAL_REQUEST_STATUS_ORCAMENTO_RECEBIDO
+STATUS_APROVADO = MATERIAL_REQUEST_STATUS_APROVADO
+STATUS_ADJUDICADO = MATERIAL_REQUEST_STATUS_ADJUDICADO
+STATUS_CANCELADO = MATERIAL_REQUEST_STATUS_CANCELADO
 
 ACTION_CREATE = "create"
 ACTION_SEND = "send"

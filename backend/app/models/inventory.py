@@ -36,6 +36,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import GUID, Base
 from app.models.base import TimestampMixin, UUIDPk
+from app.models.constraints import vocabulary_check
 from app.models.cost import MONEY
 
 # 14 dígitos, 3 casas decimais — cobre quantidades fracionárias (ex. km de
@@ -127,10 +128,38 @@ MOVEMENT_TYPES: frozenset[str] = frozenset(
 )
 
 
+# Tipos de documento da ficha técnica de um artigo (ordem de apresentação).
+INVENTORY_DOCUMENT_KINDS: tuple[str, ...] = ("datasheet", "manual", "guia", "outro")
+
+# Estados de um pedido de material (D-067). `enviado_financeiro` e `pago`
+# existem no vocabulário mas ainda não têm transição (ver
+# app/services/material_requests.py).
+MATERIAL_REQUEST_STATUS_RASCUNHO = "rascunho"
+MATERIAL_REQUEST_STATUS_PEDIDO_ENVIADO = "pedido_enviado"
+MATERIAL_REQUEST_STATUS_ORCAMENTO_RECEBIDO = "orcamento_recebido"
+MATERIAL_REQUEST_STATUS_APROVADO = "aprovado"
+MATERIAL_REQUEST_STATUS_ADJUDICADO = "adjudicado"
+MATERIAL_REQUEST_STATUS_ENVIADO_FINANCEIRO = "enviado_financeiro"
+MATERIAL_REQUEST_STATUS_PAGO = "pago"
+MATERIAL_REQUEST_STATUS_CANCELADO = "cancelado"
+MATERIAL_REQUEST_STATUSES: tuple[str, ...] = (
+    MATERIAL_REQUEST_STATUS_RASCUNHO,
+    MATERIAL_REQUEST_STATUS_PEDIDO_ENVIADO,
+    MATERIAL_REQUEST_STATUS_ORCAMENTO_RECEBIDO,
+    MATERIAL_REQUEST_STATUS_APROVADO,
+    MATERIAL_REQUEST_STATUS_ADJUDICADO,
+    MATERIAL_REQUEST_STATUS_ENVIADO_FINANCEIRO,
+    MATERIAL_REQUEST_STATUS_PAGO,
+    MATERIAL_REQUEST_STATUS_CANCELADO,
+)
+
+
 class InventoryLocation(UUIDPk, TimestampMixin, Base):
     __tablename__ = "inventory_locations"
 
     __table_args__ = (
+        vocabulary_check("location_type", LOCATION_TYPES, name="ck_inventory_locations_location_type"),
+        vocabulary_check("owner", INVENTORY_OWNERS, name="ck_inventory_locations_owner"),
         # Partial unique indexes are supported by both PostgreSQL and SQLite.
         # The Alembic migration creates the same invariant for existing DBs.
         Index(
@@ -154,6 +183,7 @@ class InventoryLocation(UUIDPk, TimestampMixin, Base):
 
 class InventoryItem(UUIDPk, TimestampMixin, Base):
     __tablename__ = "inventory_items"
+    __table_args__ = (CheckConstraint("min_stock >= 0", name="ck_inventory_items_min_stock_non_negative"),)
 
     sku: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -184,7 +214,7 @@ class InventoryItemDocument(UUIDPk, Base):
 
     __tablename__ = "inventory_item_documents"
     __table_args__ = (
-        CheckConstraint("kind IN ('datasheet', 'manual', 'guia', 'outro')", name="ck_inventory_item_document_kind"),
+        vocabulary_check("kind", INVENTORY_DOCUMENT_KINDS, name="ck_inventory_item_document_kind"),
         Index("ix_inventory_item_documents_item_active", "item_id", "deleted_at", "created_at"),
     )
 
@@ -280,6 +310,19 @@ class InventoryMovement(UUIDPk, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_inventory_movement_idempotency_key"),
         UniqueConstraint("reversal_of_movement_id", name="uq_inventory_movement_one_reversal"),
+        vocabulary_check("movement_type", MOVEMENT_TYPES, name="ck_inventory_movements_movement_type"),
+        # Sinal da quantidade (o stock é derivado por somas, por isso um sinal
+        # errado corrompe saldos): o tipo de movimento determina o sinal e
+        # `ajuste` é o único com sinal livre (delta ±). Uma linha de anulação
+        # (`reversal_of_movement_id`) é sempre a compensação, ou seja, o
+        # simétrico de um movimento original positivo. Zero nunca é válido.
+        CheckConstraint(
+            "quantity <> 0 AND ("
+            "movement_type = 'ajuste' "
+            "OR (reversal_of_movement_id IS NULL AND quantity > 0) "
+            "OR (reversal_of_movement_id IS NOT NULL AND quantity < 0))",
+            name="ck_inventory_movements_quantity_sign",
+        ),
     )
 
 
@@ -289,7 +332,10 @@ class ProjectMaterialRequirement(UUIDPk, TimestampMixin, Base):
     app/services/inventory.py:material_requirement_status)."""
 
     __tablename__ = "project_material_requirements"
-    __table_args__ = (UniqueConstraint("project_id", "item_id", name="uq_project_material_requirement"),)
+    __table_args__ = (
+        UniqueConstraint("project_id", "item_id", name="uq_project_material_requirement"),
+        CheckConstraint("quantity_required > 0", name="ck_project_material_requirements_quantity_positive"),
+    )
 
     project_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("projects.id"), nullable=False)
     item_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("inventory_items.id"), nullable=False)
@@ -303,12 +349,14 @@ class ProjectMaterialRequirement(UUIDPk, TimestampMixin, Base):
 
 class MaterialRequest(UUIDPk, TimestampMixin, Base):
     __tablename__ = "material_requests"
+    __table_args__ = (
+        vocabulary_check("status", MATERIAL_REQUEST_STATUSES, name="ck_material_requests_status"),
+    )
 
     project_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("projects.id"), nullable=False)
     supplier_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("suppliers.id"), nullable=True)
-    # rascunho | pedido_enviado | orcamento_recebido | aprovado | adjudicado
-    # | enviado_financeiro | pago | cancelado
-    status: Mapped[str] = mapped_column(String(32), default="rascunho", nullable=False)
+    # Vocabulário: MATERIAL_REQUEST_STATUSES.
+    status: Mapped[str] = mapped_column(String(32), default=MATERIAL_REQUEST_STATUS_RASCUNHO, nullable=False)
     created_by_person_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("people.id"), nullable=True
     )
@@ -322,6 +370,7 @@ class MaterialRequest(UUIDPk, TimestampMixin, Base):
 
 class MaterialRequestItem(UUIDPk, TimestampMixin, Base):
     __tablename__ = "material_request_items"
+    __table_args__ = (CheckConstraint("quantity > 0", name="ck_material_request_items_quantity_positive"),)
 
     request_id: Mapped[uuid.UUID] = mapped_column(
         GUID(), ForeignKey("material_requests.id"), nullable=False
@@ -350,6 +399,10 @@ class MaterialRequestHistory(UUIDPk, Base):
     de microssegundos), não por `server_default`, para a ordem ser exata."""
 
     __tablename__ = "material_request_history"
+    __table_args__ = (
+        vocabulary_check("from_status", MATERIAL_REQUEST_STATUSES, name="ck_material_request_history_from_status", nullable=True),
+        vocabulary_check("to_status", MATERIAL_REQUEST_STATUSES, name="ck_material_request_history_to_status"),
+    )
 
     request_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("material_requests.id"), nullable=False)
     action: Mapped[str] = mapped_column(String(32), nullable=False)  # create|send|record_quote|approve|adjudicate|cancel
