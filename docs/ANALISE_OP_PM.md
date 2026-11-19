@@ -350,6 +350,15 @@ O CI corre o pytest em SQLite e em PostgreSQL 16, e no frontend `tsc`, `vitest` 
   - Falta o off-site.
   - Alinhar os `server_default` entre modelos e migrações.
 
+**Deploy da Fase 2 (2026-11-19, branch `fase2/integracao`, frentes A–D integradas; #18 ClickUp adiado):**
+- **Testes antes do deploy:** SQLite 1 767 passaram (23 ignorados); PostgreSQL 1 787 passaram (3 ignorados); frontend `tsc` sem erros, 895 testes Vitest e build de produção; ruff e mypy sem erros.
+- **Migração `d2f4a6c8e0b1`** (CHECKs e `lower(email)` único) ensaiada antes num restauro do backup de produção, sem violações; em produção correu em segundos (passou de 8 para 39 CHECKs).
+- **Motor de cabos** isolado num iframe `sandbox` sem `allow-same-origin`, validado com o motor real (cálculo e todas as exportações); a página tem CSP estrita sem `unsafe-*` em scripts.
+- **Frontend:** Dockerfile único (`ARG NGINX_CONF`); nginx sem root. O compose da instância passou a `dockerfile: Dockerfile` com `NGINX_CONF: docker/nginx.proxy.conf`.
+- **Testes de fumo:** `/health` em `production`/`postgresql`, 401 sem token, `/docs` em 404, cabeçalhos CSP na página e no iframe, 307 projetos e 11 utilizadores.
+- **Backup prévio** em `pg_dump` e imagens anteriores marcadas para rollback.
+- **Pendentes:** papel `admin` (alias legado, mantido); 404 vs 403 em POST/DELETE de fotos; `openapi-typescript`; compose base partilhado; manter ou remover `CsvFinancialAdapter`; chave RSA de teste antiga ainda no histórico Git; #18 ClickUp + Kanban.
+
 ### Fase 2 — Trabalho estrutural (≈ 3–5 semanas)
 
 | # | Ação | Resolve | Esforço |
