@@ -139,6 +139,15 @@ class Settings(BaseSettings):
     # staging/produção, a menos que definido aqui de propósito (D-029).
     entra_jit_link_by_email: bool | None = Field(default=None, alias="ENTRA_JIT_LINK_BY_EMAIL")
 
+    @field_validator("entra_jit_link_by_email", "api_docs_enabled", mode="before")
+    @classmethod
+    def _empty_optional_bool_is_none(cls, value: object) -> object:
+        """`VARIAVEL=` vazia (como nos `.env.example`) significa "não
+        configurado" (None), não um booleano inválido."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @field_validator("cable_tool_file", mode="before")
     @classmethod
     def _empty_cable_tool_file_is_none(cls, value: object) -> object:
