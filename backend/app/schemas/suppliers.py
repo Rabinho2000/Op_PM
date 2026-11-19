@@ -8,9 +8,10 @@ from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 
+from app.models.supplier import SUPPLIER_COMPANY_CODES
+
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
 _PHONE_RE = re.compile(r"^\+?[\d\s().-]+$")
-SUPPLIER_COMPANY_CODES = ("solcor", "verde_milenar")
 
 
 def _blank_to_none(value: object) -> object:
