@@ -3,7 +3,7 @@
 Fonte de verdade: o calendário real vive no Microsoft 365/Exchange Online
 (via Graph). `CalendarEvent.graph_event_id` só é preenchido depois de o
 evento ser efetivamente criado lá — antes disso, é um rascunho local sem
-qualquer efeito fora da plataforma (ver `app/adapters/graph`).
+qualquer efeito fora da plataforma (ver `app/adapters/graph_mail.py`).
 """
 from __future__ import annotations
 

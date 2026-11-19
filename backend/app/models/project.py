@@ -24,7 +24,7 @@ docs/ARCHITECTURE_PROPOSAL.md secção "Fonte de verdade por campo"):
 - `clickup_status_mirror`: **ClickUp** — Op_PM só espelha, nunca escreve
   de volta.
 - Custo real (`cost_lines` com `source_system='financial'`): **Financial**.
-- Email/eventos reais: **Microsoft Graph** (ver `app/adapters/graph`).
+- Email/eventos reais: **Microsoft Graph** (ver `app/adapters/graph_mail.py`).
 """
 from __future__ import annotations
 

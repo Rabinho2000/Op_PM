@@ -60,7 +60,7 @@ app = FastAPI(
     description=(
         "API do Op_PM (autenticação Microsoft Entra ID). Integrações: envio do "
         "relatório semanal por Microsoft Graph quando GRAPH_ENABLED=true "
-        "(senão outbox local); ClickUp, Financial e Claude continuam mock. "
+        "(senão outbox local); ClickUp, Financial e Claude ainda não têm integração. "
         "Ver README.md e docs/DECISIONS.md no repositório."
     ),
     # Fechada por omissão em instâncias com dados reais (API_DOCS_ENABLED).

@@ -23,7 +23,6 @@ import hashlib
 import io
 import json
 import re
-import unicodedata
 import uuid
 
 from openpyxl import load_workbook
@@ -64,6 +63,7 @@ from app.services.project_data import (
     upsert_installation_data,
     upsert_licensing_data,
 )
+from app.utils.text import normalize_search_text
 
 LEGACY_SOURCE_SYSTEM = "legacy_excel_licensing"
 SIM_NOMENCLATURE_SOURCE_SYSTEM = "solcor_nomenclatura_xlsx"
@@ -1214,9 +1214,7 @@ _DATE_SEARCH = re.compile(r"(\d{1,2})/(\d{1,2})/(\d{4})")
 
 
 def _strip_accents_lower(value: object) -> str:
-    text = unicodedata.normalize("NFKD", str(value or ""))
-    text = "".join(ch for ch in text if not unicodedata.combining(ch))
-    return " ".join(text.lower().split())
+    return normalize_search_text(value)
 
 
 def _name_key(value: object) -> str:

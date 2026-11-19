@@ -29,8 +29,8 @@ from app.security.entra_auth import (
     TokenValidationError,
     TokenValidationUnavailableError,
     RealEntraTokenValidator,
-    issue_mock_token,
 )
+from tests.entra_mock import issue_mock_token
 
 TENANT = "tenant-sintetico-1111"
 OTHER_TENANT = "tenant-sintetico-9999"
@@ -165,9 +165,9 @@ def test_token_issued_by_the_mock_is_rejected_in_real_mode(validator):
 
     header = pyjwt.get_unverified_header(mock_token)
     claims = pyjwt.decode(mock_token, options={"verify_signature": False})
-    from app.security.entra_auth import _TEST_PRIVATE_KEY_PEM
+    from tests.entra_mock import TEST_PRIVATE_KEY_PEM
 
-    forged = pyjwt.encode(claims, _TEST_PRIVATE_KEY_PEM, algorithm="RS256", headers={**header, "kid": KID})
+    forged = pyjwt.encode(claims, TEST_PRIVATE_KEY_PEM, algorithm="RS256", headers={**header, "kid": KID})
     with pytest.raises(TokenValidationError):
         validator.validate(forged)
 

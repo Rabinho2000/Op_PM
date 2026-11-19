@@ -16,7 +16,6 @@ import datetime as dt
 import html
 import logging
 import re
-import unicodedata
 import uuid
 from email.message import EmailMessage
 from pathlib import Path
@@ -35,6 +34,7 @@ from app.models.project import Project, ProjectHistory, ProjectStageProgress
 from app.models.workflow import Phase, WorkflowStage
 from app.security.permissions import AuthContext
 from app.services.performance import completed_tasks_by_week
+from app.utils.text import nfc_lower_strip
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ class ReportSender(Protocol):
 def _normalise_status(value: str | None) -> str:
     if not value:
         return ""
-    return unicodedata.normalize("NFC", value).strip().lower()
+    return nfc_lower_strip(value)
 
 
 def is_project_reportable(project: Project) -> bool:

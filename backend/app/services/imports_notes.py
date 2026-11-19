@@ -52,6 +52,7 @@ from app.security.permissions import (
 )
 from app.security.project_fields import PM_EDITABLE_PROJECT_FIELDS
 from app.services.project_data import upsert_installation_data, upsert_licensing_data
+from app.utils.text import strip_accents
 
 # Versões do formulário aceites — "v11" no nome do ficheiro pode conter
 # conteúdo já na versão 12 (o nome do ficheiro nunca é a fonte de
@@ -294,8 +295,7 @@ def _canonical_label(value: str) -> str | None:
     # Split after decoding: an entity can hide the uppercase camel boundary.
     expanded = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text)
     expanded = re.sub(r"(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])", " ", expanded)
-    decomposed = unicodedata.normalize("NFKD", expanded)
-    without_accents = "".join(char for char in decomposed if not unicodedata.combining(char))
+    without_accents = strip_accents(expanded)
     return " ".join(re.sub(r"[^a-zA-Z0-9]+", " ", without_accents).lower().split())
 
 

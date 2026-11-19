@@ -8,9 +8,10 @@ title = "Op_PM gitleaks"
 [extend]
 useDefault = true
 
-# Chave RSA de teste do mock Entra (gera tokens de teste assinados
-# localmente; o módulo documenta que não é uma credencial real e que o
-# validador real só aceita chaves do JWKS da Microsoft).
+# Chave RSA de teste do mock Entra, REMOVIDA do código na Fase 2 (M13): esta
+# exceção só existe porque o gitleaks varre o histórico completo e o ficheiro
+# ainda a contém em commits antigos. Não é uma credencial real (o validador
+# real só aceita chaves do JWKS da Microsoft). Nenhum ficheiro atual a traz.
 [[allowlists]]
 description = "Chave RSA de teste do mock Entra (backend/app/security/entra_auth.py)"
 condition = "AND"
