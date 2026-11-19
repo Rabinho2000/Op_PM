@@ -31,17 +31,18 @@ from app.schemas.migration import (
 )
 from app.security.current_user import get_auth_context
 from app.security.permissions import AuthContext
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/migration", tags=["migration"])
 
 
 def _require_view(ctx: AuthContext) -> None:
-    if not ctx.has_permission("migration.view"):
+    if not ctx.has_permission(Perm.MIGRATION_VIEW):
         raise HTTPException(status_code=403, detail="Sem permissão para ver dados de migração.")
 
 
 def _require_resolve(ctx: AuthContext) -> None:
-    if not ctx.has_permission("migration.resolve"):
+    if not ctx.has_permission(Perm.MIGRATION_RESOLVE):
         raise HTTPException(status_code=403, detail="Sem permissão para resolver dados de migração.")
 
 
@@ -106,7 +107,7 @@ def resolve_staging_conflict(
             raise HTTPException(status_code=404, detail="Registo de staging não encontrado.")
         valid_candidate_ids = resolve_candidate_project_ids(db, record_for_check)
         if str(body.target_project_id) not in valid_candidate_ids:
-            if not ctx.has_permission("migration.link_arbitrary_project"):
+            if not ctx.has_permission(Perm.MIGRATION_LINK_ARBITRARY_PROJECT):
                 raise HTTPException(
                     status_code=403,
                     detail="Ligar a um projeto fora dos candidatos detetados exige a permissão "

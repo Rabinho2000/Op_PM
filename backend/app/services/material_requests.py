@@ -29,6 +29,7 @@ from app.models.project import Project
 from app.models.supplier import Supplier
 from app.security.permissions import AuthContext, PermissionDenied, can_edit_project, can_view_project
 from app.services.projects import visible_projects_query
+from app.security.perm import Perm
 
 STATUS_RASCUNHO = "rascunho"
 STATUS_PEDIDO_ENVIADO = "pedido_enviado"
@@ -61,10 +62,10 @@ TRANSITIONS: dict[str, dict[str, str]] = {
 
 # Permissão exigida por ação. `cancel` tem uma regra própria (ver `_may_cancel`).
 ACTION_PERMISSIONS: dict[str, str] = {
-    ACTION_SEND: "material_request.approve",
-    ACTION_RECORD_QUOTE: "material_request.approve",
-    ACTION_APPROVE: "material_request.approve",
-    ACTION_ADJUDICATE: "material_request.adjudicate",
+    ACTION_SEND: Perm.MATERIAL_REQUEST_APPROVE,
+    ACTION_RECORD_QUOTE: Perm.MATERIAL_REQUEST_APPROVE,
+    ACTION_APPROVE: Perm.MATERIAL_REQUEST_APPROVE,
+    ACTION_ADJUDICATE: Perm.MATERIAL_REQUEST_ADJUDICATE,
 }
 
 TWO_PLACES = Decimal("0.01")
@@ -128,11 +129,11 @@ def _record(
 
 
 def _may_cancel(ctx: AuthContext, request: MaterialRequest) -> bool:
-    if ctx.has_permission("material_request.approve"):
+    if ctx.has_permission(Perm.MATERIAL_REQUEST_APPROVE):
         return True
     # Quem só cria pode cancelar o seu próprio rascunho — nunca um pedido já enviado.
     return (
-        ctx.has_permission("material_request.create")
+        ctx.has_permission(Perm.MATERIAL_REQUEST_CREATE)
         and request.status == STATUS_RASCUNHO
         and request.created_by_person_id == ctx.person_id
     )
@@ -203,8 +204,8 @@ def create_request(
     notes: str = "",
 ) -> MaterialRequest:
     # Mesma regra de escrita de projeto que reservar/consumir material: PM só nos seus.
-    if not (ctx.has_permission("material_request.create") and can_edit_project(ctx, project)):
-        raise PermissionDenied("material_request.create")
+    if not (ctx.has_permission(Perm.MATERIAL_REQUEST_CREATE) and can_edit_project(ctx, project)):
+        raise PermissionDenied(Perm.MATERIAL_REQUEST_CREATE)
     _validate_supplier(db, supplier_id)
     request = MaterialRequest(
         project_id=project.id,
@@ -240,9 +241,9 @@ def update_draft(
     do que foi pedido ao fornecedor e não pode mudar debaixo dele."""
     if request.status != STATUS_RASCUNHO:
         raise MaterialRequestError("Só um pedido em rascunho pode ser editado.")
-    owns = request.created_by_person_id == ctx.person_id and ctx.has_permission("material_request.create")
-    if not (owns or ctx.has_permission("material_request.approve")) or not can_edit_project(ctx, project):
-        raise PermissionDenied("material_request.create")
+    owns = request.created_by_person_id == ctx.person_id and ctx.has_permission(Perm.MATERIAL_REQUEST_CREATE)
+    if not (owns or ctx.has_permission(Perm.MATERIAL_REQUEST_APPROVE)) or not can_edit_project(ctx, project):
+        raise PermissionDenied(Perm.MATERIAL_REQUEST_CREATE)
     if supplier_id is not _UNSET:
         _validate_supplier(db, supplier_id)  # type: ignore[arg-type]
         request.supplier_id = supplier_id  # type: ignore[assignment]
@@ -280,7 +281,7 @@ def apply_action(
         )
     if action not in allowed_actions(ctx, request, project):
         # Estado válido mas sem permissão/âmbito: 403, nunca uma transição silenciosa.
-        raise PermissionDenied(ACTION_PERMISSIONS.get(action, "material_request.approve"))
+        raise PermissionDenied(ACTION_PERMISSIONS.get(action, Perm.MATERIAL_REQUEST_APPROVE))
 
     note = note.strip()
     if action == ACTION_SEND:

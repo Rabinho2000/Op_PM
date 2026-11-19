@@ -36,6 +36,7 @@ from app.security.permissions import (
 from app.services.installers import business_day
 from app.services.process import build_project_process
 from app.services.projects import visible_projects_query
+from app.security.perm import Perm
 
 
 # Catálogo fechado: os códigos são estáveis e independentes dos títulos do
@@ -103,9 +104,9 @@ def _participant_condition(person_id: uuid.UUID):
 
 def _project_scope_condition(ctx: AuthContext):
     conditions = []
-    if ctx.has_permission("project.view_own"):
+    if ctx.has_permission(Perm.PROJECT_VIEW_OWN):
         conditions.append(Project.pm_person_id == ctx.person_id)
-    if ctx.has_permission("project.view_delegated") and ctx.delegating_pm_ids:
+    if ctx.has_permission(Perm.PROJECT_VIEW_DELEGATED) and ctx.delegating_pm_ids:
         conditions.append(Project.pm_person_id.in_(ctx.delegating_pm_ids))
     conditions.extend(installer_project_scope_conditions(ctx))
     return conditions
@@ -122,12 +123,12 @@ def visible_events_query(db: Session, ctx: AuthContext) -> Query:
     scope, and the event permission check excludes deleted projects.
     """
     if not (
-        ctx.has_permission("calendar.view")
-        or ctx.has_permission("calendar.view_all_pm")
-        or ctx.has_permission("works_calendar.view_assigned_installer")
+        ctx.has_permission(Perm.CALENDAR_VIEW)
+        or ctx.has_permission(Perm.CALENDAR_VIEW_ALL_PM)
+        or ctx.has_permission(Perm.WORKS_CALENDAR_VIEW_ASSIGNED_INSTALLER)
     ):
         return db.query(CalendarEvent).filter(False)
-    if ctx.has_permission("project.view_all") or ctx.has_permission("calendar.view_all_pm"):
+    if ctx.has_permission(Perm.PROJECT_VIEW_ALL) or ctx.has_permission(Perm.CALENDAR_VIEW_ALL_PM):
         return db.query(CalendarEvent)
 
     project_conditions = _project_scope_condition(ctx)
@@ -169,7 +170,7 @@ def _validate_task_matches_project(
 
 def _allowed_assignee_ids(db: Session, ctx: AuthContext, project: Project | None) -> set[uuid.UUID]:
     """IDs que podem ser escolhidos sem transformar o lookup em diretório global."""
-    if ctx.has_permission("project.view_all"):
+    if ctx.has_permission(Perm.PROJECT_VIEW_ALL):
         return {
             person_id
             for (person_id,) in db.query(Person.id)

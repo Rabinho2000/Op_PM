@@ -35,6 +35,7 @@ from app.models.task import (
 from app.security.permissions import AuthContext, can_view_project_issue
 from app.services.inventory import on_site_balances_by_project
 from app.services.projects import ProjectTaskSummary, compute_project_task_summary_from_tasks, visible_projects_query
+from app.security.perm import Perm
 
 ATTENTION_GREEN = "green"
 ATTENTION_YELLOW = "yellow"
@@ -218,12 +219,12 @@ def get_map_projects(db: Session, ctx: AuthContext) -> tuple[list[MapProject], l
 
     tasks_by_project = _load_tasks_by_project(db, project_ids)
     issue_counts_by_project = _load_issue_counts_by_project(db, project_ids)
-    material_visible = ctx.has_permission("inventory.view")
+    material_visible = ctx.has_permission(Perm.INVENTORY_VIEW)
     # Só executa a query de inventário se o utilizador puder ver o
     # resultado — evita trabalho e, sobretudo, nunca deixa o cálculo
     # depender de dados que o pedido não devolve (ver _compute_attention).
     material_sku_counts = _load_material_presence_by_project(db, project_ids) if material_visible else {}
-    visits_visible = ctx.has_permission("calendar.view")
+    visits_visible = ctx.has_permission(Perm.CALENDAR_VIEW)
     visits_by_project = _load_upcoming_visits_by_project(db, project_ids) if visits_visible else {}
     assignee_names = _load_person_names(
         db,

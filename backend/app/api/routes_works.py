@@ -30,6 +30,7 @@ from app.security.permissions import (
 from app.services.project_lifecycle import LIFECYCLE_STATUS_CODES
 from app.services.team_assignments import AssignmentError, get_teams_view
 from app.services.works_calendar import WindowError, get_works_calendar
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/works", tags=["works"])
 
@@ -125,7 +126,7 @@ def works_calendar_endpoint(
 ) -> WorksCalendarRead:
     if not (
         can_view_installers(ctx)
-        or ctx.has_permission("works_calendar.view_assigned_installer")
+        or ctx.has_permission(Perm.WORKS_CALENDAR_VIEW_ASSIGNED_INSTALLER)
     ):
         raise HTTPException(status_code=403, detail="Sem permissão para ver o calendário de obras.")
     invalid = sorted(set(lifecycle_status or []) - LIFECYCLE_STATUS_CODES)

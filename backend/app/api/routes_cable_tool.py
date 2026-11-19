@@ -16,6 +16,7 @@ from app.config import Settings, get_settings
 from app.schemas.cable_tool import CableToolRead
 from app.security.current_user import get_auth_context
 from app.security.permissions import AuthContext
+from app.security.perm import Perm
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,7 @@ def get_cable_tool(
     settings: Settings = Depends(get_settings),
 ) -> CableToolRead:
     """Return the UTF-8 engine script with its manifest version and digest."""
-    if not ctx.has_permission("cable_design.view_costs"):
+    if not ctx.has_permission(Perm.CABLE_DESIGN_VIEW_COSTS):
         raise HTTPException(status_code=403, detail=_FORBIDDEN_DETAIL)
 
     path = settings.cable_tool_file

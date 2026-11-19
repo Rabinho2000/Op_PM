@@ -12,6 +12,7 @@ from app.security.current_user import get_auth_context
 from app.security.permissions import AuthContext
 from app.services.installer_access import list_assigned_installers
 from app.services.installer_inventory import list_installer_inventory
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/installer-access", tags=["installer-access"])
 
@@ -21,7 +22,7 @@ def assigned_teams_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ):
-    if not ctx.has_permission("installer_team.view_assigned_installer"):
+    if not ctx.has_permission(Perm.INSTALLER_TEAM_VIEW_ASSIGNED_INSTALLER):
         raise HTTPException(status_code=403, detail="Sem permissão para ver as equipas associadas.")
     return [
         InstallerAccessInstallerRead(
@@ -50,7 +51,7 @@ def assigned_inventory_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ):
-    if not ctx.has_permission("inventory.view_assigned_installer"):
+    if not ctx.has_permission(Perm.INVENTORY_VIEW_ASSIGNED_INSTALLER):
         raise HTTPException(status_code=403, detail="Sem permissão para ver o inventário associado.")
     try:
         items, total = list_installer_inventory(db, ctx, project_id=project_id, limit=limit, offset=offset)

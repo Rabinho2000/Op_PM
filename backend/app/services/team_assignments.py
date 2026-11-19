@@ -13,6 +13,8 @@ from app.models.installer import Installer, InstallerTeam
 from app.models.project import Project, ProjectTeamAssignment
 from app.security.permissions import (
     AuthContext,
+    DENIED_INSTALLER_VIEW,
+    DENIED_PROJECT_VIEW,
     PermissionDenied,
     can_plan_project_work,
     can_view_installers,
@@ -20,6 +22,7 @@ from app.security.permissions import (
     is_installer_readonly_scope,
 )
 from app.services.projects import visible_projects_query
+from app.security.perm import Perm
 
 
 _CONFLICT_LIFECYCLE_STATUSES = ("preparacao", "construcao")
@@ -149,7 +152,7 @@ def list_project_assignments(
     db: Session, *, project: Project, ctx: AuthContext
 ) -> list[TeamAssignmentData]:
     if not can_view_project(ctx, project):
-        raise PermissionDenied("project.view")
+        raise PermissionDenied(DENIED_PROJECT_VIEW)
     query = (
         db.query(ProjectTeamAssignment)
         .filter(ProjectTeamAssignment.project_id == project.id)
@@ -176,7 +179,7 @@ def create_project_assignment(
     ctx: AuthContext,
 ) -> TeamAssignmentData:
     if not can_plan_project_work(ctx, project):
-        raise PermissionDenied("project.plan_work")
+        raise PermissionDenied(Perm.PROJECT_PLAN_WORK)
     _, team_id, start_date, end_date = _check_same_project_overlap(
         db, project_id=project.id, team_id=team_id, start=start_date, end=end_date, project=project
     )
@@ -229,7 +232,7 @@ def update_project_assignment(
     ctx: AuthContext,
 ) -> TeamAssignmentData:
     if not can_plan_project_work(ctx, project):
-        raise PermissionDenied("project.plan_work")
+        raise PermissionDenied(Perm.PROJECT_PLAN_WORK)
     locked_assignment, team_id, start, end = _check_same_project_overlap(
         db,
         project_id=project.id,
@@ -298,7 +301,7 @@ def delete_project_assignment(
     ctx: AuthContext,
 ) -> None:
     if not can_plan_project_work(ctx, project):
-        raise PermissionDenied("project.plan_work")
+        raise PermissionDenied(Perm.PROJECT_PLAN_WORK)
     _lock_project(db, project.id, project)
     locked_assignment = _reload_assignment_after_project_lock(
         db, project_id=project.id, assignment_id=assignment.id
@@ -375,9 +378,9 @@ def get_teams_view(
 ) -> tuple[dt.date, int, list[TeamLocationInstaller]]:
     if not (
         can_view_installers(ctx)
-        or ctx.has_permission("installer_team.view_assigned_installer")
+        or ctx.has_permission(Perm.INSTALLER_TEAM_VIEW_ASSIGNED_INSTALLER)
     ):
-        raise PermissionDenied("installer.view")
+        raise PermissionDenied(DENIED_INSTALLER_VIEW)
     if days < 1 or days > 62:
         raise AssignmentError("O período deve ter entre 1 e 62 dias.")
     end = date + dt.timedelta(days=days - 1)

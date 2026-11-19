@@ -32,6 +32,7 @@ from app.security.permissions import (
 )
 from app.services.time_bank import DAILY_LIMIT_SECONDS, TimeBankValidationError, calculate_work_seconds
 from app.services.time_bank_import import PARSER_VERSION, parse_time_bank_xlsx
+from app.security.perm import Perm
 
 
 class TimeBankError(ValueError):
@@ -199,7 +200,7 @@ def _audit(db: Session, ctx: AuthContext, *, action: str, entity_id: uuid.UUID, 
 
 def list_people(db: Session, ctx: AuthContext) -> list[Person]:
     _require_view(ctx)
-    if ctx.has_permission("time_bank.view_all"):
+    if ctx.has_permission(Perm.TIME_BANK_VIEW_ALL):
         return db.query(Person).order_by(Person.display_name.asc(), Person.id.asc()).all()
     else:
         person = db.get(Person, ctx.person_id)
@@ -238,9 +239,9 @@ def create_time_bank_note(db: Session, ctx: AuthContext, body: TimeBankNoteCreat
 
 def _resolve_list_person_id(ctx: AuthContext, person_id: uuid.UUID | None) -> uuid.UUID | None:
     """Resolve omitted list scope without widening a reader's visibility."""
-    if person_id is not None or ctx.has_permission("time_bank.view_all"):
+    if person_id is not None or ctx.has_permission(Perm.TIME_BANK_VIEW_ALL):
         return person_id
-    if ctx.has_permission("time_bank.view_own"):
+    if ctx.has_permission(Perm.TIME_BANK_VIEW_OWN):
         return ctx.person_id
     raise TimeBankForbidden("Indique uma pessoa ou use uma permissão global.")
 
@@ -705,9 +706,9 @@ def summary(db: Session, ctx: AuthContext, *, person_id: uuid.UUID | None, year:
     if person_id is not None:
         _require_person_scope(ctx, person_id)
         persons = [_person_or_404(db, person_id)]
-    elif ctx.has_permission("time_bank.view_all"):
+    elif ctx.has_permission(Perm.TIME_BANK_VIEW_ALL):
         persons = db.query(Person).order_by(Person.display_name.asc(), Person.id.asc()).all()
-    elif ctx.has_permission("time_bank.view_own"):
+    elif ctx.has_permission(Perm.TIME_BANK_VIEW_OWN):
         persons = [_person_or_404(db, ctx.person_id)]
     else:
         raise TimeBankForbidden("Sem permissão para consultar o Banco de Horas.")

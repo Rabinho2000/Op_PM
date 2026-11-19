@@ -40,12 +40,13 @@ from app.services.material_requests import (
     request_total,
     update_draft,
 )
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/material-requests", tags=["material-requests"])
 
 
 def _require_view(ctx: AuthContext) -> None:
-    if not ctx.has_permission("inventory.view"):
+    if not ctx.has_permission(Perm.INVENTORY_VIEW):
         raise HTTPException(status_code=403, detail="Sem permissão para ver pedidos de material.")
 
 

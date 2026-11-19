@@ -31,6 +31,7 @@ from app.security.current_user import get_auth_context
 from app.security.permissions import AuthContext, PermissionDenied
 from app.services.file_storage import detect_image_type, safe_stored_file_path, write_private_file
 from app.services.inventory import item_balance
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/inventory", tags=["inventory-visual"])
 MAX_ITEM_PHOTO_BYTES = 10 * 1024 * 1024
@@ -55,11 +56,11 @@ def _require(ctx: AuthContext, permission: str) -> None:
 
 
 def _require_view(ctx: AuthContext) -> None:
-    _require(ctx, "inventory.view")
+    _require(ctx, Perm.INVENTORY_VIEW)
 
 
 def _require_catalog(ctx: AuthContext) -> None:
-    _require(ctx, "inventory.manage_catalog")
+    _require(ctx, Perm.INVENTORY_MANAGE_CATALOG)
 
 
 def _get_item_or_404(db: Session, item_id: uuid.UUID) -> InventoryItem:

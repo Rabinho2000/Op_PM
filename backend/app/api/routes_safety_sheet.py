@@ -27,6 +27,7 @@ from app.services.safety_sheet import (
     safety_sheet_snapshot,
     save_safety_sheet,
 )
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/projects", tags=["safety-sheet"])
 
@@ -72,7 +73,7 @@ def _get_project_or_404(db: Session, project_id: uuid.UUID, ctx: AuthContext):
 def _require_edit(ctx: AuthContext, project) -> None:
     if not can_view_project(ctx, project):
         raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
-    if not (can_edit_project(ctx, project) or ctx.has_permission("project.safety_sheet.edit")):
+    if not (can_edit_project(ctx, project) or ctx.has_permission(Perm.PROJECT_SAFETY_SHEET_EDIT)):
         raise HTTPException(status_code=403, detail="Sem permissão para editar a ficha de segurança.")
 
 

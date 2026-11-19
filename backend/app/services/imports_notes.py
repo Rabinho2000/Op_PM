@@ -52,6 +52,7 @@ from app.security.permissions import (
 )
 from app.security.project_fields import PM_EDITABLE_PROJECT_FIELDS
 from app.services.project_data import upsert_installation_data, upsert_licensing_data
+from app.security.perm import Perm
 
 # Versões do formulário aceites — "v11" no nome do ficheiro pode conter
 # conteúdo já na versão 12 (o nome do ficheiro nunca é a fonte de
@@ -121,7 +122,7 @@ def _require_existing_project_edit_rights(
     if changed_project_fields:
         if not can_edit_project(ctx, project):
             raise NotesImportPermissionError("Sem permissão para alterar este projeto existente.")
-        if not ctx.has_permission("project.edit_all"):
+        if not ctx.has_permission(Perm.PROJECT_EDIT_ALL):
             blocked = sorted(changed_project_fields - PM_EDITABLE_PROJECT_FIELDS)
             if blocked:
                 raise NotesImportPermissionError(

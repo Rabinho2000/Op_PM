@@ -100,6 +100,7 @@ from app.services.inventory_catalog import (
     update_inventory_item_atomic,
     update_inventory_location_atomic,
 )
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/inventory", tags=["inventory"])
 project_router = APIRouter(prefix="/api/projects/{project_id}/inventory", tags=["inventory"])
@@ -150,7 +151,7 @@ def _require(ctx: AuthContext, permission_code: str) -> None:
 
 
 def _require_catalog(ctx: AuthContext) -> None:
-    _require(ctx, "inventory.manage_catalog")
+    _require(ctx, Perm.INVENTORY_MANAGE_CATALOG)
 
 
 def _visible_project_ids(db: Session, ctx: AuthContext):
@@ -205,7 +206,7 @@ def _get_project_or_404(db: Session, project_id: uuid.UUID, ctx: AuthContext) ->
 def inventory_categories_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[str]:
-    _require(ctx, "inventory.view")
+    _require(ctx, Perm.INVENTORY_VIEW)
     return list(INVENTORY_CATEGORIES)
 
 
@@ -215,7 +216,7 @@ def inventory_summary_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[InventoryItemRead]:
-    _require(ctx, "inventory.view")
+    _require(ctx, Perm.INVENTORY_VIEW)
     items = db.query(InventoryItem).filter(InventoryItem.is_active.is_(True)).order_by(InventoryItem.name).all()
     return [_item_to_read(db, item, owner) for item in items]
 
@@ -226,7 +227,7 @@ def list_items_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[InventoryItemRead]:
-    _require(ctx, "inventory.view")
+    _require(ctx, Perm.INVENTORY_VIEW)
     items = db.query(InventoryItem).order_by(InventoryItem.name).all()
     return [_item_to_read(db, item, owner) for item in items]
 
@@ -237,7 +238,7 @@ def list_locations_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[InventoryLocationRead]:
-    _require(ctx, "inventory.view")
+    _require(ctx, Perm.INVENTORY_VIEW)
     query = _filter_project_scope(db.query(InventoryLocation), InventoryLocation.project_id, db, ctx)
     query = query.filter(InventoryLocation.owner == owner)
     return [InventoryLocationRead.model_validate(location) for location in query.order_by(InventoryLocation.name).all()]
@@ -352,7 +353,7 @@ def catalog_history_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[InventoryCatalogHistoryRead]:
-    _require(ctx, "inventory.view")
+    _require(ctx, Perm.INVENTORY_VIEW)
     query = _filter_catalog_history_scope(db.query(InventoryCatalogHistory), db, ctx)
     if entity_id is not None:
         query = query.filter(InventoryCatalogHistory.entity_id == entity_id)
@@ -466,7 +467,7 @@ def list_movements_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[InventoryMovementRead]:
-    _require(ctx, "inventory.view")
+    _require(ctx, Perm.INVENTORY_VIEW)
     query = _filter_project_scope(db.query(InventoryMovement), InventoryMovement.project_id, db, ctx)
     query = _filter_movement_owner(query, owner)
     if item_id is not None:
@@ -548,7 +549,7 @@ def project_inventory_summary_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectInventorySummary:
     project = _get_project_or_404(db, project_id, ctx)
-    _require(ctx, "inventory.view")
+    _require(ctx, Perm.INVENTORY_VIEW)
 
     requirements = (
         db.query(ProjectMaterialRequirement)

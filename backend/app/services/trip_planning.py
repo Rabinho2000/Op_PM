@@ -46,6 +46,7 @@ from app.services.map import (
     _next_visit,
 )
 from app.services.route_optimization import ResolvedStop, compute_route, resolve_stops
+from app.security.perm import Perm
 
 ISSUE_OPEN_STATUS = "aberta"
 
@@ -56,10 +57,10 @@ def plan_trip(db: Session, ctx: AuthContext, refs: list[tuple[str, uuid.UUID]], 
 
     project_ids = [s.id for s in stops if s.kind == "project"]
     visibility = TripVisibility(
-        tasks=ctx.has_permission("task.view_all") or ctx.has_permission("task.view_own"),
-        issues=ctx.has_permission("project_issue.view"),
-        material=ctx.has_permission("inventory.view"),
-        visits=ctx.has_permission("calendar.view"),
+        tasks=ctx.has_permission(Perm.TASK_VIEW_ALL) or ctx.has_permission(Perm.TASK_VIEW_OWN),
+        issues=ctx.has_permission(Perm.PROJECT_ISSUE_VIEW),
+        material=ctx.has_permission(Perm.INVENTORY_VIEW),
+        visits=ctx.has_permission(Perm.CALENDAR_VIEW),
     )
 
     tasks_by_project = _load_tasks_by_project(db, project_ids) if visibility.tasks else {}

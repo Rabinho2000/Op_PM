@@ -49,6 +49,7 @@ from app.services.planning import (
     update_calendar_event,
     update_planning_preferences,
 )
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/planning", tags=["planning"])
 preferences_router = APIRouter(prefix="/api/me", tags=["planning"])
@@ -56,9 +57,9 @@ preferences_router = APIRouter(prefix="/api/me", tags=["planning"])
 
 def _require_calendar_view(ctx: AuthContext) -> None:
     if not (
-        ctx.has_permission("calendar.view")
-        or ctx.has_permission("calendar.view_all_pm")
-        or ctx.has_permission("works_calendar.view_assigned_installer")
+        ctx.has_permission(Perm.CALENDAR_VIEW)
+        or ctx.has_permission(Perm.CALENDAR_VIEW_ALL_PM)
+        or ctx.has_permission(Perm.WORKS_CALENDAR_VIEW_ASSIGNED_INSTALLER)
     ):
         raise HTTPException(status_code=403, detail="Sem permissão para ver o planeamento.")
 
@@ -70,7 +71,7 @@ def _deny_installer_generic_planning(ctx: AuthContext) -> None:
 
 
 def _require_calendar_write(ctx: AuthContext) -> None:
-    if is_installer_readonly_scope(ctx) or not ctx.has_permission("calendar.manage"):
+    if is_installer_readonly_scope(ctx) or not ctx.has_permission(Perm.CALENDAR_MANAGE):
         raise HTTPException(status_code=403, detail="O papel externo tem acesso somente de leitura.")
 
 
@@ -169,7 +170,7 @@ def _to_read(db: Session, event: CalendarEvent, ctx: AuthContext) -> CalendarEve
     data.can_manage = can_manage_calendar_event(ctx, event.project if event.project_id else None)
     if (
         (event.project_id is not None and not project_details_visible)
-        or (event.project_id is None and ctx.has_permission("calendar.view_all_pm"))
+        or (event.project_id is None and ctx.has_permission(Perm.CALENDAR_VIEW_ALL_PM))
     ):
         # Cross-PM visibility is limited to scheduling context. Keep the
         # event title, dates, category, and participants, but do not expose

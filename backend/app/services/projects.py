@@ -23,6 +23,7 @@ from app.schemas.projects import ProjectCreate, ProjectUpdate
 from app.security.catalog import ROLE_PM
 from app.security.permissions import (
     AuthContext,
+    DENIED_INSTALLER_READ_ONLY,
     PermissionDenied,
     can_change_project_status,
     can_edit_project,
@@ -38,6 +39,7 @@ from app.services.project_lifecycle import (
 from app.services.installers import derive_work_window
 from app.security.project_fields import PM_EDITABLE_PROJECT_FIELDS
 from app.utils.text import normalize_key
+from app.security.perm import Perm
 
 _STANDARD_TASK_TYPES = frozenset(code for code, _ in DEFAULT_TASK_TYPES)
 _NUMERIC_PROJECT_PREFIX = re.compile(r"^\s*(\d+)_")
@@ -84,8 +86,8 @@ def eligible_project_managers(db: Session) -> list[tuple[uuid.UUID, str]]:
 def check_project_name(db: Session, *, name: str, ctx: AuthContext) -> list[Project]:
     """Return active project candidates sharing a normalized name or numeric prefix."""
     if is_installer_readonly_scope(ctx):
-        raise PermissionDenied("installer.read_only")
-    ctx.require("project.edit_all")
+        raise PermissionDenied(DENIED_INSTALLER_READ_ONLY)
+    ctx.require(Perm.PROJECT_EDIT_ALL)
 
     normalized = _normalize_project_name(name)
     prefix = _query_numeric_prefix(name)
@@ -106,8 +108,8 @@ def create_project(db: Session, *, body: ProjectCreate, ctx: AuthContext, commit
     caller's transaction, without refreshing or committing, so a route can
     build its response before deciding to commit."""
     if is_installer_readonly_scope(ctx):
-        raise PermissionDenied("installer.read_only")
-    ctx.require("project.edit_all")
+        raise PermissionDenied(DENIED_INSTALLER_READ_ONLY)
+    ctx.require(Perm.PROJECT_EDIT_ALL)
 
     name = body.name
     normalized_name = _normalize_project_name(name)
@@ -305,13 +307,13 @@ def visible_projects_query(db: Session, ctx: AuthContext) -> Query:
     """Restringe a query à visibilidade do utilizador — nunca devolve tudo
     e filtra depois em Python (evita esquecer o filtro nalgum sítio)."""
     query = db.query(Project).filter(Project.deleted_at.is_(None))
-    if ctx.has_permission("project.view_all"):
+    if ctx.has_permission(Perm.PROJECT_VIEW_ALL):
         return query
 
     conditions = []
-    if ctx.has_permission("project.view_own"):
+    if ctx.has_permission(Perm.PROJECT_VIEW_OWN):
         conditions.append(Project.pm_person_id == ctx.person_id)
-    if ctx.has_permission("project.view_delegated") and ctx.delegating_pm_ids:
+    if ctx.has_permission(Perm.PROJECT_VIEW_DELEGATED) and ctx.delegating_pm_ids:
         conditions.append(Project.pm_person_id.in_(ctx.delegating_pm_ids))
     conditions.extend(installer_project_scope_conditions(ctx))
     if conditions:
@@ -361,7 +363,7 @@ def get_visible_project(db: Session, ctx: AuthContext, project_id: uuid.UUID) ->
 
 def delete_project(db: Session, *, project: Project, reason: str, ctx: AuthContext) -> Project:
     """Remove um projeto da operação sem apagar os seus dados nem o histórico."""
-    ctx.require("project.delete")
+    ctx.require(Perm.PROJECT_DELETE)
     note = reason.strip()
     if not note:
         raise ValueError("Indique o motivo da remoção.")
@@ -387,7 +389,7 @@ def delete_project(db: Session, *, project: Project, reason: str, ctx: AuthConte
 
 def restore_project(db: Session, *, project: Project, ctx: AuthContext) -> Project:
     """Restaura um projeto apagado, preservando a auditoria de ambas ações."""
-    ctx.require("project.restore")
+    ctx.require(Perm.PROJECT_RESTORE)
     if project.deleted_at is None:
         raise ValueError("O projeto não está apagado.")
     deleted_at = project.deleted_at
@@ -434,23 +436,23 @@ def update_project(
     inteiro, antes de qualquer escrita — nunca aplica só os campos
     permitidos e ignora os outros em silêncio."""
     if is_installer_readonly_scope(ctx):
-        raise PermissionDenied("installer.read_only")
+        raise PermissionDenied(DENIED_INSTALLER_READ_ONLY)
     if not can_edit_project(ctx, project):
-        raise PermissionDenied("project.edit_all|project.edit_own_progress")
+        raise PermissionDenied(f"{Perm.PROJECT_EDIT_ALL}|{Perm.PROJECT_EDIT_OWN_PROGRESS}")
 
     # exclude_unset: um campo omitido do pedido nunca é tocado; um campo
     # presente com valor `null` limpa-o explicitamente — distinção
     # importante para não apagar dados por omissão de um campo no body.
     changed_fields = changes.model_dump(exclude_unset=True)
 
-    if not ctx.has_permission("project.edit_all"):
+    if not ctx.has_permission(Perm.PROJECT_EDIT_ALL):
         # Chegou aqui só com project.edit_own_progress (can_edit_project já
         # garantiu que é o PM deste projeto) — restringe à allowlist.
         disallowed_fields = sorted(set(changed_fields) - PM_EDITABLE_PROJECT_FIELDS)
         if disallowed_fields:
             raise PermissionDenied(
-                f"project.edit_all (campos administrativos não permitidos a "
-                f"project.edit_own_progress: {', '.join(disallowed_fields)})"
+                f"{Perm.PROJECT_EDIT_ALL} (campos administrativos não permitidos a "
+                f"{Perm.PROJECT_EDIT_OWN_PROGRESS}: {', '.join(disallowed_fields)})"
             )
 
     for field_name, new_value in changed_fields.items():
@@ -488,7 +490,7 @@ def change_lifecycle_status(
     projeto, um aviso opcional quando a mudança salta estados (D6 — livre, só
     avisa). Repetir o estado atual é um no-op: sem histórico, sem aviso."""
     if not can_change_project_status(ctx, project):
-        raise PermissionDenied("project.change_status")
+        raise PermissionDenied(Perm.PROJECT_CHANGE_STATUS)
     if new_status not in LIFECYCLE_STATUS_CODES:
         raise ValueError(f"Estado de projeto inválido: {new_status!r}")
     old_status = project.lifecycle_status

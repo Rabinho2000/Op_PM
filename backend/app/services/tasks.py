@@ -29,6 +29,7 @@ from app.models.task import (
 from app.schemas.tasks import TaskCreate, TaskUpdate
 from app.security.permissions import (
     AuthContext,
+    DENIED_INSTALLER_READ_ONLY,
     PermissionDenied,
     can_create_task,
     can_edit_task,
@@ -37,6 +38,7 @@ from app.security.permissions import (
     installer_project_scope_conditions,
 )
 from app.utils.timezones import today_lisbon
+from app.security.perm import Perm
 
 # Máquina de estados: de onde -> para onde é permitido ir diretamente.
 # Um estado "transita" para si próprio como no-op (sempre permitido, sem
@@ -85,21 +87,21 @@ def ensure_default_tasks_for_project(db: Session, project: Project) -> list[Task
 
 
 def visible_tasks_query(db: Session, ctx: AuthContext) -> Query:
-    if ctx.has_permission("task.view_all"):
+    if ctx.has_permission(Perm.TASK_VIEW_ALL):
         return db.query(Task).join(Project, Task.project_id == Project.id).filter(Project.deleted_at.is_(None))
 
     project_conditions = []
-    if ctx.has_permission("project.view_own"):
+    if ctx.has_permission(Perm.PROJECT_VIEW_OWN):
         project_conditions.append(Project.pm_person_id == ctx.person_id)
-    if ctx.has_permission("project.view_delegated") and ctx.delegating_pm_ids:
+    if ctx.has_permission(Perm.PROJECT_VIEW_DELEGATED) and ctx.delegating_pm_ids:
         project_conditions.append(Project.pm_person_id.in_(ctx.delegating_pm_ids))
-    if ctx.has_permission("task.view_assigned_installer"):
+    if ctx.has_permission(Perm.TASK_VIEW_ASSIGNED_INSTALLER):
         project_conditions.extend(installer_project_scope_conditions(ctx))
 
     conditions = []
     if project_conditions:
         conditions.append(or_(*project_conditions))
-    if ctx.has_permission("task.view_own") and not has_only_delegated_project_scope(ctx) and not is_installer_readonly_scope(ctx):
+    if ctx.has_permission(Perm.TASK_VIEW_OWN) and not has_only_delegated_project_scope(ctx) and not is_installer_readonly_scope(ctx):
         conditions.append(Task.assigned_to_person_id == ctx.person_id)
     if not conditions:
         return db.query(Task).filter(False)
@@ -149,19 +151,19 @@ def get_visible_task(db: Session, ctx: AuthContext, task_id: uuid.UUID) -> Task 
 
 def create_task(db: Session, *, changes: TaskCreate, ctx: AuthContext) -> Task:
     if is_installer_readonly_scope(ctx):
-        raise PermissionDenied("installer.read_only")
+        raise PermissionDenied(DENIED_INSTALLER_READ_ONLY)
     project = db.get(Project, changes.project_id)
     if project is None:
         raise ValueError("Projeto não encontrado.")
     if not can_create_task(ctx, project):
-        raise PermissionDenied("task.edit_all|task.edit_own")
+        raise PermissionDenied(f"{Perm.TASK_EDIT_ALL}|{Perm.TASK_EDIT_OWN}")
     if changes.priority not in TASK_PRIORITIES:
         raise ValueError(f"Prioridade inválida: {changes.priority!r}")
     if changes.category not in TASK_CATEGORIES:
         raise ValueError(f"Categoria inválida: {changes.category!r}")
 
     assigned_to_person_id = changes.assigned_to_person_id
-    if ctx.has_permission("task.edit_all"):
+    if ctx.has_permission(Perm.TASK_EDIT_ALL):
         if assigned_to_person_id is not None and db.get(Person, assigned_to_person_id) is None:
             raise InvalidTaskAssignment("Responsável atribuído não existe.")
     else:
@@ -192,13 +194,13 @@ def create_task(db: Session, *, changes: TaskCreate, ctx: AuthContext) -> Task:
 
 def update_task(db: Session, *, task: Task, changes: TaskUpdate, ctx: AuthContext) -> Task:
     if is_installer_readonly_scope(ctx):
-        raise PermissionDenied("installer.read_only")
+        raise PermissionDenied(DENIED_INSTALLER_READ_ONLY)
     if not can_edit_task(ctx, task):
-        raise PermissionDenied("task.edit_all|task.edit_own")
+        raise PermissionDenied(f"{Perm.TASK_EDIT_ALL}|{Perm.TASK_EDIT_OWN}")
 
     changed_fields = changes.model_dump(exclude_unset=True)
 
-    if not ctx.has_permission("task.edit_all") and "assigned_to_person_id" in changed_fields:
+    if not ctx.has_permission(Perm.TASK_EDIT_ALL) and "assigned_to_person_id" in changed_fields:
         # PM (só task.edit_own) nunca pode reatribuir uma tarefa — nem para
         # si mesmo nem para outra pessoa; rejeita o pedido inteiro, sem
         # escrita parcial (mesmo princípio de D-028).

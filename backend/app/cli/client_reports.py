@@ -26,6 +26,7 @@ from app.models.identity import User
 from app.security.permissions import AuthContext, load_auth_context
 from app.services.client_report_scheduler import due_configs, run_due, summarize
 from app.services.client_reports import REPORT_MANAGE
+from app.security.perm import Perm
 
 logger = logging.getLogger("app.cli.client_reports")
 
@@ -36,7 +37,7 @@ class SchedulerIdentityError(RuntimeError):
 
 def _is_suitable(ctx: AuthContext) -> bool:
     return ctx.has_permission(REPORT_MANAGE) and (
-        ctx.has_permission("project.view_all") or ctx.has_permission("project.edit_all")
+        ctx.has_permission(Perm.PROJECT_VIEW_ALL) or ctx.has_permission(Perm.PROJECT_EDIT_ALL)
     )
 
 

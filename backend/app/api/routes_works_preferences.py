@@ -15,6 +15,7 @@ from app.services.works_preferences import (
     get_works_preferences,
     update_works_preferences,
 )
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/me", tags=["works-preferences"])
 
@@ -25,12 +26,12 @@ _DETAIL_WRITE_FAILURE = "Não foi possível guardar as preferências do calendá
 
 def _require_view(ctx: AuthContext) -> None:
     # Mantém o catálogo global e aceita o canal explicitamente scoped.
-    if not (can_view_installers(ctx) or ctx.has_permission("works_calendar.view_assigned_installer")):
+    if not (can_view_installers(ctx) or ctx.has_permission(Perm.WORKS_CALENDAR_VIEW_ASSIGNED_INSTALLER)):
         raise HTTPException(status_code=403, detail="Sem permissão para ver o calendário de obras.")
 
 
 def _require_write(ctx: AuthContext) -> None:
-    if is_installer_readonly_scope(ctx) or not ctx.has_permission("calendar.view"):
+    if is_installer_readonly_scope(ctx) or not ctx.has_permission(Perm.CALENDAR_VIEW):
         raise HTTPException(status_code=403, detail="O papel externo tem acesso somente de leitura.")
 
 

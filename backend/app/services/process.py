@@ -42,6 +42,7 @@ from app.schemas.process import (
 from app.security.permissions import AuthContext, PermissionDenied, can_update_process_stage
 from app.services.installers import business_day
 from app.services.process_alerts import notify_stage_completed_if_transitioned, stage_completion_snapshot
+from app.security.perm import Perm
 
 
 class ProcessError(ValueError):
@@ -302,7 +303,7 @@ def _set_subtask_done_without_commit(
     db: Session, *, project: Project, subtask: WorkflowSubtask, done: bool, ctx: AuthContext
 ) -> bool:
     if not can_update_process_stage(ctx, project, subtask.stage):
-        raise PermissionDenied("workflow.update_progress")
+        raise PermissionDenied(Perm.WORKFLOW_UPDATE_PROGRESS)
     progress = (
         db.query(ProjectSubtaskProgress)
         .filter(ProjectSubtaskProgress.project_id == project.id, ProjectSubtaskProgress.subtask_id == subtask.id)
@@ -360,7 +361,7 @@ def set_stage_subtasks_done(
         raise ProcessError("Etapa não encontrada.")
     subtasks = db.query(WorkflowSubtask).filter(WorkflowSubtask.stage_id == stage.id).order_by(WorkflowSubtask.sort_order).all()
     if any(not can_update_process_stage(ctx, project, subtask.stage) for subtask in subtasks):
-        raise PermissionDenied("workflow.update_progress")
+        raise PermissionDenied(Perm.WORKFLOW_UPDATE_PROGRESS)
     was_complete = stage_completion_snapshot(db, project.id, stage.id)
     try:
         for subtask in subtasks:
@@ -379,7 +380,7 @@ def set_contact_done(db: Session, *, project: Project, stage_id: uuid.UUID, done
     if stage is None:
         raise ProcessError("Etapa não encontrada.")
     if not can_update_process_stage(ctx, project, stage):
-        raise PermissionDenied("workflow.update_progress")
+        raise PermissionDenied(Perm.WORKFLOW_UPDATE_PROGRESS)
     if not stage.has_contact_checkpoint:
         raise ProcessError("Esta etapa não tem ponto de contacto.")
     progress = (

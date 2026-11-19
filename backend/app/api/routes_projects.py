@@ -73,6 +73,7 @@ from app.services.team_assignments import (
     list_project_assignments,
     update_project_assignment,
 )
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -83,7 +84,7 @@ def _editable_fields(ctx: AuthContext, project: Project) -> list[str]:
     """Mesma regra de app/services/projects.py:update_project (D-028)."""
     if not can_edit_project(ctx, project):
         return []
-    if ctx.has_permission("project.edit_all"):
+    if ctx.has_permission(Perm.PROJECT_EDIT_ALL):
         return sorted(ProjectUpdate.model_fields)
     return sorted(PM_EDITABLE_PROJECT_FIELDS)
 
@@ -139,15 +140,15 @@ def _to_read(
     data.can_plan_work = can_plan_project_work(ctx, project)
     data.has_project_photo = project.primary_photo_storage_name is not None
     data.can_edit_project_photo = can_edit_project(ctx, project)
-    data.can_delete = ctx.has_permission("project.delete") and project.deleted_at is None
-    data.can_restore = ctx.has_permission("project.restore") and project.deleted_at is not None
+    data.can_delete = ctx.has_permission(Perm.PROJECT_DELETE) and project.deleted_at is None
+    data.can_restore = ctx.has_permission(Perm.PROJECT_RESTORE) and project.deleted_at is not None
     data.can_edit_credentials = can_edit_project_credentials(ctx, project)
     data.can_reveal_credentials = can_reveal_project_credential(ctx, project)
     data.can_edit_sim_cards = can_edit_project_sim_cards(ctx, project)
     data.can_reveal_sim_secrets = can_reveal_project_sim_secrets(ctx, project)
     data.can_edit_surplus_contracts = can_edit_project_surplus_contracts(ctx, project)
     data.can_edit_payments = can_edit_project_payments(ctx, project)
-    if include_payments and ctx.has_permission("payment.view"):
+    if include_payments and ctx.has_permission(Perm.PAYMENT_VIEW):
         summaries = (
             payment_summaries_by_project(db, ctx=ctx, projects=[project])
             if payment_summaries is _PAYMENTS_COMPUTE
@@ -239,7 +240,7 @@ def list_projects_endpoint(
     percents = progress_percent_by_project(db, [p.id for p in projects])
     payments = (
         payment_summaries_by_project(db, ctx=ctx, projects=projects)
-        if ctx.has_permission("payment.view")
+        if ctx.has_permission(Perm.PAYMENT_VIEW)
         else None
     )
     result = [_to_read(db, p, ctx, percents, payments) for p in projects]
@@ -274,7 +275,7 @@ def eligible_project_managers_endpoint(
 ) -> list[ProjectEligibleManagerRead]:
     _require_installer_mutation_scope(ctx)
     try:
-        ctx.require("project.edit_all")
+        ctx.require(Perm.PROJECT_EDIT_ALL)
     except PermissionDenied as exc:
         raise HTTPException(status_code=403, detail="Não tem permissão para criar projetos.") from exc
     return [
@@ -329,7 +330,7 @@ def list_deleted_projects_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[ProjectRead]:
-    if not ctx.has_permission("project.restore"):
+    if not ctx.has_permission(Perm.PROJECT_RESTORE):
         raise HTTPException(status_code=403, detail="Sem permissão para ver projetos apagados.")
     projects = db.query(Project).filter(Project.deleted_at.is_not(None)).order_by(Project.deleted_at.desc()).all()
     return [_to_read(db, project, ctx, include_payments=False) for project in projects]
@@ -375,7 +376,7 @@ def delete_project_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> None:
-    if not ctx.has_permission("project.delete"):
+    if not ctx.has_permission(Perm.PROJECT_DELETE):
         raise HTTPException(status_code=403, detail="Sem permissão para apagar projetos.")
     project = db.query(Project).filter(Project.id == project_id, Project.deleted_at.is_(None)).one_or_none()
     if project is None:
@@ -394,7 +395,7 @@ def restore_project_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectRead:
-    if not ctx.has_permission("project.restore"):
+    if not ctx.has_permission(Perm.PROJECT_RESTORE):
         raise HTTPException(status_code=403, detail="Sem permissão para restaurar projetos.")
     project = db.query(Project).filter(Project.id == project_id, Project.deleted_at.is_not(None)).one_or_none()
     if project is None:
@@ -581,7 +582,7 @@ def get_project_history_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[ProjectHistoryRead]:
     project = get_visible_project(db, ctx, project_id)
-    if project is None and ctx.has_permission("project.restore"):
+    if project is None and ctx.has_permission(Perm.PROJECT_RESTORE):
         # O histórico do projeto apagado é uma superfície de auditoria
         # restrita: não o tornar visível via get_visible_project, que oculta
         # deliberadamente todas as linhas apagadas na operação normal.
@@ -604,7 +605,7 @@ def get_project_history_endpoint(
     )
     result: list[ProjectHistoryRead] = []
     for entry in entries:
-        if entry.field_name.startswith("payment.") and not ctx.has_permission("payment.view"):
+        if entry.field_name.startswith("payment.") and not ctx.has_permission(Perm.PAYMENT_VIEW):
             continue
         data = ProjectHistoryRead.model_validate(entry)
         if entry.changed_by_person_id:

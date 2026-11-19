@@ -28,6 +28,7 @@ from app.services.works_saved_views import (
     list_saved_views,
     update_saved_view,
 )
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/me/works-saved-views", tags=["works-saved-views"])
 
@@ -37,7 +38,7 @@ _DETAIL_DELETE_FAILURE = "Não foi possível apagar a vista do calendário de ob
 
 
 def _require_view(ctx: AuthContext) -> None:
-    if not (can_view_installers(ctx) or ctx.has_permission("works_calendar.view_assigned_installer")):
+    if not (can_view_installers(ctx) or ctx.has_permission(Perm.WORKS_CALENDAR_VIEW_ASSIGNED_INSTALLER)):
         raise HTTPException(
             status_code=403,
             detail="Sem permissão para ver o calendário de obras.",
@@ -45,7 +46,7 @@ def _require_view(ctx: AuthContext) -> None:
 
 
 def _require_write(ctx: AuthContext) -> None:
-    if is_installer_readonly_scope(ctx) or not ctx.has_permission("calendar.view"):
+    if is_installer_readonly_scope(ctx) or not ctx.has_permission(Perm.CALENDAR_VIEW):
         raise HTTPException(status_code=403, detail="O papel externo tem acesso somente de leitura.")
 
 
