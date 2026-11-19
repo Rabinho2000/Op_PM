@@ -4,11 +4,12 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, String, UniqueConstraint, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, GUID
 from app.models.base import UUIDPk
+from app.models.constraints import vocabulary_check
 from app.models.people import Person
 
 PAYMENT_MILESTONES: tuple[str, ...] = (
@@ -29,10 +30,7 @@ PAYMENT_MILESTONE_LABELS: dict[str, str] = {
 class ProjectPaymentMilestone(UUIDPk, Base):
     __tablename__ = "project_payment_milestones"
     __table_args__ = (
-        CheckConstraint(
-            "milestone IN ('adjudicacao', 'entrada_obra', 'fim_obra', 'certificado_final')",
-            name="ck_project_payment_milestone_code",
-        ),
+        vocabulary_check("milestone", PAYMENT_MILESTONES, name="ck_project_payment_milestone_code"),
         UniqueConstraint("project_id", "milestone", name="uq_project_payment_milestone"),
     )
 

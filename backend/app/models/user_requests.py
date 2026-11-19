@@ -4,11 +4,12 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import GUID, Base
 from app.models.base import TimestampMixin, UUIDPk
+from app.models.constraints import vocabulary_check
 
 REQUEST_STATUS_OPEN = "open"
 REQUEST_STATUS_RESOLVED = "resolved"
@@ -20,10 +21,7 @@ class UserRequest(UUIDPk, TimestampMixin, Base):
 
     __tablename__ = "user_requests"
     __table_args__ = (
-        CheckConstraint(
-            "status IN ('open', 'resolved')",
-            name="ck_user_requests_status",
-        ),
+        vocabulary_check("status", REQUEST_STATUSES, name="ck_user_requests_status"),
         Index("ix_user_requests_status_updated_at", "status", "updated_at"),
     )
 

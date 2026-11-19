@@ -16,6 +16,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
+from app.models.constraints import vocabulary_check
 
 PERIOD_TYPES: frozenset[str] = frozenset({"year", "quarter", "semester", "month"})
 GOAL_METRICS: frozenset[str] = frozenset(
@@ -38,6 +39,11 @@ GOAL_VALUE = Numeric(14, 3)
 
 class GoalPeriod(UUIDPk, TimestampMixin, Base):
     __tablename__ = "goal_periods"
+    __table_args__ = (
+        vocabulary_check("period_type", PERIOD_TYPES, name="ck_goal_periods_period_type"),
+        vocabulary_check("metric", GOAL_METRICS, name="ck_goal_periods_metric"),
+        vocabulary_check("scope", GOAL_SCOPES, name="ck_goal_periods_scope"),
+    )
 
     period_type: Mapped[str] = mapped_column(String(16), nullable=False)
     year: Mapped[int] = mapped_column(nullable=False)

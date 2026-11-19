@@ -13,6 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
+from app.models.constraints import vocabulary_check
 
 if TYPE_CHECKING:
     from app.models.project import Project
@@ -44,6 +45,11 @@ class ProjectIssue(UUIDPk, TimestampMixin, Base):
     continua a existir para controlo do próprio mapa."""
 
     __tablename__ = "project_issues"
+    __table_args__ = (
+        vocabulary_check("category", ISSUE_CATEGORIES, name="ck_project_issues_category"),
+        vocabulary_check("priority", ISSUE_PRIORITIES, name="ck_project_issues_priority"),
+        vocabulary_check("status", ISSUE_STATUSES, name="ck_project_issues_status"),
+    )
 
     project_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("projects.id"), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)

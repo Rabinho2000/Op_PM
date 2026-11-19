@@ -48,7 +48,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
+from app.models.constraints import vocabulary_check
 from app.models.installer import Installer, InstallerTeam
+from app.services.project_lifecycle import LIFECYCLE_STATUS_CODES
 
 if TYPE_CHECKING:
     from app.models.people import Person
@@ -67,6 +69,9 @@ class Project(UUIDPk, TimestampMixin, Base):
         CheckConstraint(
             "installer_team_id IS NULL OR installer_id IS NOT NULL",
             name="ck_project_team_needs_installer",
+        ),
+        vocabulary_check(
+            "lifecycle_status", LIFECYCLE_STATUS_CODES, name="ck_projects_lifecycle_status", nullable=True
         ),
     )
 

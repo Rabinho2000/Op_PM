@@ -57,6 +57,7 @@ from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
 from app.models.identity import AuthAuditLog, User
+from app.utils.email import normalize_email
 
 
 class ProvisioningError(ValueError):
@@ -90,7 +91,7 @@ def link_user_to_entra_object_id(
 
     user = (
         db.query(User)
-        .filter(func.lower(User.email) == user_email.lower(), User.is_active.is_(True))
+        .filter(func.lower(User.email) == normalize_email(user_email), User.is_active.is_(True))
         .one_or_none()
     )
     if user is None:
