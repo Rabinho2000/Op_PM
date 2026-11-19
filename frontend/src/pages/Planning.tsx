@@ -30,6 +30,7 @@ import { useToast } from "../components/Toast";
 import { Alert, Avatar, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHeader, Tone } from "../components/ui";
 import { useSession } from "../session/SessionContext";
 import { lisbonWallClockToIso, todayIsoLisbon } from "../utils/dates";
+import { normalizeSearchText } from "../utils/text";
 import "./Planning.css";
 
 type ViewMode = "list" | "week" | "month";
@@ -61,14 +62,6 @@ const LISBON_TIME_ONLY = new Intl.DateTimeFormat("pt-PT", {
 
 const NATURAL_PROJECT_COLLATOR = new Intl.Collator("pt-PT", { numeric: true, sensitivity: "base" });
 const PERSON_COLLATOR = new Intl.Collator("pt-PT", { sensitivity: "base" });
-
-export function normalizePlanningSearch(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase("pt-PT")
-    .trim();
-}
 
 export function sortProjectsNaturally(projects: Project[]): Project[] {
   return [...projects].sort((a, b) => NATURAL_PROJECT_COLLATOR.compare(a.name, b.name) || a.id.localeCompare(b.id));
@@ -265,10 +258,10 @@ function PlanningProjectCombobox({
 
   const visibleProjects = useMemo(() => {
     const ordered = sortProjectsNaturally(projects);
-    const normalized = normalizePlanningSearch(query);
+    const normalized = normalizeSearchText(query);
     const matching = normalized.length === 0
       ? ordered
-      : ordered.filter((project) => normalizePlanningSearch(project.name).includes(normalized));
+      : ordered.filter((project) => normalizeSearchText(project.name).includes(normalized));
     if (selectedProject && !matching.some((project) => project.id === selectedProject.id)) {
       return [selectedProject, ...matching];
     }

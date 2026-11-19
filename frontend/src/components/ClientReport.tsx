@@ -14,6 +14,7 @@ import {
 } from "../api/client";
 import { useToast } from "./Toast";
 import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, type Tone } from "./ui";
+import { formatLisbonDateTime } from "../utils/dates";
 
 const WEEKDAYS = [
   "Segunda-feira",
@@ -60,18 +61,7 @@ function formFromReport(report: ClientReportResponse): ClientReportForm {
 }
 
 function formatLisbonDate(value: string | null | undefined): string {
-  if (!value) return "Sem próximo envio agendado";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("pt-PT", {
-    timeZone: "Europe/Lisbon",
-    weekday: "long",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
+  return value ? formatLisbonDateTime(value, { weekday: true }) : "Sem próximo envio agendado";
 }
 
 function statusLabel(status: string): string {

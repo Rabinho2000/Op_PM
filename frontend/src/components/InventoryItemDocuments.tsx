@@ -9,6 +9,7 @@ import {
   errorMessage,
 } from "../api/client";
 import { Alert } from "./ui";
+import { formatNumberPt } from "../utils/numbers";
 
 const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 const ACCEPTED_DOCUMENT_TYPES = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
@@ -29,7 +30,7 @@ function formatDocumentSize(size: number): string {
     value /= 1024;
     unitIndex += 1;
   }
-  return `${new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 1 }).format(value)} ${units[unitIndex]}`;
+  return `${formatNumberPt(value, { max: 1 })} ${units[unitIndex]}`;
 }
 
 export default function InventoryItemDocuments({

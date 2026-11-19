@@ -32,7 +32,8 @@ import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHe
 import { useSession } from "../session/SessionContext";
 import { formatQuantity } from "../utils/quantities";
 import CategoryIllustration from "./CategoryIllustration";
-import { normalizeInventorySearch, searchInventoryItems } from "./inventorySearch";
+import { searchInventoryItems } from "./inventorySearch";
+import { normalizeSearchText } from "../utils/text";
 
 const MOVEMENT_TYPE_LABELS: Record<string, string> = {
   entrada: "Entrada",
@@ -228,7 +229,7 @@ const INVENTORY_CATEGORY_ORDER = [
 ] as const;
 
 function inventoryCategoryKey(value: string): string {
-  return normalizeInventorySearch(value).replace(/[^a-z0-9]/g, "");
+  return normalizeSearchText(value).replace(/[^a-z0-9]/g, "");
 }
 
 const LEGACY_CATEGORY_BY_KEY = new Map(
@@ -246,14 +247,14 @@ function canonicalInventoryCategory(category: string | null | undefined): string
 }
 
 function inventoryCategorySlug(category: string): string {
-  return normalizeInventorySearch(category).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return normalizeSearchText(category).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
 function highlightSearchTerm(text: string, query: string) {
   const normalizedChars: string[] = [];
   const sourceIndexes: number[] = [];
   Array.from(text).forEach((character, index) => {
-    const normalized = normalizeInventorySearch(character);
+    const normalized = normalizeSearchText(character);
     for (const normalizedCharacter of normalized) {
       normalizedChars.push(normalizedCharacter);
       sourceIndexes.push(index);
@@ -261,7 +262,7 @@ function highlightSearchTerm(text: string, query: string) {
   });
   const normalizedText = normalizedChars.join("");
   const markedIndexes = new Set<number>();
-  const queryWords = normalizeInventorySearch(query).split(/\s+/).filter(Boolean);
+  const queryWords = normalizeSearchText(query).split(/\s+/).filter(Boolean);
   for (const word of queryWords) {
     let from = 0;
     while (from < normalizedText.length) {

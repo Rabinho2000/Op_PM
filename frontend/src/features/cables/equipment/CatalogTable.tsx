@@ -1,11 +1,12 @@
 import type { ReactNode } from "react";
+import { EMPTY_VALUE, formatNumberPt } from "../../../utils/numbers";
 import type { GatewayCatalog, InverterCatalog, PanelCatalog } from "../engine";
 
 export type EquipmentKind = "inverters" | "gateways" | "panels";
 
 export function formatCatalogValue(value: number | null | undefined, suffix = ""): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
-  return `${new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 2 }).format(value)}${suffix}`;
+  const text = formatNumberPt(value);
+  return text === EMPTY_VALUE ? text : `${text}${suffix}`;
 }
 
 export function equipmentMatches(value: { marca: string; modelo: string }, query: string): boolean {

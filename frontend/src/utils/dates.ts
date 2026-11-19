@@ -96,6 +96,24 @@ export function relativeDayLabel(iso: string | null, todayIso: string): string {
   return diff > 0 ? `daqui a ${diff} dias` : `há ${-diff} dias`;
 }
 
+/**
+ * Data e hora de Lisboa por extenso ("19/11/2026, 15:30"; com `weekday`,
+ * "quinta-feira, 19/11/2026, 15:30"). Um valor que não é data volta tal e qual.
+ */
+export function formatLisbonDateTime(isoDateTime: string, { weekday = false }: { weekday?: boolean } = {}): string {
+  const date = new Date(isoDateTime);
+  if (Number.isNaN(date.getTime())) return isoDateTime;
+  return new Intl.DateTimeFormat("pt-PT", {
+    timeZone: "Europe/Lisbon",
+    ...(weekday ? { weekday: "long" as const } : {}),
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 export function formatDateTimePt(isoDateTime: string): string {
   const date = new Date(isoDateTime);
   if (Number.isNaN(date.getTime())) return isoDateTime;

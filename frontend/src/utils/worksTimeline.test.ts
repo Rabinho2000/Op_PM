@@ -11,7 +11,6 @@ import {
   daysBetween,
   defaultWindow,
   endOfMonth,
-  formatIsoPt,
   monthTicks,
   packLanes,
   workEndDate,
@@ -64,9 +63,6 @@ describe("datas (UTC, sem deslocar dias)", () => {
     expect(startOfWeek("2026-09-21")).toBe("2026-09-21"); // segunda
   });
 
-  it("formata como dia/mês/ano", () => {
-    expect(formatIsoPt("2026-05-12")).toBe("12/05/2026");
-  });
 });
 
 describe("janelas", () => {

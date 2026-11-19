@@ -28,8 +28,8 @@ import { useLifecycleStatuses, LifecycleBadge } from "../components/LifecycleSta
 import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, PageHeader } from "../components/ui";
 import { useToast } from "../components/Toast";
 import WorksTimeline, { type WorksDensity } from "../components/WorksTimeline";
-import { todayIsoLisbon } from "../utils/dates";
-import { defaultWindow, formatIsoPt, shiftWindow, windowFrom, Zoom, ZOOMS } from "../utils/worksTimeline";
+import { formatDatePt, todayIsoLisbon } from "../utils/dates";
+import { defaultWindow, shiftWindow, windowFrom, Zoom, ZOOMS } from "../utils/worksTimeline";
 import { useSession } from "../session/SessionContext";
 import "./Works.css";
 
@@ -748,7 +748,7 @@ export default function Works() {
         <>
           <div className="works__timeline-meta">
             <p className="small muted" aria-live="polite">
-              {formatIsoPt(win.from)} a {formatIsoPt(win.to)} · {data.summary.works} obra{data.summary.works === 1 ? "" : "s"}
+              {formatDatePt(win.from)} a {formatDatePt(win.to)} · {data.summary.works} obra{data.summary.works === 1 ? "" : "s"}
               {data.summary.conflicts > 0 && <> · <strong className="text-danger">{data.summary.conflicts} em conflito</strong></>}
               {data.summary.estimated > 0 && <> · {data.summary.estimated} com datas estimadas</>}
               {data.summary.unscheduled > 0 && <> · {data.summary.unscheduled} por planear</>}
@@ -837,7 +837,7 @@ export default function Works() {
                       <LifecycleBadge status={p.lifecycle_status} statuses={statuses} />
                       {(p.work_start_date || p.work_end_date) && (
                         <Badge tone="warning">
-                          só {p.work_start_date ? `início ${formatIsoPt(p.work_start_date)}` : `fim ${formatIsoPt(p.work_end_date as string)}`}
+                          só {p.work_start_date ? `início ${formatDatePt(p.work_start_date)}` : `fim ${formatDatePt(p.work_end_date as string)}`}
                         </Badge>
                       )}
                     </li>

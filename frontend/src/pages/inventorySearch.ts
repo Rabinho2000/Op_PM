@@ -1,3 +1,5 @@
+import { normalizeSearchText } from "../utils/text";
+
 export interface InventorySearchableItem {
   id: string;
   name: string;
@@ -20,16 +22,8 @@ const SYNONYMS = new Map<string, readonly string[]>(
   SYNONYM_GROUPS.flatMap((group) => group.map((word) => [word, group] as const)),
 );
 
-export function normalizeInventorySearch(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase("pt-PT")
-    .trim();
-}
-
 function words(value: string): string[] {
-  return normalizeInventorySearch(value).match(/[a-z0-9]+/g) ?? [];
+  return normalizeSearchText(value).match(/[a-z0-9]+/g) ?? [];
 }
 
 function variants(word: string): readonly string[] {
@@ -87,11 +81,11 @@ export function rankInventoryItem(
   query: string,
   categoryLabel?: string,
 ): number | null {
-  const normalizedQuery = normalizeInventorySearch(query);
+  const normalizedQuery = normalizeSearchText(query);
   if (!normalizedQuery) return null;
 
-  const normalizedName = normalizeInventorySearch(item.name);
-  const normalizedSku = normalizeInventorySearch(item.sku);
+  const normalizedName = normalizeSearchText(item.name);
+  const normalizedSku = normalizeSearchText(item.sku);
   if (normalizedName === normalizedQuery) return 0;
   if (normalizedName.startsWith(normalizedQuery)) return 10;
   if (normalizedName.includes(normalizedQuery)) return 20;
@@ -113,7 +107,7 @@ export function searchInventoryItems<T extends InventorySearchableItem>(
   query: string,
   getCategoryLabel?: (item: T) => string,
 ): T[] {
-  if (!normalizeInventorySearch(query)) return [];
+  if (!normalizeSearchText(query)) return [];
   return items
     .map((item, index) => ({
       item,

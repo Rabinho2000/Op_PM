@@ -20,6 +20,7 @@ import { formatDateTimePt } from "../utils/dates";
 import { useCableEngine } from "../features/cables/useCableEngine";
 import { useExportRunner } from "../features/cables/download";
 import { buildCablePresentationState, buildCableSavePayload, useCableStudy } from "../features/cables/useCableStudy";
+import { formatNumberPt } from "../utils/numbers";
 import { useEngineValue } from "../features/cables/useEngineValue";
 import type { CabosEngine, Result, State } from "../features/cables/engine";
 import CabosACTab from "../features/cables/tabs/CabosACTab";
@@ -99,7 +100,7 @@ function readHistoricalResult(value: unknown): HistoricalResultData | null {
 }
 
 function formatHistoricalNumber(value: number): string {
-  return new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 2 }).format(value);
+  return formatNumberPt(value);
 }
 
 function HistoricalResultPanel({ revision }: { revision: CableDesignRevision }) {

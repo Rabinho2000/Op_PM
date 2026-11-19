@@ -1,3 +1,4 @@
+import { EMPTY_VALUE, formatNumberPt } from "../../../utils/numbers";
 import type { Catalogs, CircuitRow, Result, Route, State } from "../engine";
 
 export const DEFAULT_CONSTITUTIONS = [
@@ -17,8 +18,8 @@ const SECTION_SIZES = [1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120, 150, 185
 export type RoutePatch = Partial<Pick<Route, "ref" | "cons" | "disp" | "trays" | "sol">>;
 
 export function numberPt(value: number | null | undefined, suffix = "", digits = 2): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
-  return `${new Intl.NumberFormat("pt-PT", { maximumFractionDigits: digits }).format(value)}${suffix}`;
+  const text = formatNumberPt(value, { max: digits });
+  return text === EMPTY_VALUE ? text : `${text}${suffix}`;
 }
 
 export function moneyPt(value: number | null | undefined): string {

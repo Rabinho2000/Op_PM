@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { normalizeInventorySearch } from "./inventorySearch";
+import { normalizeSearchText } from "../utils/text";
 
 type Props = {
   category: string;
@@ -7,7 +7,7 @@ type Props = {
 };
 
 function Artwork({ category }: { category: string }) {
-  const key = normalizeInventorySearch(category).replace(/[^a-z0-9]/g, "");
+  const key = normalizeSearchText(category).replace(/[^a-z0-9]/g, "");
   if (key.includes("painel") || key.includes("modulo")) {
     return <>
       <path className="inventory-illustration__accent" d="M36 18h88l10 56H26z" />
