@@ -4,7 +4,7 @@ import type { Catalogs, Template } from "../engine";
  * Protocolo de mensagens entre a página e o Web Worker que executa o motor de
  * cabos (versão 1). O motor é um script privado, sem acesso à página, ao DOM,
  * ao `sessionStorage` (tokens MSAL) nem à rede; só comunica por estas
- * mensagens, validadas dos dois lados (aqui, e em `public/cable-engine-worker.js`).
+ * mensagens, validadas dos dois lados (aqui, e em `public/cable-engine-frame.js`).
  */
 export const ENGINE_MESSAGE_SOURCE = "op-pm-cable-engine" as const;
 export const ENGINE_PROTOCOL = 1 as const;

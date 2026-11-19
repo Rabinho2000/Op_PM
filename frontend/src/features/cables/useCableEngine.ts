@@ -41,16 +41,16 @@ export async function sha256Script(script: string): Promise<string> {
 }
 
 /**
- * Carrega o motor uma vez por sessão do browser, dentro de um Web Worker
- * (M2): o script nunca corre na página, por isso não vê o DOM nem os tokens
- * MSAL. A UI recebe a fachada assíncrona `CabosEngine`.
+ * Carrega o motor uma vez por sessão do browser, dentro de um iframe `sandbox`
+ * sem allow-same-origin (M2): o script nunca corre na página, por isso não vê
+ * o DOM nem os tokens MSAL, e tem DOM próprio para as exportações. A UI recebe a fachada assíncrona `CabosEngine`.
  */
 export function getCableEngine(): Promise<CabosEngine> {
   if (enginePromise) return enginePromise;
 
   const pending = (async () => {
-    if (typeof Worker === "undefined" && !workerFactoryOverride) {
-      throw new Error("O browser não suporta Web Workers, necessários para a ferramenta de cálculo.");
+    if (typeof document === "undefined" && !workerFactoryOverride) {
+      throw new Error("A ferramenta de cálculo só pode ser carregada no browser.");
     }
     const manifest = await getCableTool();
     const actualHash = await sha256Script(manifest.script);

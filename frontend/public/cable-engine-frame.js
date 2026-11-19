@@ -1,29 +1,40 @@
-// Web Worker do motor de cabos (M2). Ficheiro ESTÁTICO servido tal e qual
-// (frontend/public -> /cable-engine-worker.js): a página cria-o com
-// `new Worker("/cable-engine-worker.js")` e envia-lhe o script do motor (privado,
-// vindo da API, já com o SHA-256 verificado) numa mensagem `init`.
+// Anfitrião do motor de cabos (M2). Ficheiro ESTÁTICO servido tal e qual
+// (frontend/public -> /cable-engine-frame.js), carregado por
+// /cable-engine-frame.html dentro de um <iframe sandbox="allow-scripts"> SEM
+// allow-same-origin. A página cria o iframe e envia-lhe o script do motor
+// (privado, vindo da API, com o SHA-256 já verificado) numa mensagem `init`.
+//
+// Porquê um iframe e não um Worker: o motor real exporta PDF/DOCX/PNG/DXF e
+// precisa de `Image`, `canvas` e `DOMParser`, que um Web Worker não tem.
 //
 // Isolamento:
-//  - o worker não tem DOM, sessionStorage/localStorage (tokens MSAL) nem acesso
-//    a nada da página; só comunica por mensagens validadas (ver
-//    src/features/cables/engineWorker/protocol.ts);
-//  - o nginx serve ESTE ficheiro com a sua própria CSP (docker/nginx*.conf):
-//    `connect-src 'none'` (sem rede, imposto pelo browser) e 'unsafe-eval' só
-//    aqui, para o motor poder ser executado com eval indireto sem abrir
-//    'unsafe-eval' à aplicação;
-//  - além disso, antes de executar o motor, retira-se ao worker a rede e o
-//    armazenamento (defesa em profundidade, também vale fora do nginx);
-//  - só se pode chamar o que o motor publica (lista fechada calculada no
-//    arranque).
+//  - origem opaca (sem allow-same-origin): não acede ao sessionStorage/
+//    localStorage da aplicação (tokens MSAL), a cookies, nem ao DOM da página
+//    (só tem postMessage para o parent, que valida tudo);
+//  - o nginx serve esta página com CSP própria (docker/security-csp-frame.conf):
+//    `connect-src 'none'` e `default-src 'none'` (sem rede nem recursos
+//    externos, imposto pelo browser), `unsafe-eval` só aqui;
+//  - o iframe não tem allow-top-navigation, allow-popups, allow-forms nem
+//    allow-downloads: os ficheiros saem como Blob pela mensagem e é a página
+//    que os descarrega;
+//  - antes de executar o motor retira-se-lhe rede e armazenamento (defesa em
+//    profundidade);
+//  - só se pode chamar o que o motor publica (lista fechada no arranque).
 //
-// Mensagens:
-//   página -> worker  {source, protocol, type:"init", script}              (uma vez)
+// O mesmo ficheiro corre também num worker de teste (Node), sem `window`.
+//
+// Mensagens (ver src/features/cables/engineWorker/protocol.ts):
+//   página -> frame   {source, protocol, type:"init", script}              (uma vez)
 //                     {source, protocol, type:"call", id, path, args}
-//   worker -> página  {source, protocol, type:"ready"|"result"|"error"|"fatal", ...}
+//   frame -> página   {source, protocol, type:"ready"|"result"|"error"|"fatal", ...}
 (function () {
   "use strict";
   var scope = self;
-  var post = scope.postMessage.bind(scope);
+  // Dentro do iframe, a ponte é o parent; num worker (testes), o próprio canal.
+  var parentWindow = typeof window !== "undefined" && window.parent && window.parent !== window ? window.parent : null;
+  var post = parentWindow
+    ? function (message) { parentWindow.postMessage(message, "*"); } // origem opaca: só "*" é possível
+    : scope.postMessage.bind(scope);
   var runScript = scope.eval; // eval indireto: executa o motor no âmbito global do worker
   var MAX_SCRIPT_CHARS = 9 * 1024 * 1024;
 
@@ -189,7 +200,9 @@
       });
   }
 
-  scope.onmessage = function (event) {
+  function onMessage(event) {
+    // No iframe só se aceita o que vem do parent.
+    if (parentWindow && event.source !== parentWindow) return;
     var data = event.data;
     if (!started) {
       if (isEnvelope(data, "init") && typeof data.script === "string" && data.script.length > 0 && data.script.length <= MAX_SCRIPT_CHARS) {
@@ -199,5 +212,7 @@
       return;
     }
     if (engine && isCall(data)) handleCall(data);
-  };
+  }
+  if (parentWindow) window.addEventListener("message", onMessage);
+  else scope.onmessage = onMessage;
 })();

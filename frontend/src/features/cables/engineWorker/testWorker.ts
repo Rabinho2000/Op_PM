@@ -2,7 +2,7 @@
 // worker REAL do Node (`worker_threads`), com a API mínima de um Web Worker.
 // Não é código de produção nem é importado pela aplicação.
 import { Worker as NodeWorker } from "node:worker_threads";
-import workerSource from "../../../../public/cable-engine-worker.js?raw";
+import workerSource from "../../../../public/cable-engine-frame.js?raw";
 import type { WorkerFactory, WorkerLike } from "./client";
 
 const WEB_WORKER_SHIM = `

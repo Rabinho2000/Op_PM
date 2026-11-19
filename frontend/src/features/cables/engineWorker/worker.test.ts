@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it } from "vitest";
-import workerSource from "../../../../public/cable-engine-worker.js?raw";
+import workerSource from "../../../../public/cable-engine-frame.js?raw";
 import { buildCallMessage, buildInitMessage, ENGINE_MESSAGE_SOURCE, ENGINE_PROTOCOL } from "./protocol";
 import { startCableEngineWorker, type CableEngineHandle } from "./client";
 import { FAKE_ENGINE_SCRIPT, nodeWorkerFactory } from "./testWorker";

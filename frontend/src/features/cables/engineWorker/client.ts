@@ -8,7 +8,11 @@ import {
   type EngineReadyMessage,
 } from "./protocol";
 
-/** O mínimo de um Worker de que o cliente precisa (facilita testes). */
+/**
+ * Canal para o anfitrião do motor: a interface mínima de um Worker, para o
+ * cliente não saber se do outro lado está um iframe isolado (produção) ou um
+ * worker de teste.
+ */
 export interface WorkerLike {
   postMessage(message: unknown): void;
   terminate(): void;
@@ -19,29 +23,81 @@ export interface WorkerLike {
 export type WorkerFactory = () => WorkerLike;
 
 /**
- * Worker estático (frontend/public). Fica numa URL própria para o nginx lhe dar
- * a sua CSP (sem rede; 'unsafe-eval' só ali) e para a CSP da aplicação precisar
- * apenas de `worker-src 'self'`.
+ * Página estática (frontend/public) que aloja o motor num iframe `sandbox`
+ * sem allow-same-origin. Fica numa URL própria para o nginx lhe dar a sua CSP
+ * (sem rede; `unsafe-eval` só ali). O motor real precisa de `Image`, `canvas` e
+ * `DOMParser` para exportar PDF/DOCX/PNG/DXF, o que um Web Worker não tem.
  */
-export const CABLE_WORKER_URL = "/cable-engine-worker.js";
+export const CABLE_FRAME_URL = "/cable-engine-frame.html";
+
+/**
+ * Cria o iframe isolado e devolve-o como canal. Só se aceitam mensagens cujo
+ * `source` é a janela deste iframe (a origem dele é opaca, "null"); as
+ * mensagens para o iframe esperam pelo `load` e vão com targetOrigin "*", a
+ * única possível para uma origem opaca (o iframe nunca navega: sem
+ * allow-top-navigation/allow-popups/allow-forms).
+ */
+export function sandboxedFrameFactory(): WorkerLike {
+  const frame = document.createElement("iframe");
+  frame.setAttribute("sandbox", "allow-scripts");
+  frame.setAttribute("referrerpolicy", "no-referrer");
+  frame.title = "Motor de cálculo de cabos";
+  frame.hidden = true;
+  frame.tabIndex = -1;
+  frame.setAttribute("aria-hidden", "true");
+
+  const queue: unknown[] = [];
+  let loaded = false;
+  let closed = false;
+
+  const channel: WorkerLike = {
+    onmessage: null,
+    onerror: null,
+    onmessageerror: null,
+    postMessage(message) {
+      if (closed) return;
+      if (!loaded) queue.push(message);
+      else frame.contentWindow?.postMessage(message, "*");
+    },
+    terminate() {
+      if (closed) return;
+      closed = true;
+      window.removeEventListener("message", onWindowMessage);
+      frame.remove();
+    },
+  };
+
+  function onWindowMessage(event: MessageEvent) {
+    if (closed || !frame.contentWindow || event.source !== frame.contentWindow) return;
+    channel.onmessage?.(event);
+  }
+  window.addEventListener("message", onWindowMessage);
+
+  frame.addEventListener("load", () => {
+    loaded = true;
+    for (const message of queue.splice(0)) frame.contentWindow?.postMessage(message, "*");
+  });
+  frame.addEventListener("error", () => {
+    channel.onerror?.({ message: "O iframe do motor não carregou.", preventDefault: () => undefined } as ErrorEvent);
+  });
+  frame.src = CABLE_FRAME_URL;
+  document.body.appendChild(frame);
+  return channel;
+}
 
 export interface CableEngineWorkerOptions {
   script: string;
-  /** `engine_version` do manifesto: o worker tem de publicar o mesmo. */
+  /** `engine_version` do manifesto: o motor tem de publicar o mesmo. */
   expectedEngineVersion: string;
   workerFactory?: WorkerFactory;
   readyTimeoutMs?: number;
-  /** Chamado uma vez se o worker morrer depois de pronto (erro/terminação). */
+  /** Chamado uma vez se o anfitrião morrer depois de pronto (erro/terminação). */
   onTerminated?: (reason: Error) => void;
 }
 
 export interface CableEngineHandle {
   engine: CabosEngine;
   dispose(): void;
-}
-
-function staticWorkerFactory(): WorkerLike {
-  return new Worker(CABLE_WORKER_URL, { name: "cabos-engine" }) as unknown as WorkerLike;
 }
 
 const READY_TIMEOUT_MS = 30_000;
@@ -61,7 +117,7 @@ function buildCatalogs(ready: EngineReadyMessage): Catalogs {
  * o protocolo for outro.
  */
 export function startCableEngineWorker(options: CableEngineWorkerOptions): Promise<CableEngineHandle> {
-  const factory = options.workerFactory ?? staticWorkerFactory;
+  const factory = options.workerFactory ?? sandboxedFrameFactory;
   const timeoutMs = options.readyTimeoutMs ?? READY_TIMEOUT_MS;
 
   return new Promise<CableEngineHandle>((resolve, reject) => {

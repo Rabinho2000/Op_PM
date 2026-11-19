@@ -253,14 +253,16 @@ jobs:
           test "$(docker exec fe-csp id -u)" != "0"
           headers="$(curl -fsSI http://127.0.0.1:18081/)"
           echo "$headers"
-          echo "$headers" | grep -qi "^content-security-policy: default-src 'self'; script-src 'self'; worker-src 'self';"
+          echo "$headers" | grep -qi "^content-security-policy: default-src 'self'; script-src 'self'; connect-src 'self' https://login.microsoftonline.com"
           echo "$headers" | grep -qi "^x-frame-options: DENY"
           echo "$headers" | grep -qi "^x-content-type-options: nosniff"
           # scripts: nunca 'unsafe-inline'/'unsafe-eval' (só os estilos têm 'unsafe-inline').
           if echo "$headers" | grep -qi "script-src[^;]*unsafe"; then echo "script-src com unsafe-*"; exit 1; fi
           curl -fsSI http://127.0.0.1:18081/theme-bootstrap.js | grep -qi "^content-security-policy:"
-          # O worker do motor de cabos tem CSP própria: sem rede.
-          curl -fsSI http://127.0.0.1:18081/cable-engine-worker.js | grep -qi "^content-security-policy: default-src 'none'; script-src 'unsafe-eval'; connect-src 'none'"
+          # A página do motor de cabos (iframe sandbox) tem CSP própria: sem rede, SAMEORIGIN.
+          frame="$(curl -fsSI http://127.0.0.1:18081/cable-engine-frame.html)"
+          echo "$frame" | grep -qi "^content-security-policy: default-src 'none'; script-src 'self' 'unsafe-eval'; .*connect-src 'none'"
+          echo "$frame" | grep -qi "^x-frame-options: SAMEORIGIN"
           docker rm -f fe-csp
       - name: Trivy — vulnerabilidades HIGH/CRITICAL com correção disponível (informativo)
         # INFORMATIVO, não bloqueia (--exit-code 0 + continue-on-error): os

@@ -87,7 +87,7 @@ RUN set -eux; \
     chown -R nginx:nginx /var/cache/nginx /etc/nginx/conf.d /etc/nginx/snippets
 
 COPY --from=build --chown=nginx:nginx /app/dist /usr/share/nginx/html
-COPY --chown=nginx:nginx docker/security-base.conf docker/security-csp.conf docker/security-csp-worker.conf /etc/nginx/snippets/
+COPY --chown=nginx:nginx docker/security-base.conf docker/security-csp.conf docker/security-csp-frame.conf /etc/nginx/snippets/
 COPY --chown=nginx:nginx ${NGINX_CONF} /etc/nginx/conf.d/default.conf
 
 # A origem da API (se absoluta) passa a ser aceite pelo connect-src da CSP.
