@@ -1,7 +1,7 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/client";
-import type { CabosEngine } from "./engine";
+import { created, FAKE_ENGINE_SCRIPT, nodeWorkerFactory } from "./engineWorker/testWorker";
 
 const api = vi.hoisted(() => ({ getCableTool: vi.fn() }));
 vi.mock("../../api/cableDesigns", async () => {
@@ -9,107 +9,88 @@ vi.mock("../../api/cableDesigns", async () => {
   return { ...actual, getCableTool: api.getCableTool };
 });
 
-import { getCableEngine, resetCableEngineCache, sha256Script, useCableEngine } from "./useCableEngine";
+import { getCableEngine, resetCableEngineCache, setCableWorkerFactoryForTests, sha256Script, useCableEngine } from "./useCableEngine";
 
-const fakeEngine = {
-  protocol: 1,
-  engine_version: "cabos-fake@1",
-} as unknown as CabosEngine;
-
-let appendSpy: ReturnType<typeof vi.spyOn>;
-let scriptEngine: CabosEngine = fakeEngine;
-let shouldPublishScript = true;
-
-function exposeScriptEngine(engine: CabosEngine = fakeEngine) {
-  const script = `globalThis.CabosEngine = ${JSON.stringify(engine)};`;
-  return { script, engine };
-}
-
-async function manifest(script: string) {
-  return { engine_version: "cabos-fake@1", sha256: await sha256Script(script), script };
+async function manifest(script: string, engineVersion = "cabos-fake@1") {
+  return { engine_version: engineVersion, sha256: await sha256Script(script), script };
 }
 
 beforeEach(() => {
   resetCableEngineCache();
   api.getCableTool.mockReset();
-  Reflect.deleteProperty(window as unknown as Record<string, unknown>, "CabosEngine");
-  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:cabos-fake") });
-  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
-  scriptEngine = fakeEngine;
-  shouldPublishScript = true;
-  appendSpy = vi.spyOn(document.head, "appendChild").mockImplementation((node) => {
-    const script = node as HTMLScriptElement;
-    if (script.tagName === "SCRIPT") {
-      queueMicrotask(() => {
-        try {
-          const source = (script.src || "").length > 0;
-          if (source && shouldPublishScript) {
-            // The loader owns script execution in production; the test provides
-            // the minimum equivalent before emitting the load event.
-            (window as unknown as { CabosEngine?: CabosEngine }).CabosEngine = scriptEngine;
-          }
-          script.onload?.(new Event("load") as unknown as Event);
-        } catch (error) {
-          script.onerror?.(error as unknown as Event);
-        }
-      });
-    }
-    return node;
-  });
+  created.length = 0;
+  setCableWorkerFactoryForTests(nodeWorkerFactory);
 });
 
 afterEach(() => {
-  appendSpy.mockRestore();
   resetCableEngineCache();
+  setCableWorkerFactoryForTests(undefined);
 });
 
-describe("carregador do motor CabosEngine", () => {
-  it("verifica o SHA-256, executa um script blob e reutiliza o módulo", async () => {
-    const { script } = exposeScriptEngine();
-    api.getCableTool.mockResolvedValue(await manifest(script));
+describe("carregador do motor CabosEngine (Web Worker)", () => {
+  it("verifica o SHA-256, executa o motor num worker e reutiliza-o", async () => {
+    api.getCableTool.mockResolvedValue(await manifest(FAKE_ENGINE_SCRIPT));
     const first = await getCableEngine();
     const second = await getCableEngine();
-    expect(first).toBe(fakeEngine);
     expect(second).toBe(first);
+    expect(first.engine_version).toBe("cabos-fake@1");
     expect(api.getCableTool).toHaveBeenCalledTimes(1);
-    expect(appendSpy).toHaveBeenCalledTimes(1);
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:cabos-fake");
+    expect(created).toHaveLength(1);
+    expect(await first.newState()).toEqual({ proj: "novo" });
   });
 
-  it("rejeita um script com SHA-256 inválido", async () => {
-    const { script } = exposeScriptEngine();
-    api.getCableTool.mockResolvedValue({ engine_version: "cabos-fake@1", sha256: "00", script });
+  it("não cria o worker nem executa nada se o SHA-256 não corresponde", async () => {
+    api.getCableTool.mockResolvedValue({ engine_version: "cabos-fake@1", sha256: "00", script: FAKE_ENGINE_SCRIPT });
     await expect(getCableEngine()).rejects.toThrow(/SHA-256.*falhou/i);
-    expect(appendSpy).not.toHaveBeenCalled();
+    expect(created).toHaveLength(0);
   });
 
-  it("rejeita um script que não publica um objeto novo mesmo quando o global antigo existe", async () => {
-    const oldEngine = { ...fakeEngine, engine_version: "cabos-fake@1" } as CabosEngine;
-    (window as unknown as { CabosEngine?: CabosEngine }).CabosEngine = oldEngine;
-    shouldPublishScript = false;
-    const script = "/* sha válido, mas sem publicação */";
-    api.getCableTool.mockResolvedValue(await manifest(script));
-
-    await expect(getCableEngine()).rejects.toThrow(/não publicou window\.CabosEngine/i);
-    expect((window as unknown as { CabosEngine?: CabosEngine }).CabosEngine).toBeUndefined();
+  it("não deixa nenhum global do motor na janela da página", async () => {
+    api.getCableTool.mockResolvedValue(await manifest(FAKE_ENGINE_SCRIPT));
+    await getCableEngine();
+    expect((window as unknown as { CabosEngine?: unknown }).CabosEngine).toBeUndefined();
+    expect((globalThis as unknown as { CabosEngine?: unknown }).CabosEngine).toBeUndefined();
   });
 
-  it("exige que engine_version do objeto publicado corresponda ao manifesto", async () => {
-    const { script } = exposeScriptEngine();
-    api.getCableTool.mockResolvedValue({
-      engine_version: "cabos-manifest@2",
-      sha256: await sha256Script(script),
-      script,
-    });
-
+  it("exige que engine_version do motor corresponda ao manifesto", async () => {
+    api.getCableTool.mockResolvedValue(await manifest(FAKE_ENGINE_SCRIPT, "cabos-manifest@2"));
     await expect(getCableEngine()).rejects.toThrow(/engine_version/i);
   });
 
   it("rejeita protocolo diferente de 1", async () => {
-    scriptEngine = { protocol: 2, engine_version: "bad" } as unknown as CabosEngine;
-    const script = "globalThis.CabosEngine = { protocol: 2, engine_version: 'bad' };";
+    const script = "globalThis.CabosEngine = { protocol: 2, engine_version: 'cabos-fake@1' };";
     api.getCableTool.mockResolvedValue(await manifest(script));
     await expect(getCableEngine()).rejects.toThrow(/protocolo/i);
+  });
+
+  it("rejeita um script que não publica o motor", async () => {
+    const script = "/* sha válido, mas sem publicação */";
+    api.getCableTool.mockResolvedValue(await manifest(script));
+    await expect(getCableEngine()).rejects.toThrow(/não publicou CabosEngine/i);
+  });
+
+  it("depois de uma falha volta a tentar em vez de guardar o erro", async () => {
+    api.getCableTool.mockRejectedValueOnce(new ApiError(503, "indisponível"));
+    await expect(getCableEngine()).rejects.toBeInstanceOf(ApiError);
+    api.getCableTool.mockResolvedValue(await manifest(FAKE_ENGINE_SCRIPT));
+    expect((await getCableEngine()).engine_version).toBe("cabos-fake@1");
+  });
+
+  it("recria o worker depois de resetCableEngineCache (que termina o anterior)", async () => {
+    api.getCableTool.mockResolvedValue(await manifest(FAKE_ENGINE_SCRIPT));
+    const first = await getCableEngine();
+    resetCableEngineCache();
+    await expect(first.newState()).rejects.toThrow(/terminada/);
+    const second = await getCableEngine();
+    expect(second).not.toBe(first);
+    expect(created).toHaveLength(2);
+  });
+
+  it("o hook entrega o motor pronto", async () => {
+    api.getCableTool.mockResolvedValue(await manifest(FAKE_ENGINE_SCRIPT));
+    const view = renderHook(() => useCableEngine());
+    await waitFor(() => expect(view.result.current.status).toBe("ready"));
+    expect(view.result.current.engine?.engine_version).toBe("cabos-fake@1");
   });
 
   it.each([

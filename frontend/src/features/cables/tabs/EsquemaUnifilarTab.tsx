@@ -1,21 +1,15 @@
-import { useMemo } from "react";
-import { Alert, Card, EmptyState } from "../../../components/ui";
+import { Alert, Card, EmptyState, LoadingState } from "../../../components/ui";
 import { useExportRunner } from "../download";
 import { SldViewer } from "../sld/SldViewer";
 import "../cableU3.css";
 import type { CableTabProps } from "./types";
+import { useEngineValue } from "../useEngineValue";
 
 export default function EsquemaUnifilarTab({ state, result, engine }: CableTabProps) {
   const runner = useExportRunner();
   const hasInverters = (state.invs?.length ?? 0) > 0 || (result.invC?.length ?? 0) > 0;
-  const rawSvg = useMemo(() => {
-    if (!hasInverters) return "";
-    try {
-      return engine.views.sld(state, result);
-    } catch {
-      return "";
-    }
-  }, [engine, hasInverters, result, state]);
+  const sld = useEngineValue(() => engine.views.sld(state, result), [engine, result, state], hasInverters);
+  const rawSvg = sld.value ?? "";
 
   const exportButton = (label: string, exporter: () => ReturnType<typeof engine.exports.sldSvg>) => (
     <button
@@ -49,6 +43,8 @@ export default function EsquemaUnifilarTab({ state, result, engine }: CableTabPr
           <EmptyState title="Sem inversores para desenhar" text="Adicione um inversor no separador Cabos AC para gerar o esquema unifilar." icon="activity" />
         ) : rawSvg ? (
           <SldViewer rawSvg={rawSvg} />
+        ) : sld.pending ? (
+          <LoadingState label="A gerar o esquema…" rows={3} />
         ) : (
           <Alert tone="warning">Não foi possível gerar o esquema unifilar.</Alert>
         )}

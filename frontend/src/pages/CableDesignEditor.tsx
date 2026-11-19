@@ -20,6 +20,7 @@ import { formatDateTimePt } from "../utils/dates";
 import { useCableEngine } from "../features/cables/useCableEngine";
 import { useExportRunner } from "../features/cables/download";
 import { buildCablePresentationState, buildCableSavePayload, useCableStudy } from "../features/cables/useCableStudy";
+import { useEngineValue } from "../features/cables/useEngineValue";
 import type { CabosEngine, Result, State } from "../features/cables/engine";
 import CabosACTab from "../features/cables/tabs/CabosACTab";
 import EquipamentosTab from "../features/cables/tabs/EquipamentosTab";
@@ -311,12 +312,22 @@ export default function CableDesignEditor() {
   const approved = Boolean(design && (isApprovedStatus(design.status) || isApprovedStatus(design.revision.status)));
   const engineState = useCableEngine(canViewCosts && Boolean(design) && !approved);
   const study = useCableStudy(engineState.engine, design, project);
-  const presentationState = useMemo(
-    () => engineState.engine && study.state && design
-      ? buildCablePresentationState(engineState.engine, study.state, design, peopleById)
-      : null,
-    [design, engineState.engine, peopleById, study.state],
+  // O motor corre num worker: o estado "para apresentar" (revisão/aprovação da
+  // obra) calcula-se de forma assíncrona e fica emparelhado com o resultado
+  // de onde veio, para as vistas nunca misturarem estado e resultado de momentos diferentes.
+  const presentation = useEngineValue(
+    async () => {
+      const engine = engineState.engine;
+      const state = study.state;
+      const result = study.result;
+      if (!engine || !state || !result || !design) throw new Error("O estudo ainda não está pronto.");
+      return { state: await buildCablePresentationState(engine, state, design, peopleById), result };
+    },
+    [design, engineState.engine, peopleById, study.state, study.result],
+    Boolean(engineState.engine && study.state && study.result && design),
   );
+  const presentationState = presentation.value?.state ?? null;
+  const presentationResult = presentation.value?.result ?? null;
   const readOnly = useMemo(
     () => !design || readOnlyOverride || !canEdit || !design.is_active || isApprovedStatus(design.status) || isApprovedStatus(design.revision.status),
     [canEdit, design, readOnlyOverride],
@@ -424,12 +435,12 @@ export default function CableDesignEditor() {
 
   const saveCurrent = useCallback(async (force = false): Promise<CableDesign | null> => {
     if (!design || !designId || readOnly || !engineState.engine || !study.store) return design;
-    const currentStore = study.flush() ?? study.store;
+    const currentStore = (await study.settle()) ?? study.store;
     if (!force && !currentStore.dirty) return design;
     setSaving(true);
     setActionError(null);
     try {
-      const payload = buildCableSavePayload(engineState.engine, currentStore);
+      const payload = await buildCableSavePayload(engineState.engine, currentStore);
       const updated = await saveCableRevision(designId, {
         expected_version: design.version,
         title: design.title,
@@ -507,12 +518,12 @@ export default function CableDesignEditor() {
     navigate(`/projects/${encodeURIComponent(projectId ?? design?.project_id ?? "")}?tab=cabos`);
   }
 
-  const exportDisabled = approved || !engineState.engine || !presentationState || !study.result || exportRunner.isGenerating;
+  const exportDisabled = approved || !engineState.engine || !presentationState || !presentationResult || exportRunner.isGenerating;
 
   function startExport(exporter: FileExporter): void {
     const engine = engineState.engine;
     const state = presentationState;
-    const result = study.result;
+    const result = presentationResult;
     if (approved || !engine || !state || !result || exportRunner.isGenerating) return;
     setMoreOpen(false);
     void exportRunner.run(() => Promise.resolve(exporter(engine, state, result)) as Promise<{ blob: Blob; filename: string }>);
@@ -521,11 +532,11 @@ export default function CableDesignEditor() {
   async function copyTable(): Promise<void> {
     const engine = engineState.engine;
     const state = presentationState;
-    const result = study.result;
+    const result = presentationResult;
     setMoreOpen(false);
     if (approved || !engine || !state || !result || exportRunner.isGenerating) return;
     try {
-      const text = String(engine.exports.copyTable(state, result));
+      const text = String(await engine.exports.copyTable(state, result));
       if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
         throw new Error("clipboard-indisponível");
       }
@@ -538,7 +549,7 @@ export default function CableDesignEditor() {
 
   function exportMenuItem(
     label: string,
-    exporter: (engine: NonNullable<typeof engineState.engine>, state: State, result: NonNullable<typeof study.result>) => ReturnType<NonNullable<typeof engineState.engine>["exports"][keyof NonNullable<typeof engineState.engine>["exports"]]>,
+    exporter: (engine: NonNullable<typeof engineState.engine>, state: State, result: Result) => ReturnType<NonNullable<typeof engineState.engine>["exports"][keyof NonNullable<typeof engineState.engine>["exports"]]>,
   ) {
     return (
       <button type="button" role="menuitem" onClick={() => startExport(exporter)} disabled={exportDisabled}>
@@ -592,8 +603,8 @@ export default function CableDesignEditor() {
     ? isApprovedStatus(design.status) ? design.status : design.revision.status
     : design.status;
   const renderTab = () => {
-    if (!engineState.engine || !presentationState || !study.result) return null;
-    const props = { state: presentationState, result: study.result, engine: engineState.engine, readOnly: mutationLocked, apply: study.apply };
+    if (!engineState.engine || !presentationState || !presentationResult) return null;
+    const props = { state: presentationState, result: presentationResult, engine: engineState.engine, readOnly: mutationLocked, apply: study.apply };
     if (activeTab === "sld") return <EsquemaUnifilarTab {...props} />;
     if (activeTab === "boards") return <QuadrosTab {...props} />;
     if (activeTab === "equipment") return <EquipamentosTab {...props} />;
@@ -652,6 +663,7 @@ export default function CableDesignEditor() {
       </header>
 
       {actionError && <Alert tone="danger">{actionError}</Alert>}
+      {study.actionError && <Alert tone="danger">{study.actionError}</Alert>}
       {projectError && (
         <Alert
           tone="warning"
@@ -677,7 +689,7 @@ export default function CableDesignEditor() {
             <button type="button" className="btn" onClick={() => setDrawerOpen(true)}>Revisões e histórico</button>
           </Card>
         </main>
-      ) : engineState.engine && presentationState && study.result ? (
+      ) : engineState.engine && presentationState && presentationResult ? (
         <main className="cable-editor__workspace">
           <nav className="tabs cable-editor__tabs" role="tablist" aria-label="Secções do estudo">
             {TABS.map(([id, label]) => (

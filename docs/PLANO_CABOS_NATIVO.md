@@ -4,6 +4,8 @@ Estado: decisão do responsável do produto (19/10/2026): a versão com iframe (
 
 Mantém-se tudo o que já estava decidido em `PLANO_CABOS_FRONTEND.md` (capability `cable_design.view_costs`, preços privados, persistência por `/api/cable-designs` com `expected_version`, aprovação/nova revisão, sem importação `.json`, equipamentos só da base embutida, sem partilha/estado/«em obra» da ferramenta original).
 
+> **Atualização (Fase 2, M2):** o motor deixou de correr na página (`<script src=blob:>` → `window.CabosEngine`). Corre agora num **Web Worker estático** (`frontend/public/cable-engine-worker.js`, servido pelo nginx com CSP própria: sem rede, `unsafe-eval` só ali), sem DOM nem acesso ao `sessionStorage`/tokens MSAL. A UI usa uma fachada **assíncrona** (`engine.solve(...)` devolve `Promise`; dados estáticos — modelos, catálogos, `engine_version` — continuam síncronos) montada a partir da mensagem `ready` do worker. Protocolo de mensagens (versão 1, validado nos dois lados): `frontend/src/features/cables/engineWorker/protocol.ts`. O motor continua a ter de publicar `globalThis.CabosEngine` (contrato abaixo), agora **sem** `window`/`document` (as exportações não podem criar `<canvas>`/`<a>`; ver nota de risco no relatório da Fase 2). A ponte iframe (`cableBridge`) foi removida.
+
 ## Arquitetura
 
 ```

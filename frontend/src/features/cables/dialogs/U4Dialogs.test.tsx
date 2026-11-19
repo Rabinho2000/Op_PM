@@ -78,7 +78,7 @@ describe("diálogo Comparar alternativas", () => {
 });
 
 describe("diálogo Modelos / Novo projeto", () => {
-  it("pede confirmação e preserva projeto, cliente e morada", () => {
+  it("pede confirmação e preserva projeto, cliente e morada", async () => {
     const engine = engineFor();
     const apply = vi.fn();
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
@@ -89,8 +89,8 @@ describe("diálogo Modelos / Novo projeto", () => {
     confirm.mockReturnValue(true);
     fireEvent.click(screen.getByRole("button", { name: /Aplicar.*Cliente/i }));
     expect(apply).toHaveBeenCalledTimes(1);
-    const updater = apply.mock.calls[0][0] as (value: State) => State;
-    const next = updater(state);
+    const updater = apply.mock.calls[0][0] as (value: State) => PromiseLike<State>;
+    const next = await updater(state);
     expect(next.proj).toBe(state.proj);
     expect(next.obra.cliente).toBe(state.obra.cliente);
     expect(next.obra.morada).toBe(state.obra.morada);
