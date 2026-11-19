@@ -14,8 +14,9 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import Settings, get_settings
 from app.schemas.cable_tool import CableToolRead
-from app.security.current_user import get_auth_context
 from app.security.permissions import AuthContext
+from app.security.perm import Perm
+from app.security.guards import require_permission
 
 logger = logging.getLogger(__name__)
 
@@ -112,13 +113,10 @@ def _manifest_engine_version(path: Path, digest: str) -> str:
 @router.get("/cable-tool", response_model=CableToolRead)
 def get_cable_tool(
     response: Response,
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_permission(Perm.CABLE_DESIGN_VIEW_COSTS, detail=_FORBIDDEN_DETAIL)),
     settings: Settings = Depends(get_settings),
 ) -> CableToolRead:
     """Return the UTF-8 engine script with its manifest version and digest."""
-    if not ctx.has_permission("cable_design.view_costs"):
-        raise HTTPException(status_code=403, detail=_FORBIDDEN_DETAIL)
-
     path = settings.cable_tool_file
     if path is None:
         raise HTTPException(status_code=503, detail=_UNAVAILABLE_DETAIL)

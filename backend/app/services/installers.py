@@ -12,6 +12,7 @@ from app.models.installer import Installer, InstallerTeam
 from app.models.project import Project, ProjectTeamAssignment
 from app.security.permissions import AuthContext, PermissionDenied, can_plan_project_work
 from app.utils.text import clean_display, normalize_key
+from app.security.perm import Perm
 
 # Fase "Obra" do processo: do dia útil 41 ao 49 desde o arranque (`start_date`
 # é o dia 1 do processo, não o início da obra). Modelo base do legado; só
@@ -123,7 +124,7 @@ def update_work_plan(db: Session, *, project: Project, changes: dict, ctx: AuthC
     Cada campo alterado grava uma entrada em `project_history`.
     """
     if not can_plan_project_work(ctx, project):
-        raise PermissionDenied("project.plan_work")
+        raise PermissionDenied(Perm.PROJECT_PLAN_WORK)
 
     new_installer_id = changes.get("installer_id", _UNSET)
     installer_id = project.installer_id if new_installer_id is _UNSET else new_installer_id

@@ -7,6 +7,21 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# Espelha `MOVEMENT_TYPES` (app/models/inventory.py); ver `tests/test_schema_literals.py`.
+MovementType = Literal[
+    "entrada",
+    "saida",
+    "reserva",
+    "liberta_reserva",
+    "consumo",
+    "devolucao",
+    "ajuste",
+    "transito_entrada",
+    "transito_saida",
+    "entrega",
+    "recolha",
+]
+
 
 class InventoryLocationRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -93,7 +108,7 @@ class InventoryMovementRead(BaseModel):
 
     id: uuid.UUID
     item_id: uuid.UUID
-    movement_type: str
+    movement_type: MovementType
     quantity: Decimal
     project_id: uuid.UUID | None
     location_id: uuid.UUID | None

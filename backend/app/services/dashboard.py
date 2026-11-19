@@ -45,6 +45,7 @@ from app.services.absences import visible_absences_query
 from app.services.projects import compute_project_task_summary, visible_projects_query
 from app.services.tasks import visible_tasks_query
 from app.utils.timezones import LISBON_TZ, today_lisbon, week_range_lisbon
+from app.security.perm import Perm
 
 PROJECT_STARTING_WINDOW_DAYS = 30
 UPCOMING_ABSENCE_WINDOW_DAYS = 30
@@ -207,9 +208,9 @@ def _next_birthday_days_until(birth_date: dt.date, today: dt.date) -> int:
 
 
 def _birthday_scoped_people_query(db: Session, ctx: AuthContext):
-    if ctx.has_permission("absence.view_all"):
+    if ctx.has_permission(Perm.ABSENCE_VIEW_ALL):
         return db.query(Person).filter(Person.is_active.is_(True), Person.birth_date.isnot(None))
-    if ctx.has_permission("absence.view_own"):
+    if ctx.has_permission(Perm.ABSENCE_VIEW_OWN):
         return db.query(Person).filter(Person.id == ctx.person_id, Person.birth_date.isnot(None))
     return db.query(Person).filter(False)
 
@@ -246,13 +247,13 @@ def compute_dashboard_summary(db: Session, ctx: AuthContext) -> DashboardSummary
     today = today_lisbon()
     week_start, week_end = week_range_lisbon(today)
 
-    if ctx.has_permission("project.view_all"):
+    if ctx.has_permission(Perm.PROJECT_VIEW_ALL):
         scope = "all"
-    elif ctx.has_permission("project.view_own"):
+    elif ctx.has_permission(Perm.PROJECT_VIEW_OWN):
         scope = "own"
-    elif ctx.has_permission("project.view_delegated"):
+    elif ctx.has_permission(Perm.PROJECT_VIEW_DELEGATED):
         scope = "delegated"
-    elif ctx.has_permission("project.view_assigned_installer"):
+    elif ctx.has_permission(Perm.PROJECT_VIEW_ASSIGNED_INSTALLER):
         scope = "assigned_installer"
     else:
         scope = "none"

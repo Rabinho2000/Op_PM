@@ -36,9 +36,7 @@ from app.schemas.tasks import TaskRead
 from app.security.current_user import get_auth_context
 from app.security.permissions import (
     AuthContext,
-    can_manage_pickup_points,
     can_manage_project_issue,
-    can_view_map,
     can_view_project_issue,
 )
 from app.services.map import (
@@ -52,16 +50,16 @@ from app.services.map import (
     list_project_issues,
     update_project_issue,
 )
-from app.services.projects import get_visible_project
 from app.services.route_optimization import RouteError, compute_route, resolve_stops
 from app.services.trip_planning import plan_trip
+from app.security.guards import require_permission
+from app.security.perm import Perm
+from app.api.deps import visible_project_or_404
 
 router = APIRouter(tags=["map"])
 
 
-def _require_map_view(ctx: AuthContext) -> None:
-    if not can_view_map(ctx):
-        raise HTTPException(status_code=403, detail="Sem permissão para ver o mapa operacional.")
+require_map_view = require_permission(Perm.MAP_VIEW, detail="Sem permissão para ver o mapa operacional.")
 
 
 def _map_project_read(entry) -> MapProjectRead:
@@ -114,10 +112,9 @@ def _map_project_read(entry) -> MapProjectRead:
 @router.get("/api/map/data", response_model=MapDataResponse)
 def get_map_data_endpoint(
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_map_view),
     settings: Settings = Depends(get_settings),
 ) -> MapDataResponse:
-    _require_map_view(ctx)
     with_coords, without_coords = get_map_projects(db, ctx)
     issues = get_visible_issues(db, ctx)
     issue_reads = []
@@ -155,19 +152,21 @@ def get_map_data_endpoint(
 
 @router.get("/api/pickup-points", response_model=list[MapPickupPointRead])
 def list_pickup_points_endpoint(
-    db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(require_map_view),
 ) -> list[MapPickupPointRead]:
-    _require_map_view(ctx)
     points = db.query(PickupPoint).order_by(PickupPoint.name).all()
     return [MapPickupPointRead.model_validate(p) for p in points]
 
 
 @router.post("/api/pickup-points", response_model=MapPickupPointRead, status_code=201)
 def create_pickup_point_endpoint(
-    body: PickupPointCreate, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    body: PickupPointCreate,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(
+        require_permission(Perm.PICKUP_POINT_MANAGE, detail="Sem permissão para criar pontos de recolha.")
+    ),
 ) -> MapPickupPointRead:
-    if not can_manage_pickup_points(ctx):
-        raise HTTPException(status_code=403, detail="Sem permissão para criar pontos de recolha.")
     point = PickupPoint(**body.model_dump())
     db.add(point)
     db.commit()
@@ -180,10 +179,10 @@ def update_pickup_point_endpoint(
     point_id: uuid.UUID,
     body: PickupPointUpdate,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(
+        require_permission(Perm.PICKUP_POINT_MANAGE, detail="Sem permissão para editar pontos de recolha.")
+    ),
 ) -> MapPickupPointRead:
-    if not can_manage_pickup_points(ctx):
-        raise HTTPException(status_code=403, detail="Sem permissão para editar pontos de recolha.")
     point = db.get(PickupPoint, point_id)
     if point is None:
         raise HTTPException(status_code=404, detail="Ponto de recolha não encontrado.")
@@ -202,11 +201,11 @@ def _issue_to_read(issue: ProjectIssue) -> ProjectIssueRead:
 
 @router.get("/api/projects/{project_id}/issues", response_model=list[ProjectIssueRead])
 def list_project_issues_endpoint(
-    project_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> list[ProjectIssueRead]:
-    project = get_visible_project(db, ctx, project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
+    project = visible_project_or_404(db, ctx, project_id)
     if not can_view_project_issue(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para ver pendências deste projeto.")
     return [_issue_to_read(i) for i in list_project_issues(db, project_id)]
@@ -219,9 +218,7 @@ def create_project_issue_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectIssueRead:
-    project = get_visible_project(db, ctx, project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
+    project = visible_project_or_404(db, ctx, project_id)
     if not can_manage_project_issue(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para criar pendências neste projeto.")
     issue = create_project_issue(
@@ -253,9 +250,7 @@ def update_project_issue_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectIssueRead:
-    project = get_visible_project(db, ctx, project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
+    project = visible_project_or_404(db, ctx, project_id)
     if not can_manage_project_issue(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para editar pendências deste projeto.")
     issue = db.get(ProjectIssue, issue_id)
@@ -273,9 +268,7 @@ def convert_issue_to_task_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> TaskRead:
-    project = get_visible_project(db, ctx, project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
+    project = visible_project_or_404(db, ctx, project_id)
     if not can_manage_project_issue(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para converter pendências deste projeto.")
     issue = db.get(ProjectIssue, issue_id)
@@ -291,11 +284,10 @@ def convert_issue_to_task_endpoint(
 def optimize_route_endpoint(
     body: RouteOptimizationRequest,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_map_view),
 ) -> RouteOptimizationResponse:
     """Ordena as paragens para minimizar a distância em linha reta (D-065).
     Só lê — não grava nada. A primeira paragem é o ponto de partida."""
-    _require_map_view(ctx)
     try:
         route = compute_route(resolve_stops(db, ctx, [(s.kind, s.id) for s in body.stops]), body.round_trip)
     except RouteError as exc:
@@ -326,12 +318,11 @@ def optimize_route_endpoint(
 def trip_plan_endpoint(
     body: RouteOptimizationRequest,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_map_view),
 ) -> TripPlanResponse:
     """Plano de deslocação (D-066): a rota otimizada mais o que há para fazer em
     cada instalação. Só lê — não cria tarefas, eventos nem movimentos. Cada
     secção respeita a sua permissão e é `null` quando o utilizador não a tem."""
-    _require_map_view(ctx)
     try:
         return plan_trip(db, ctx, [(s.kind, s.id) for s in body.stops], body.round_trip)
     except RouteError as exc:

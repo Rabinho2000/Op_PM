@@ -1094,7 +1094,6 @@ def test_upload_is_read_with_a_bounded_extra_byte_and_rejected_before_processing
             calls.append(size)
             return b"x" * (MAX_UPLOAD_BYTES + 1)
 
-    monkeypatch.setattr(routes_imports, "_require_import_notes", lambda ctx: None)
     monkeypatch.setattr(
         routes_imports,
         "preview_notes_import",
@@ -1882,7 +1881,6 @@ def test_ambiguous_target_route_commits_pending_selection_without_project_mutati
     from app.schemas.imports import ApplyImportRequest
     from fastapi import HTTPException
 
-    monkeypatch.setattr(routes_imports, "_require_import_notes", lambda ctx: None)
     with pytest.raises(HTTPException) as error:
         routes_imports.apply_notes_endpoint(
             body=ApplyImportRequest(batch_id=batch.id, target_project_id=second.id, confirm=True),
@@ -1922,7 +1920,6 @@ def test_stale_conflict_route_commits_refreshed_pending_state(tmp_path, monkeypa
     from app.schemas.imports import ApplyImportRequest
     from fastapi import HTTPException
 
-    monkeypatch.setattr(routes_imports, "_require_import_notes", lambda ctx: None)
     with pytest.raises(HTTPException) as error:
         routes_imports.apply_notes_endpoint(
             body=ApplyImportRequest(batch_id=batch.id, target_project_id=existing.id, confirm=True),

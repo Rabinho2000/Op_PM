@@ -27,10 +27,10 @@ from app.schemas.inventory import (
     InventoryItemDocumentRead,
 )
 from app.schemas.inventory_catalog import normalize_inventory_category
-from app.security.current_user import get_auth_context
-from app.security.permissions import AuthContext, PermissionDenied
+from app.security.permissions import AuthContext
 from app.services.file_storage import detect_image_type, safe_stored_file_path, write_private_file
 from app.services.inventory import item_balance
+from app.api.deps import require_inventory_catalog, require_inventory_view
 
 router = APIRouter(prefix="/api/inventory", tags=["inventory-visual"])
 MAX_ITEM_PHOTO_BYTES = 10 * 1024 * 1024
@@ -45,21 +45,6 @@ class _InventoryCategoryTotals:
     item_count: int = 0
     stock_by_unit: dict[str, Decimal] = field(default_factory=dict)
     low_stock_count: int = 0
-
-
-def _require(ctx: AuthContext, permission: str) -> None:
-    try:
-        ctx.require(permission)
-    except PermissionDenied as exc:
-        raise HTTPException(status_code=403, detail=f"Sem permissão: {exc}") from exc
-
-
-def _require_view(ctx: AuthContext) -> None:
-    _require(ctx, "inventory.view")
-
-
-def _require_catalog(ctx: AuthContext) -> None:
-    _require(ctx, "inventory.manage_catalog")
 
 
 def _get_item_or_404(db: Session, item_id: uuid.UUID) -> InventoryItem:
@@ -146,9 +131,8 @@ def _category_details(db: Session) -> list[InventoryCategoryImageRead]:
 
 @router.get("/categories/details", response_model=list[InventoryCategoryImageRead])
 def inventory_category_details(
-    db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    db: Session = Depends(get_db), ctx: AuthContext = Depends(require_inventory_view)
 ) -> list[InventoryCategoryImageRead]:
-    _require_view(ctx)
     return _category_details(db)
 
 
@@ -157,10 +141,9 @@ async def upload_inventory_category_image(
     category: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_catalog),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, str | bool]:
-    _require_catalog(ctx)
     canonical = _canonical_category(category)
     content = await file.read(MAX_ITEM_PHOTO_BYTES + 1)
     content_type, extension = _upload_image(content, limit=MAX_ITEM_PHOTO_BYTES, label="A imagem")
@@ -205,10 +188,9 @@ async def upload_inventory_category_image(
 def get_inventory_category_image(
     category: str,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_view),
     settings: Settings = Depends(get_settings),
 ) -> Response:
-    _require_view(ctx)
     canonical = _canonical_category(category)
     image = db.get(InventoryCategoryImage, canonical)
     if image is None:
@@ -228,10 +210,9 @@ def get_inventory_category_image(
 def delete_inventory_category_image(
     category: str,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_catalog),
     settings: Settings = Depends(get_settings),
 ) -> Response:
-    _require_catalog(ctx)
     canonical = _canonical_category(category)
     image = db.get(InventoryCategoryImage, canonical)
     if image is None:
@@ -247,9 +228,8 @@ def delete_inventory_category_image(
 def inventory_category_summary(
     owner: Literal["solcor", "verde_milenar"] = Query(default="solcor"),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_view),
 ) -> list[InventoryCategorySummaryRead]:
-    _require_view(ctx)
     totals = {category: _InventoryCategoryTotals() for category in INVENTORY_CATEGORIES}
     items = db.query(InventoryItem).filter(InventoryItem.is_active.is_(True)).all()
     for item in items:
@@ -287,10 +267,9 @@ async def upload_inventory_item_photo(
     item_id: uuid.UUID,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_catalog),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, str | bool]:
-    _require_catalog(ctx)
     item = _get_item_or_404(db, item_id)
     content = await file.read(MAX_ITEM_PHOTO_BYTES + 1)
     content_type, extension = _upload_image(content, limit=MAX_ITEM_PHOTO_BYTES, label="A fotografia")
@@ -315,10 +294,9 @@ async def upload_inventory_item_photo(
 def get_inventory_item_photo(
     item_id: uuid.UUID,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_view),
     settings: Settings = Depends(get_settings),
 ) -> Response:
-    _require_view(ctx)
     item = _get_item_or_404(db, item_id)
     content = _read_media(
         _media_path(settings, "item_photos", item.photo_storage_name), item.photo_content_type,
@@ -335,10 +313,9 @@ def get_inventory_item_photo(
 def delete_inventory_item_photo(
     item_id: uuid.UUID,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_catalog),
     settings: Settings = Depends(get_settings),
 ) -> Response:
-    _require_catalog(ctx)
     item = _get_item_or_404(db, item_id)
     old_name = item.photo_storage_name
     if old_name is None:
@@ -387,10 +364,9 @@ async def upload_inventory_item_document(
     title: str = Form(..., min_length=1, max_length=256),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_catalog),
     settings: Settings = Depends(get_settings),
 ) -> InventoryItemDocumentRead:
-    _require_catalog(ctx)
     _get_item_or_404(db, item_id)
     title = " ".join(title.split())
     if not title:
@@ -435,9 +411,8 @@ async def upload_inventory_item_document(
 def list_inventory_item_documents(
     item_id: uuid.UUID,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_view),
 ) -> list[InventoryItemDocument]:
-    _require_view(ctx)
     _get_item_or_404(db, item_id)
     return (
         db.query(InventoryItemDocument)
@@ -456,10 +431,9 @@ def download_inventory_item_document(
     document_id: uuid.UUID,
     inline: bool = Query(default=False),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_view),
     settings: Settings = Depends(get_settings),
 ) -> Response:
-    _require_view(ctx)
     _get_item_or_404(db, item_id)
     document = db.query(InventoryItemDocument).filter(
         InventoryItemDocument.id == document_id,
@@ -490,9 +464,8 @@ def delete_inventory_item_document(
     item_id: uuid.UUID,
     document_id: uuid.UUID,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_catalog),
 ) -> Response:
-    _require_catalog(ctx)
     _get_item_or_404(db, item_id)
     document = db.query(InventoryItemDocument).filter(
         InventoryItemDocument.id == document_id,

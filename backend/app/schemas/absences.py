@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# Espelham `ABSENCE_TYPES/ABSENCE_STATUSES` (app/models/absence.py); ver `tests/test_schema_literals.py`.
+AbsenceTypeValue = Literal["ferias", "baixa_medica", "outro"]
+AbsenceStatusValue = Literal["pendente", "aprovada", "rejeitada", "cancelada"]
 
 
 class AbsenceOverlapRead(BaseModel):
@@ -12,8 +17,8 @@ class AbsenceOverlapRead(BaseModel):
     id: uuid.UUID
     start_date: dt.date
     end_date: dt.date
-    type: str
-    status: str
+    type: AbsenceTypeValue
+    status: AbsenceStatusValue
 
 
 class WorkOverlapRead(BaseModel):
@@ -33,9 +38,9 @@ class AbsenceRead(BaseModel):
     person_id: uuid.UUID
     start_date: dt.date
     end_date: dt.date
-    type: str
+    type: AbsenceTypeValue
     note: str
-    status: str
+    status: AbsenceStatusValue
     created_by_person_id: uuid.UUID | None
     decided_by_person_id: uuid.UUID | None
     decided_at: dt.datetime | None

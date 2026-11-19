@@ -32,6 +32,7 @@ from app.models.identity import User
 from app.models.people import Person
 from app.models.project import Project, ProjectHistory, ProjectStageProgress
 from app.models.workflow import Phase, WorkflowStage
+from app.security.perm import Perm
 from app.security.permissions import AuthContext
 from app.services.performance import completed_tasks_by_week
 from app.utils.text import nfc_lower_strip
@@ -44,8 +45,8 @@ LISBON = ZoneInfo("Europe/Lisbon")
 ACTIVE_SEND_STATUSES = ("pending", "pending_review", "sent")
 STATUS_OUTBOX_LOCAL = "outbox_local"
 OUTBOX_LOCAL_NOTE = "Graph desativado: mensagem gravada no outbox local e NÃO enviada ao cliente."
-REPORT_MANAGE = "client_report.manage"
-REPORT_VIEW = "client_report.view"
+REPORT_MANAGE = Perm.CLIENT_REPORT_MANAGE
+REPORT_VIEW = Perm.CLIENT_REPORT_VIEW
 EXCLUDED_LIFECYCLE = {
     "entregue_cliente",
     "certificado_final",
@@ -177,7 +178,7 @@ def _can_manage(ctx: AuthContext, project: Project) -> bool:
         return False
     # Administrador/Chefe têm âmbito global via project.view_all/edit_all. Um PM
     # só pode tocar nos projetos que lhe estão atribuídos.
-    return ctx.has_permission("project.view_all") or ctx.has_permission("project.edit_all") or project.pm_person_id == ctx.person_id
+    return ctx.has_permission(Perm.PROJECT_VIEW_ALL) or ctx.has_permission(Perm.PROJECT_EDIT_ALL) or project.pm_person_id == ctx.person_id
 
 
 def _require_project_access(ctx: AuthContext, project: Project, *, manage: bool) -> None:
@@ -194,7 +195,7 @@ def _require_project_access(ctx: AuthContext, project: Project, *, manage: bool)
                 raise ClientReportNotFound("Projeto não encontrado.")
             raise ClientReportForbidden(f"Permissão em falta: {REPORT_MANAGE}.")
     elif ctx.has_permission(REPORT_VIEW) and not (
-        ctx.has_permission("project.view_all") or ctx.has_permission("project.edit_all") or project.pm_person_id == ctx.person_id
+        ctx.has_permission(Perm.PROJECT_VIEW_ALL) or ctx.has_permission(Perm.PROJECT_EDIT_ALL) or project.pm_person_id == ctx.person_id
     ):
         raise ClientReportNotFound("Projeto não encontrado.")
 
@@ -786,7 +787,7 @@ def list_reports(db: Session, ctx: AuthContext, *, status: str | None = None, pm
     )
     if pm_person_id is not None:
         query = query.filter(Project.pm_person_id == pm_person_id)
-    if not (ctx.has_permission("project.view_all") or ctx.has_permission("project.edit_all")):
+    if not (ctx.has_permission(Perm.PROJECT_VIEW_ALL) or ctx.has_permission(Perm.PROJECT_EDIT_ALL)):
         query = query.filter(Project.pm_person_id == ctx.person_id)
     result = []
     for project, config in query.order_by(Project.name).all():

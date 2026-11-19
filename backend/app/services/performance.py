@@ -34,6 +34,7 @@ from app.security.permissions import AuthContext
 from app.services.projects import visible_projects_query
 from app.services.tasks import visible_tasks_query
 from app.utils.timezones import LISBON_TZ, today_lisbon
+from app.security.perm import Perm
 
 ZERO = Decimal("0")
 
@@ -381,9 +382,9 @@ def compute_goal_progress(db: Session, goal: GoalPeriod, *, today: dt.date | Non
 
 
 def visible_goals_query(db: Session, ctx: AuthContext):
-    if ctx.has_permission("performance.view_all"):
+    if ctx.has_permission(Perm.PERFORMANCE_VIEW_ALL):
         return db.query(GoalPeriod)
-    if ctx.has_permission("performance.view_own"):
+    if ctx.has_permission(Perm.PERFORMANCE_VIEW_OWN):
         return db.query(GoalPeriod).filter(
             (GoalPeriod.pm_person_id == ctx.person_id) | (GoalPeriod.scope == "company")
         )

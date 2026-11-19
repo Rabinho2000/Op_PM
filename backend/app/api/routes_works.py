@@ -22,7 +22,6 @@ from app.schemas.works import UnscheduledProjectRead, WorkItemRead, WorksCalenda
 from app.security.current_user import get_auth_context
 from app.security.permissions import (
     AuthContext,
-    PermissionDenied,
     can_plan_project_work,
     can_view_installers,
     is_installer_readonly_scope,
@@ -30,6 +29,8 @@ from app.security.permissions import (
 from app.services.project_lifecycle import LIFECYCLE_STATUS_CODES
 from app.services.team_assignments import AssignmentError, get_teams_view
 from app.services.works_calendar import WindowError, get_works_calendar
+from app.security.perm import Perm
+from app.security.guards import permission_denied_message
 
 router = APIRouter(prefix="/api/works", tags=["works"])
 
@@ -50,7 +51,11 @@ def _parse_installer_selection(
     return list(dict.fromkeys(selected_ids))
 
 
-@router.get("/teams", response_model=TeamsViewRead)
+@router.get(
+    "/teams",
+    response_model=TeamsViewRead,
+    dependencies=[Depends(permission_denied_message("Sem permissão para ver equipas."))],
+)
 def works_teams_endpoint(
     date: dt.date = Query(default_factory=dt.date.today),
     days: int = Query(default=1, ge=1, le=62),
@@ -64,8 +69,6 @@ def works_teams_endpoint(
         view_date, view_days, installers = get_teams_view(
             db, ctx, date=date, days=days, installer_ids=selected_installer_ids or None
         )
-    except PermissionDenied:
-        raise HTTPException(status_code=403, detail="Sem permissão para ver equipas.")
     except AssignmentError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -125,7 +128,7 @@ def works_calendar_endpoint(
 ) -> WorksCalendarRead:
     if not (
         can_view_installers(ctx)
-        or ctx.has_permission("works_calendar.view_assigned_installer")
+        or ctx.has_permission(Perm.WORKS_CALENDAR_VIEW_ASSIGNED_INSTALLER)
     ):
         raise HTTPException(status_code=403, detail="Sem permissão para ver o calendário de obras.")
     invalid = sorted(set(lifecycle_status or []) - LIFECYCLE_STATUS_CODES)

@@ -26,7 +26,7 @@ from app.schemas.material_requests import (
     MaterialRequestUpdate,
 )
 from app.security.current_user import get_auth_context
-from app.security.permissions import AuthContext, PermissionDenied, can_view_project
+from app.security.permissions import AuthContext, can_view_project
 from app.services.material_requests import (
     LineInput,
     MaterialRequestError,
@@ -40,19 +40,21 @@ from app.services.material_requests import (
     request_total,
     update_draft,
 )
+from app.security.perm import Perm
+from app.security.guards import permission_denied_message, require_permission
 
 router = APIRouter(prefix="/api/material-requests", tags=["material-requests"])
 
 
-def _require_view(ctx: AuthContext) -> None:
-    if not ctx.has_permission("inventory.view"):
-        raise HTTPException(status_code=403, detail="Sem permissão para ver pedidos de material.")
+require_material_request_view = require_permission(
+    Perm.INVENTORY_VIEW, detail="Sem permissão para ver pedidos de material."
+)
 
 
 def _visible_request(db: Session, ctx: AuthContext, request_id: uuid.UUID) -> tuple[MaterialRequest, Project]:
     """404 (nunca 403) quando o pedido não existe OU o projeto está fora do
-    âmbito — não revela a existência de pedidos alheios."""
-    _require_view(ctx)
+    âmbito — não revela a existência de pedidos alheios. A permissão de ver
+    (`require_material_request_view`) é exigida pela dependência da rota."""
     request = db.get(MaterialRequest, request_id)
     project = db.get(Project, request.project_id) if request else None
     if request is None or project is None or not can_view_project(ctx, project):
@@ -160,13 +162,17 @@ def list_requests_endpoint(
     supplier_id: uuid.UUID | None = Query(default=None),
     status: str | None = Query(default=None),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_material_request_view),
 ) -> list[MaterialRequestRead]:
-    _require_view(ctx)
     return _to_reads(db, ctx, list_requests(db, ctx, project_id=project_id, supplier_id=supplier_id, status=status))
 
 
-@router.post("", response_model=MaterialRequestRead, status_code=201)
+@router.post(
+    "",
+    response_model=MaterialRequestRead,
+    status_code=201,
+    dependencies=[Depends(permission_denied_message("Sem permissão para criar pedidos de material neste projeto."))],
+)
 def create_request_endpoint(
     body: MaterialRequestCreate,
     db: Session = Depends(get_db),
@@ -184,8 +190,6 @@ def create_request_endpoint(
             lines=_lines_input(body.lines),
             notes=body.notes,
         )
-    except PermissionDenied:
-        raise HTTPException(status_code=403, detail="Sem permissão para criar pedidos de material neste projeto.")
     except MaterialRequestError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _one(db, ctx, request)
@@ -193,18 +197,22 @@ def create_request_endpoint(
 
 @router.get("/{request_id}", response_model=MaterialRequestRead)
 def get_request_endpoint(
-    request_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    request_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(require_material_request_view)
 ) -> MaterialRequestRead:
     request, _project = _visible_request(db, ctx, request_id)
     return _one(db, ctx, request)
 
 
-@router.patch("/{request_id}", response_model=MaterialRequestRead)
+@router.patch(
+    "/{request_id}",
+    response_model=MaterialRequestRead,
+    dependencies=[Depends(permission_denied_message("Sem permissão para editar este pedido."))],
+)
 def update_request_endpoint(
     request_id: uuid.UUID,
     body: MaterialRequestUpdate,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_material_request_view),
 ) -> MaterialRequestRead:
     request, project = _visible_request(db, ctx, request_id)
     changes = body.model_dump(exclude_unset=True)
@@ -217,19 +225,21 @@ def update_request_endpoint(
         kwargs["lines"] = _lines_input(body.lines or [])
     try:
         request = update_draft(db, ctx, request, project, **kwargs)
-    except PermissionDenied:
-        raise HTTPException(status_code=403, detail="Sem permissão para editar este pedido.")
     except MaterialRequestError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _one(db, ctx, request)
 
 
-@router.post("/{request_id}/actions", response_model=MaterialRequestRead)
+@router.post(
+    "/{request_id}/actions",
+    response_model=MaterialRequestRead,
+    dependencies=[Depends(permission_denied_message("Sem permissão para esta ação neste pedido."))],
+)
 def apply_action_endpoint(
     request_id: uuid.UUID,
     body: MaterialRequestActionBody,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_material_request_view),
 ) -> MaterialRequestRead:
     request, project = _visible_request(db, ctx, request_id)
     prices = {p.line_id: p.unit_price for p in body.prices}
@@ -237,8 +247,6 @@ def apply_action_endpoint(
         raise HTTPException(status_code=400, detail="Há linhas repetidas no orçamento.")
     try:
         request = apply_action(db, ctx, request, project, action=body.action, note=body.note, prices=prices)
-    except PermissionDenied:
-        raise HTTPException(status_code=403, detail="Sem permissão para esta ação neste pedido.")
     except MaterialRequestError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _one(db, ctx, request)
@@ -246,7 +254,7 @@ def apply_action_endpoint(
 
 @router.get("/{request_id}/email-draft", response_model=EmailDraftRead)
 def email_draft_endpoint(
-    request_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    request_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(require_material_request_view)
 ) -> EmailDraftRead:
     """Texto para uma pessoa rever, copiar e enviar — o sistema nunca envia (D-010)."""
     request, project = _visible_request(db, ctx, request_id)

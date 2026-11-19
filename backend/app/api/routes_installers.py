@@ -21,22 +21,22 @@ from app.schemas.installers import (
     TeamCreate,
     TeamUpdate,
 )
-from app.security.current_user import get_auth_context
-from app.security.permissions import AuthContext, can_manage_installers, can_view_installers
+from app.security.permissions import AuthContext
 from app.services import installers as service
 from app.utils.text import normalize_key
+from app.security.guards import require_permission
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/installers", tags=["installers"])
 
 
-def _require_view(ctx: AuthContext) -> None:
-    if not can_view_installers(ctx):
-        raise HTTPException(status_code=403, detail="Sem permissão para ver os instaladores.")
-
-
-def _require_manage(ctx: AuthContext) -> None:
-    if not can_manage_installers(ctx):
-        raise HTTPException(status_code=403, detail="Sem permissão para gerir instaladores e equipas.")
+# `can_view_installers`: âmbito próprio ou global de projetos.
+require_installer_view = require_permission(
+    Perm.PROJECT_VIEW_ALL, Perm.PROJECT_VIEW_OWN, detail="Sem permissão para ver os instaladores."
+)
+require_installer_manage = require_permission(
+    Perm.INSTALLER_MANAGE, detail="Sem permissão para gerir instaladores e equipas."
+)
 
 
 def _to_read(installer: Installer, by_installer: dict, by_team: dict) -> InstallerRead:
@@ -66,9 +66,8 @@ def _read_one(db: Session, installer: Installer) -> InstallerRead:
 
 @router.get("", response_model=list[InstallerRead])
 def list_installers_endpoint(
-    db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    db: Session = Depends(get_db), ctx: AuthContext = Depends(require_installer_view)
 ) -> list[InstallerRead]:
-    _require_view(ctx)
     by_installer, by_team = service.project_counts_by_installer(db)
     installers = db.query(Installer).order_by(Installer.name_key).all()
     return [_to_read(i, by_installer, by_team) for i in installers]
@@ -76,9 +75,8 @@ def list_installers_endpoint(
 
 @router.post("", response_model=InstallerRead, status_code=201)
 def create_installer_endpoint(
-    body: InstallerCreate, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    body: InstallerCreate, db: Session = Depends(get_db), ctx: AuthContext = Depends(require_installer_manage)
 ) -> InstallerRead:
-    _require_manage(ctx)
     if service.find_installer_by_name(db, body.name) is not None:
         raise HTTPException(status_code=409, detail="Já existe um instalador com este nome.")
     installer = Installer(name=body.name, name_key=normalize_key(body.name))
@@ -93,9 +91,8 @@ def update_installer_endpoint(
     installer_id: uuid.UUID,
     body: InstallerUpdate,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_installer_manage),
 ) -> InstallerRead:
-    _require_manage(ctx)
     installer = db.get(Installer, installer_id)
     if installer is None:
         raise HTTPException(status_code=404, detail="Instalador não encontrado.")
@@ -120,9 +117,8 @@ def create_team_endpoint(
     installer_id: uuid.UUID,
     body: TeamCreate,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_installer_manage),
 ) -> InstallerRead:
-    _require_manage(ctx)
     installer = db.get(Installer, installer_id)
     if installer is None:
         raise HTTPException(status_code=404, detail="Instalador não encontrado.")
@@ -148,9 +144,8 @@ def update_team_endpoint(
     team_id: uuid.UUID,
     body: TeamUpdate,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_installer_manage),
 ) -> InstallerRead:
-    _require_manage(ctx)
     team = db.get(InstallerTeam, team_id)
     if team is None or team.installer_id != installer_id:
         raise HTTPException(status_code=404, detail="Equipa não encontrada neste instalador.")

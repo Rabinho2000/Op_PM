@@ -23,26 +23,27 @@ from app.security.permissions import (
     is_installer_readonly_scope,
 )
 from app.services.projects import visible_projects_query
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/people", tags=["people"])
 
 _GLOBAL_PEOPLE_PERMISSIONS = frozenset(
     {
-        "admin.manage_users",
-        "absence.view_all",
-        "absence.manage_all",
-        "absence.approve",
-        "performance.manage_goals",
-        "migration.resolve",
-        "project.edit_all",
-        "task.edit_all",
+        Perm.ADMIN_MANAGE_USERS,
+        Perm.ABSENCE_VIEW_ALL,
+        Perm.ABSENCE_MANAGE_ALL,
+        Perm.ABSENCE_APPROVE,
+        Perm.PERFORMANCE_MANAGE_GOALS,
+        Perm.MIGRATION_RESOLVE,
+        Perm.PROJECT_EDIT_ALL,
+        Perm.TASK_EDIT_ALL,
     }
 )
 
 
 def _can_list_global_people(ctx: AuthContext) -> bool:
     return (
-        ctx.has_permission("project.view_all")
+        ctx.has_permission(Perm.PROJECT_VIEW_ALL)
         or bool(_GLOBAL_PEOPLE_PERMISSIONS.intersection(ctx.permission_codes))
         or can_manage_support_delegations(ctx)
     )

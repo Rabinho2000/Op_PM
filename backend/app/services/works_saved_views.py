@@ -20,6 +20,7 @@ from app.security.permissions import (
 )
 from app.services.project_lifecycle import LIFECYCLE_STATUS_CODES
 from app.services.projects import visible_projects_query
+from app.security.perm import Perm
 
 WORKS_SAVED_VIEW_ZOOMS: frozenset[str] = frozenset(
     {"weeks", "months", "quarters", "month_days"}
@@ -57,7 +58,7 @@ class SavedViewStorageError(RuntimeError):
 
 def require_saved_views_permission(ctx: AuthContext) -> None:
     """Aplica no serviço o mesmo âmbito de /api/works/calendar."""
-    if not (can_view_installers(ctx) or ctx.has_permission("works_calendar.view_assigned_installer")):
+    if not (can_view_installers(ctx) or ctx.has_permission(Perm.WORKS_CALENDAR_VIEW_ASSIGNED_INSTALLER)):
         raise SavedViewPermissionError(
             "Sem permissão para ver o calendário de obras."
         )
@@ -65,7 +66,7 @@ def require_saved_views_permission(ctx: AuthContext) -> None:
 
 def require_saved_views_write_permission(ctx: AuthContext) -> None:
     require_saved_views_permission(ctx)
-    if is_installer_readonly_scope(ctx) or not ctx.has_permission("calendar.view"):
+    if is_installer_readonly_scope(ctx) or not ctx.has_permission(Perm.CALENDAR_VIEW):
         raise SavedViewPermissionError("O papel externo tem acesso somente de leitura.")
 
 
@@ -224,7 +225,7 @@ def _validate_person(
         .filter(Person.id == person_id, Person.is_active.is_(True))
         .one_or_none()
     )
-    allowed = ctx.has_permission("project.view_all") or person_id in visible_pm_ids
+    allowed = ctx.has_permission(Perm.PROJECT_VIEW_ALL) or person_id in visible_pm_ids
     if person is None or not allowed:
         raise SavedViewValidationError("Filtro de pessoa inválido.")
 
@@ -241,7 +242,7 @@ def _validate_installer(
         .one_or_none()
     )
     allowed = (
-        ctx.has_permission("project.view_all")
+        ctx.has_permission(Perm.PROJECT_VIEW_ALL)
         or installer_id in visible_installer_ids
     )
     if installer is None or not allowed:
@@ -270,7 +271,7 @@ def _validate_team(
             )
             .one_or_none()
         )
-    allowed = ctx.has_permission("project.view_all") or team_id in visible_team_ids
+    allowed = ctx.has_permission(Perm.PROJECT_VIEW_ALL) or team_id in visible_team_ids
     if team is None or installer is None or not allowed:
         raise SavedViewValidationError("Filtro de equipa inválido.")
     return team

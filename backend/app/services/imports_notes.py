@@ -44,6 +44,7 @@ from app.models.imports import (
 )
 from app.models.project import Project
 from app.models.project_data import ProjectInstallationData, ProjectLicensingData
+from app.security.perm import Perm
 from app.security.permissions import (
     AuthContext,
     can_edit_project,
@@ -122,7 +123,7 @@ def _require_existing_project_edit_rights(
     if changed_project_fields:
         if not can_edit_project(ctx, project):
             raise NotesImportPermissionError("Sem permissão para alterar este projeto existente.")
-        if not ctx.has_permission("project.edit_all"):
+        if not ctx.has_permission(Perm.PROJECT_EDIT_ALL):
             blocked = sorted(changed_project_fields - PM_EDITABLE_PROJECT_FIELDS)
             if blocked:
                 raise NotesImportPermissionError(

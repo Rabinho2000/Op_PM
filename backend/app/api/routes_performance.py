@@ -23,8 +23,7 @@ from app.schemas.performance import (
     CompletedTasksWeeklyPmRead,
     CompletedTasksWeeklyRead,
 )
-from app.security.current_user import get_auth_context
-from app.security.permissions import AuthContext, can_manage_goals, can_view_performance
+from app.security.permissions import AuthContext
 from app.services.performance import (
     PerformanceError,
     completed_tasks_by_week,
@@ -35,13 +34,15 @@ from app.services.performance import (
     list_goals,
     update_goal,
 )
+from app.security.guards import require_permission
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/performance", tags=["performance"])
 
 
-def _require_view(ctx: AuthContext) -> None:
-    if not can_view_performance(ctx):
-        raise HTTPException(status_code=403, detail="Sem permissão para ver metas e indicadores.")
+require_performance_view = require_permission(
+    Perm.PERFORMANCE_VIEW_ALL, Perm.PERFORMANCE_VIEW_OWN, detail="Sem permissão para ver metas e indicadores."
+)
 
 
 @router.get("/completed-tasks-weekly", response_model=list[CompletedTasksWeeklyRead])
@@ -49,9 +50,8 @@ def completed_tasks_weekly_endpoint(
     from_date: dt.date | None = Query(default=None, alias="from"),
     to_date: dt.date | None = Query(default=None, alias="to"),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_performance_view),
 ) -> list[CompletedTasksWeeklyRead]:
-    _require_view(ctx)
     try:
         weeks = completed_tasks_by_week(db, ctx, from_date=from_date, to_date=to_date)
     except PerformanceError as exc:
@@ -110,9 +110,8 @@ def performance_summary_endpoint(
     semester: int | None = Query(default=None),
     month: int | None = Query(default=None),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_performance_view),
 ) -> PerformanceSummary:
-    _require_view(ctx)
     effective_year = year or dt.date.today().year
     goals = list_goals(
         db,
@@ -152,9 +151,8 @@ def list_goals_endpoint(
     semester: int | None = Query(default=None),
     month: int | None = Query(default=None),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_performance_view),
 ) -> list[GoalPeriodRead]:
-    _require_view(ctx)
     goals = list_goals(
         db,
         ctx,
@@ -170,10 +168,12 @@ def list_goals_endpoint(
 
 @router.post("/goals", response_model=GoalPeriodRead, status_code=201)
 def create_goal_endpoint(
-    body: GoalPeriodCreate, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    body: GoalPeriodCreate,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(
+        require_permission(Perm.PERFORMANCE_MANAGE_GOALS, detail="Sem permissão para criar metas.")
+    ),
 ) -> GoalPeriodRead:
-    if not can_manage_goals(ctx):
-        raise HTTPException(status_code=403, detail="Sem permissão para criar metas.")
     try:
         goal = create_goal(
             db,
@@ -199,10 +199,10 @@ def update_goal_endpoint(
     goal_id: uuid.UUID,
     body: GoalPeriodUpdate,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(
+        require_permission(Perm.PERFORMANCE_MANAGE_GOALS, detail="Sem permissão para editar metas.")
+    ),
 ) -> GoalPeriodRead:
-    if not can_manage_goals(ctx):
-        raise HTTPException(status_code=403, detail="Sem permissão para editar metas.")
     goal = db.get(GoalPeriod, goal_id)
     if goal is None:
         raise HTTPException(status_code=404, detail="Meta não encontrada.")

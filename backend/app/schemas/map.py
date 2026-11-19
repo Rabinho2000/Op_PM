@@ -9,6 +9,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.suppliers import SupplierRead
 
+# Espelham `ISSUE_CATEGORIES/STATUSES/PRIORITIES` (app/models/map_ops.py); ver `tests/test_schema_literals.py`.
+IssueCategory = Literal["obra", "material", "documentacao", "visita", "outro"]
+IssueStatus = Literal["aberta", "em_curso", "resolvida", "cancelada"]
+IssuePriority = Literal["low", "medium", "high", "urgent"]
+RouteStopKind = Literal["project", "supplier", "pickup"]
+
 
 class NextOperationalTaskRead(BaseModel):
     id: uuid.UUID
@@ -121,9 +127,9 @@ class ProjectIssueRead(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID
     description: str
-    category: str
-    priority: str
-    status: str
+    category: IssueCategory
+    priority: IssuePriority
+    status: IssueStatus
     assigned_to_person_id: uuid.UUID | None
     due_date: dt.date | None
     lat: float | None
@@ -227,7 +233,7 @@ class RouteOptimizationRequest(BaseModel):
 
 
 class RouteStopRead(BaseModel):
-    kind: str
+    kind: RouteStopKind
     id: uuid.UUID
     name: str
     lat: float

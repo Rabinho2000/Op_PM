@@ -27,6 +27,7 @@ from app.schemas.cable_designs import (
     _json_object,
 )
 from app.security.permissions import AuthContext, can_edit_project, can_view_project
+from app.security.perm import Perm
 
 
 class CableDesignPermissionError(PermissionError):
@@ -71,12 +72,12 @@ _APPROVABLE_RESULT_FAILURE = "O resultado guardado não está pronto para aprova
 
 
 def require_cable_design_view_permission(ctx: AuthContext) -> None:
-    if not ctx.has_permission("cable_design.view"):
+    if not ctx.has_permission(Perm.CABLE_DESIGN_VIEW):
         raise CableDesignPermissionError("Sem permissão para consultar estudos de cabos.")
 
 
 def require_cable_design_edit_permission(ctx: AuthContext) -> None:
-    if not ctx.has_permission("cable_design.edit"):
+    if not ctx.has_permission(Perm.CABLE_DESIGN_EDIT):
         raise CableDesignPermissionError("Sem permissão para editar estudos de cabos.")
 
 

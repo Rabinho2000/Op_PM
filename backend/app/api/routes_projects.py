@@ -35,7 +35,6 @@ from app.schemas.projects import (
 from app.security.current_user import get_auth_context
 from app.security.permissions import (
     AuthContext,
-    PermissionDenied,
     can_change_project_status,
     can_create_task,
     can_edit_project,
@@ -73,6 +72,10 @@ from app.services.team_assignments import (
     list_project_assignments,
     update_project_assignment,
 )
+from app.security.perm import Perm
+from app.security.guards import permission_denied_message
+from app.security.guards import require_permission
+from app.api.deps import visible_project_or_404
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -83,7 +86,7 @@ def _editable_fields(ctx: AuthContext, project: Project) -> list[str]:
     """Mesma regra de app/services/projects.py:update_project (D-028)."""
     if not can_edit_project(ctx, project):
         return []
-    if ctx.has_permission("project.edit_all"):
+    if ctx.has_permission(Perm.PROJECT_EDIT_ALL):
         return sorted(ProjectUpdate.model_fields)
     return sorted(PM_EDITABLE_PROJECT_FIELDS)
 
@@ -93,6 +96,11 @@ def _require_installer_mutation_scope(ctx: AuthContext) -> None:
     if is_installer_readonly_scope(ctx):
         raise HTTPException(status_code=403, detail="O papel externo tem acesso somente de leitura.")
 
+
+# Texto do 403 quando o serviço chamado pela rota levanta `PermissionDenied`
+# (o handler de `app.main` produz o `{"detail": ...}`).
+_deny_create = permission_denied_message("Não tem permissão para criar projetos.")
+_deny_plan_work = permission_denied_message("Sem permissão para planear a obra deste projeto.")
 
 _COMPUTE = object()  # "calcular só para este projeto" (por oposição a `None` = sem catálogo)
 _PAYMENTS_COMPUTE = object()
@@ -139,15 +147,15 @@ def _to_read(
     data.can_plan_work = can_plan_project_work(ctx, project)
     data.has_project_photo = project.primary_photo_storage_name is not None
     data.can_edit_project_photo = can_edit_project(ctx, project)
-    data.can_delete = ctx.has_permission("project.delete") and project.deleted_at is None
-    data.can_restore = ctx.has_permission("project.restore") and project.deleted_at is not None
+    data.can_delete = ctx.has_permission(Perm.PROJECT_DELETE) and project.deleted_at is None
+    data.can_restore = ctx.has_permission(Perm.PROJECT_RESTORE) and project.deleted_at is not None
     data.can_edit_credentials = can_edit_project_credentials(ctx, project)
     data.can_reveal_credentials = can_reveal_project_credential(ctx, project)
     data.can_edit_sim_cards = can_edit_project_sim_cards(ctx, project)
     data.can_reveal_sim_secrets = can_reveal_project_sim_secrets(ctx, project)
     data.can_edit_surplus_contracts = can_edit_project_surplus_contracts(ctx, project)
     data.can_edit_payments = can_edit_project_payments(ctx, project)
-    if include_payments and ctx.has_permission("payment.view"):
+    if include_payments and ctx.has_permission(Perm.PAYMENT_VIEW):
         summaries = (
             payment_summaries_by_project(db, ctx=ctx, projects=[project])
             if payment_summaries is _PAYMENTS_COMPUTE
@@ -239,7 +247,7 @@ def list_projects_endpoint(
     percents = progress_percent_by_project(db, [p.id for p in projects])
     payments = (
         payment_summaries_by_project(db, ctx=ctx, projects=projects)
-        if ctx.has_permission("payment.view")
+        if ctx.has_permission(Perm.PAYMENT_VIEW)
         else None
     )
     result = [_to_read(db, p, ctx, percents, payments) for p in projects]
@@ -251,7 +259,11 @@ def list_projects_endpoint(
     return result
 
 
-@router.get("/check-name", response_model=list[ProjectNameCandidate])
+@router.get(
+    "/check-name",
+    response_model=list[ProjectNameCandidate],
+    dependencies=[Depends(_deny_create)],
+)
 def check_project_name_endpoint(
     name: str = Query(min_length=1, max_length=512),
     db: Session = Depends(get_db),
@@ -260,30 +272,33 @@ def check_project_name_endpoint(
     _require_installer_mutation_scope(ctx)
     if not name.strip():
         raise HTTPException(status_code=422, detail="O nome do projeto não pode estar vazio.")
-    try:
-        candidates = check_project_name(db, name=name.strip(), ctx=ctx)
-    except PermissionDenied as exc:
-        raise HTTPException(status_code=403, detail="Não tem permissão para criar projetos.") from exc
+    candidates = check_project_name(db, name=name.strip(), ctx=ctx)
     return [ProjectNameCandidate(id=project.id, name=project.name) for project in candidates]
 
 
-@router.get("/eligible-managers", response_model=list[ProjectEligibleManagerRead])
+@router.get(
+    "/eligible-managers",
+    response_model=list[ProjectEligibleManagerRead],
+    dependencies=[Depends(_deny_create)],
+)
 def eligible_project_managers_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[ProjectEligibleManagerRead]:
     _require_installer_mutation_scope(ctx)
-    try:
-        ctx.require("project.edit_all")
-    except PermissionDenied as exc:
-        raise HTTPException(status_code=403, detail="Não tem permissão para criar projetos.") from exc
+    ctx.require(Perm.PROJECT_EDIT_ALL)
     return [
         ProjectEligibleManagerRead(id=person_id, display_name=name)
         for person_id, name in eligible_project_managers(db)
     ]
 
 
-@router.post("", response_model=ProjectRead, status_code=201)
+@router.post(
+    "",
+    response_model=ProjectRead,
+    status_code=201,
+    dependencies=[Depends(_deny_create)],
+)
 def create_project_endpoint(
     body: ProjectCreate,
     db: Session = Depends(get_db),
@@ -296,9 +311,6 @@ def create_project_endpoint(
         result.model_dump(mode="json")
         db.commit()
         return result
-    except PermissionDenied as exc:
-        db.rollback()
-        raise HTTPException(status_code=403, detail="Não tem permissão para criar projetos.") from exc
     except DuplicateProjectName as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc))
@@ -311,7 +323,9 @@ def create_project_endpoint(
 
 
 @router.get("/lifecycle-statuses", response_model=list[LifecycleStatusRead])
-def list_lifecycle_statuses_endpoint(ctx: AuthContext = Depends(get_auth_context)) -> list[LifecycleStatusRead]:
+def list_lifecycle_statuses_endpoint(
+    ctx: AuthContext = Depends(get_auth_context),
+) -> list[LifecycleStatusRead]:
     """Lista única de estados (código, rótulo, posição na sequência normal) —
     a UI lê-a daqui em vez de a duplicar."""
     return [
@@ -327,10 +341,10 @@ def list_lifecycle_statuses_endpoint(ctx: AuthContext = Depends(get_auth_context
 @router.get("/deleted", response_model=list[ProjectRead])
 def list_deleted_projects_endpoint(
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(
+        require_permission(Perm.PROJECT_RESTORE, detail="Sem permissão para ver projetos apagados.")
+    ),
 ) -> list[ProjectRead]:
-    if not ctx.has_permission("project.restore"):
-        raise HTTPException(status_code=403, detail="Sem permissão para ver projetos apagados.")
     projects = db.query(Project).filter(Project.deleted_at.is_not(None)).order_by(Project.deleted_at.desc()).all()
     return [_to_read(db, project, ctx, include_payments=False) for project in projects]
 
@@ -341,13 +355,18 @@ def get_project_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectRead:
-    project = get_visible_project(db, ctx, project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
+    project = visible_project_or_404(db, ctx, project_id)
     return _to_read(db, project, ctx)
 
 
-@router.patch("/{project_id}", response_model=ProjectRead)
+@router.patch(
+    "/{project_id}",
+    response_model=ProjectRead,
+    # O texto inclui, quando aplicável, a lista de campos administrativos
+    # recusados (D-028) — não é uma fuga de informação sensível, o próprio
+    # pedido já continha esses campos.
+    dependencies=[Depends(permission_denied_message("Sem permissão para editar este projeto", with_reason=True))],
+)
 def update_project_endpoint(
     project_id: uuid.UUID,
     body: ProjectUpdate,
@@ -358,55 +377,56 @@ def update_project_endpoint(
     project = db.query(Project).filter(Project.id == project_id, Project.deleted_at.is_(None)).one_or_none()
     if project is None:
         raise HTTPException(status_code=404, detail="Projeto não encontrado.")
-    try:
-        updated = update_project_service(db, project=project, changes=body, ctx=ctx)
-    except PermissionDenied as exc:
-        # str(exc) inclui, quando aplicável, a lista de campos
-        # administrativos recusados (D-028) — não é uma fuga de
-        # informação sensível, o próprio pedido já continha esses campos.
-        raise HTTPException(status_code=403, detail=f"Sem permissão para editar este projeto: {exc}")
+    updated = update_project_service(db, project=project, changes=body, ctx=ctx)
     return _to_read(db, updated, ctx)
 
 
-@router.delete("/{project_id}", status_code=204)
+@router.delete(
+    "/{project_id}",
+    status_code=204,
+    dependencies=[Depends(permission_denied_message("Sem permissão para apagar projetos."))],
+)
 def delete_project_endpoint(
     project_id: uuid.UUID,
     body: ProjectDelete,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(
+        require_permission(Perm.PROJECT_DELETE, detail="Sem permissão para apagar projetos.")
+    ),
 ) -> None:
-    if not ctx.has_permission("project.delete"):
-        raise HTTPException(status_code=403, detail="Sem permissão para apagar projetos.")
     project = db.query(Project).filter(Project.id == project_id, Project.deleted_at.is_(None)).one_or_none()
     if project is None:
         raise HTTPException(status_code=404, detail="Projeto não encontrado.")
     try:
         delete_project(db, project=project, reason=body.reason, ctx=ctx)
-    except PermissionDenied:
-        raise HTTPException(status_code=403, detail="Sem permissão para apagar projetos.")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
 
-@router.post("/{project_id}/restore", response_model=ProjectRead)
+@router.post(
+    "/{project_id}/restore",
+    response_model=ProjectRead,
+    dependencies=[Depends(permission_denied_message("Sem permissão para restaurar projetos."))],
+)
 def restore_project_endpoint(
     project_id: uuid.UUID,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(
+        require_permission(Perm.PROJECT_RESTORE, detail="Sem permissão para restaurar projetos.")
+    ),
 ) -> ProjectRead:
-    if not ctx.has_permission("project.restore"):
-        raise HTTPException(status_code=403, detail="Sem permissão para restaurar projetos.")
     project = db.query(Project).filter(Project.id == project_id, Project.deleted_at.is_not(None)).one_or_none()
     if project is None:
         raise HTTPException(status_code=404, detail="Projeto apagado não encontrado.")
-    try:
-        restored = restore_project(db, project=project, ctx=ctx)
-    except PermissionDenied:
-        raise HTTPException(status_code=403, detail="Sem permissão para restaurar projetos.")
+    restored = restore_project(db, project=project, ctx=ctx)
     return _to_read(db, restored, ctx)
 
 
-@router.patch("/{project_id}/status", response_model=ProjectStatusChangeResult)
+@router.patch(
+    "/{project_id}/status",
+    response_model=ProjectStatusChangeResult,
+    dependencies=[Depends(permission_denied_message("Sem permissão para alterar o estado deste projeto."))],
+)
 def change_project_status_endpoint(
     project_id: uuid.UUID,
     body: ProjectStatusChange,
@@ -415,21 +435,20 @@ def change_project_status_endpoint(
 ) -> ProjectStatusChangeResult:
     _require_installer_mutation_scope(ctx)
     # 404 (não 403) fora do âmbito: nunca revela que o projeto existe.
-    project = get_visible_project(db, ctx, project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
+    project = visible_project_or_404(db, ctx, project_id)
     if body.lifecycle_status not in LIFECYCLE_STATUS_CODES:
         raise HTTPException(status_code=422, detail=f"Estado de projeto inválido: {body.lifecycle_status!r}")
-    try:
-        updated, warning = change_lifecycle_status(
-            db, project=project, new_status=body.lifecycle_status, note=body.note, ctx=ctx
-        )
-    except PermissionDenied:
-        raise HTTPException(status_code=403, detail="Sem permissão para alterar o estado deste projeto.")
+    updated, warning = change_lifecycle_status(
+        db, project=project, new_status=body.lifecycle_status, note=body.note, ctx=ctx
+    )
     return ProjectStatusChangeResult(project=_to_read(db, updated, ctx), warning=warning)
 
 
-@router.patch("/{project_id}/work-plan", response_model=ProjectRead)
+@router.patch(
+    "/{project_id}/work-plan",
+    response_model=ProjectRead,
+    dependencies=[Depends(_deny_plan_work)],
+)
 def update_work_plan_endpoint(
     project_id: uuid.UUID,
     body: WorkPlanUpdate,
@@ -439,13 +458,9 @@ def update_work_plan_endpoint(
     """Instalador, equipa e datas da obra (D-071). 404 fora do âmbito, 403 sem
     `project.plan_work`, 422 quando uma regra não se cumpre."""
     _require_installer_mutation_scope(ctx)
-    project = get_visible_project(db, ctx, project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
+    project = visible_project_or_404(db, ctx, project_id)
     try:
         updated = update_work_plan(db, project=project, changes=body.model_dump(exclude_unset=True), ctx=ctx)
-    except PermissionDenied:
-        raise HTTPException(status_code=403, detail="Sem permissão para planear a obra deste projeto.")
     except PlanError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return _to_read(db, updated, ctx)
@@ -474,25 +489,29 @@ def _assignment_read(data, *, scoped: bool = False) -> TeamAssignmentRead:
     )
 
 
-@router.get("/{project_id}/team-assignments", response_model=list[TeamAssignmentRead])
+@router.get(
+    "/{project_id}/team-assignments",
+    response_model=list[TeamAssignmentRead],
+    dependencies=[Depends(_deny_plan_work)],
+)
 def list_team_assignments_endpoint(
     project_id: uuid.UUID,
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[TeamAssignmentRead]:
-    project = get_visible_project(db, ctx, project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
-    try:
-        return [
-            _assignment_read(item, scoped=is_installer_readonly_scope(ctx))
-            for item in list_project_assignments(db, project=project, ctx=ctx)
-        ]
-    except PermissionDenied:
-        raise HTTPException(status_code=403, detail="Sem permissão para planear a obra deste projeto.")
+    project = visible_project_or_404(db, ctx, project_id)
+    return [
+        _assignment_read(item, scoped=is_installer_readonly_scope(ctx))
+        for item in list_project_assignments(db, project=project, ctx=ctx)
+    ]
 
 
-@router.post("/{project_id}/team-assignments", response_model=TeamAssignmentRead, status_code=201)
+@router.post(
+    "/{project_id}/team-assignments",
+    response_model=TeamAssignmentRead,
+    status_code=201,
+    dependencies=[Depends(_deny_plan_work)],
+)
 def create_team_assignment_endpoint(
     project_id: uuid.UUID,
     body: TeamAssignmentCreate,
@@ -500,9 +519,7 @@ def create_team_assignment_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> TeamAssignmentRead:
     _require_installer_mutation_scope(ctx)
-    project = get_visible_project(db, ctx, project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
+    project = visible_project_or_404(db, ctx, project_id)
     try:
         result = create_project_assignment(
             db,
@@ -513,14 +530,16 @@ def create_team_assignment_endpoint(
             note=body.note,
             ctx=ctx,
         )
-    except PermissionDenied:
-        raise HTTPException(status_code=403, detail="Sem permissão para planear a obra deste projeto.")
     except AssignmentError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _assignment_read(result)
 
 
-@router.patch("/{project_id}/team-assignments/{assignment_id}", response_model=TeamAssignmentRead)
+@router.patch(
+    "/{project_id}/team-assignments/{assignment_id}",
+    response_model=TeamAssignmentRead,
+    dependencies=[Depends(_deny_plan_work)],
+)
 def update_team_assignment_endpoint(
     project_id: uuid.UUID,
     assignment_id: uuid.UUID,
@@ -529,9 +548,7 @@ def update_team_assignment_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> TeamAssignmentRead:
     _require_installer_mutation_scope(ctx)
-    project = get_visible_project(db, ctx, project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
+    project = visible_project_or_404(db, ctx, project_id)
     assignment = (
         db.query(ProjectTeamAssignment)
         .filter(ProjectTeamAssignment.id == assignment_id, ProjectTeamAssignment.project_id == project_id)
@@ -543,14 +560,16 @@ def update_team_assignment_endpoint(
         result = update_project_assignment(
             db, project=project, assignment=assignment, changes=body.model_dump(exclude_unset=True), ctx=ctx
         )
-    except PermissionDenied:
-        raise HTTPException(status_code=403, detail="Sem permissão para planear a obra deste projeto.")
     except AssignmentError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _assignment_read(result)
 
 
-@router.delete("/{project_id}/team-assignments/{assignment_id}", status_code=204)
+@router.delete(
+    "/{project_id}/team-assignments/{assignment_id}",
+    status_code=204,
+    dependencies=[Depends(_deny_plan_work)],
+)
 def delete_team_assignment_endpoint(
     project_id: uuid.UUID,
     assignment_id: uuid.UUID,
@@ -558,9 +577,7 @@ def delete_team_assignment_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> None:
     _require_installer_mutation_scope(ctx)
-    project = get_visible_project(db, ctx, project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
+    project = visible_project_or_404(db, ctx, project_id)
     assignment = (
         db.query(ProjectTeamAssignment)
         .filter(ProjectTeamAssignment.id == assignment_id, ProjectTeamAssignment.project_id == project_id)
@@ -568,10 +585,7 @@ def delete_team_assignment_endpoint(
     )
     if assignment is None:
         raise HTTPException(status_code=404, detail="Afectação não encontrada.")
-    try:
-        delete_project_assignment(db, project=project, assignment=assignment, ctx=ctx)
-    except PermissionDenied:
-        raise HTTPException(status_code=403, detail="Sem permissão para planear a obra deste projeto.")
+    delete_project_assignment(db, project=project, assignment=assignment, ctx=ctx)
 
 
 @router.get("/{project_id}/history", response_model=list[ProjectHistoryRead])
@@ -581,7 +595,7 @@ def get_project_history_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[ProjectHistoryRead]:
     project = get_visible_project(db, ctx, project_id)
-    if project is None and ctx.has_permission("project.restore"):
+    if project is None and ctx.has_permission(Perm.PROJECT_RESTORE):
         # O histórico do projeto apagado é uma superfície de auditoria
         # restrita: não o tornar visível via get_visible_project, que oculta
         # deliberadamente todas as linhas apagadas na operação normal.
@@ -604,7 +618,7 @@ def get_project_history_endpoint(
     )
     result: list[ProjectHistoryRead] = []
     for entry in entries:
-        if entry.field_name.startswith("payment.") and not ctx.has_permission("payment.view"):
+        if entry.field_name.startswith("payment.") and not ctx.has_permission(Perm.PAYMENT_VIEW):
             continue
         data = ProjectHistoryRead.model_validate(entry)
         if entry.changed_by_person_id:

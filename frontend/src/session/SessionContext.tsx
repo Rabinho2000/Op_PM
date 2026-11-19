@@ -4,13 +4,14 @@
 // que mostrar; cada escrita continua validada no backend.
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { ApiError, getHealth, getMe, HealthResponse, MeResponse } from "../api/client";
+import type { Perm } from "../generated/permissions";
 
 export interface SessionState {
   me: MeResponse | null;
   health: HealthResponse | null;
   loading: boolean;
   error: string | null;
-  can: (permission: string) => boolean;
+  can: (permission: Perm) => boolean;
   reload: () => void;
 }
 
@@ -51,7 +52,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       health,
       loading,
       error,
-      can: (permission: string) => Boolean(me?.permissions.includes(permission)),
+      can: (permission: Perm) => Boolean(me?.permissions.includes(permission)),
       reload,
     }),
     [me, health, loading, error, reload]

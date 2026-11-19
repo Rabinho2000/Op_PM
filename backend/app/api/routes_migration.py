@@ -29,20 +29,19 @@ from app.schemas.migration import (
     RollbackRequest,
     StagingProjectRecordRead,
 )
-from app.security.current_user import get_auth_context
+from app.security.guards import require_permission
 from app.security.permissions import AuthContext
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/migration", tags=["migration"])
 
 
-def _require_view(ctx: AuthContext) -> None:
-    if not ctx.has_permission("migration.view"):
-        raise HTTPException(status_code=403, detail="Sem permissão para ver dados de migração.")
-
-
-def _require_resolve(ctx: AuthContext) -> None:
-    if not ctx.has_permission("migration.resolve"):
-        raise HTTPException(status_code=403, detail="Sem permissão para resolver dados de migração.")
+require_migration_view = require_permission(
+    Perm.MIGRATION_VIEW, detail="Sem permissão para ver dados de migração."
+)
+require_migration_resolve = require_permission(
+    Perm.MIGRATION_RESOLVE, detail="Sem permissão para resolver dados de migração."
+)
 
 
 # --------------------------------------------------------------------------
@@ -52,9 +51,8 @@ def _require_resolve(ctx: AuthContext) -> None:
 
 @router.get("/import-batches", response_model=list[ImportBatchRead])
 def list_import_batches(
-    db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    db: Session = Depends(get_db), ctx: AuthContext = Depends(require_migration_view)
 ) -> list[ImportBatchRead]:
-    _require_view(ctx)
     batches = db.query(ImportBatch).order_by(ImportBatch.started_at.desc()).all()
     return [ImportBatchRead.model_validate(b) for b in batches]
 
@@ -64,9 +62,8 @@ def list_staging_records(
     batch_id: uuid.UUID,
     status: str | None = Query(default=None, description="Filtra por estado (ex.: conflict)"),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_migration_view),
 ) -> list[StagingProjectRecordRead]:
-    _require_view(ctx)
     query = db.query(StagingProjectRecord).filter(StagingProjectRecord.import_batch_id == batch_id)
     if status:
         query = query.filter(StagingProjectRecord.status == status)
@@ -76,9 +73,8 @@ def list_staging_records(
 
 @router.get("/staging-records/{record_id}", response_model=StagingProjectRecordRead)
 def get_staging_record(
-    record_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    record_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(require_migration_view)
 ) -> StagingProjectRecordRead:
-    _require_view(ctx)
     record = db.get(StagingProjectRecord, record_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Registo de staging não encontrado.")
@@ -90,10 +86,8 @@ def resolve_staging_conflict(
     record_id: uuid.UUID,
     body: ResolveConflictRequest,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_migration_resolve),
 ) -> StagingProjectRecordRead:
-    _require_resolve(ctx)
-
     # D-030: ligar a um projeto fora dos candidatos detetados exige
     # migration.link_arbitrary_project + uma nota não vazia, verificado
     # aqui (mensagens de erro específicas) E outra vez em
@@ -106,7 +100,7 @@ def resolve_staging_conflict(
             raise HTTPException(status_code=404, detail="Registo de staging não encontrado.")
         valid_candidate_ids = resolve_candidate_project_ids(db, record_for_check)
         if str(body.target_project_id) not in valid_candidate_ids:
-            if not ctx.has_permission("migration.link_arbitrary_project"):
+            if not ctx.has_permission(Perm.MIGRATION_LINK_ARBITRARY_PROJECT):
                 raise HTTPException(
                     status_code=403,
                     detail="Ligar a um projeto fora dos candidatos detetados exige a permissão "
@@ -136,9 +130,8 @@ def resolve_staging_conflict(
 
 @router.post("/staging-records/{record_id}/promote", response_model=StagingProjectRecordRead)
 def promote_staging_record_endpoint(
-    record_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    record_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(require_migration_resolve)
 ) -> StagingProjectRecordRead:
-    _require_resolve(ctx)
     try:
         promote_staging_record(db, staging_record_id=record_id, actor_person_id=ctx.person_id)
     except ValueError as exc:
@@ -155,9 +148,8 @@ def rollback_staging_record(
     record_id: uuid.UUID,
     body: RollbackRequest,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_migration_resolve),
 ) -> StagingProjectRecordRead:
-    _require_resolve(ctx)
     try:
         record = rollback_promotion(
             db, staging_record_id=record_id, actor_person_id=ctx.person_id, reason=body.reason
@@ -169,12 +161,11 @@ def rollback_staging_record(
 
 @router.post("/staging-records/{record_id}/retry-promotion", response_model=StagingProjectRecordRead)
 def retry_promotion_endpoint(
-    record_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    record_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(require_migration_resolve)
 ) -> StagingProjectRecordRead:
     """Prepara para promover outra vez um registo já revertido por
     `rollback_promotion` (D-036) — nunca automático, sempre exige esta
     chamada explícita. Ver `app.migration.staging.retry_promotion_after_rollback`."""
-    _require_resolve(ctx)
     try:
         retry_promotion_after_rollback(db, staging_record_id=record_id, actor_person_id=ctx.person_id)
     except ValueError as exc:
@@ -185,9 +176,8 @@ def retry_promotion_endpoint(
 
 @router.post("/staging-records/{record_id}/retry-pm-resolution", response_model=StagingProjectRecordRead)
 def retry_pm_resolution_endpoint(
-    record_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    record_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(require_migration_resolve)
 ) -> StagingProjectRecordRead:
-    _require_resolve(ctx)
     from app.migration.staging import retry_pm_resolution
 
     try:
@@ -206,9 +196,8 @@ def retry_pm_resolution_endpoint(
 def list_reconciliation_items(
     status: str | None = Query(default="pending"),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_migration_view),
 ) -> list[PersonReconciliationItemRead]:
-    _require_view(ctx)
     query = db.query(PersonReconciliationItem)
     if status:
         query = query.filter(PersonReconciliationItem.status == status)
@@ -221,9 +210,8 @@ def resolve_reconciliation_item(
     item_id: uuid.UUID,
     body: ResolveReconciliationRequest,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_migration_resolve),
 ) -> PersonReconciliationItemRead:
-    _require_resolve(ctx)
     try:
         item = resolve_person_reconciliation(
             db,

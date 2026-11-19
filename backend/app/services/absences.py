@@ -32,6 +32,7 @@ from app.security.permissions import (
     can_manage_absence,
     can_view_absence,
 )
+from app.security.perm import Perm
 
 
 APPROVAL_STATUSES = (STATUS_PENDENTE, STATUS_APROVADA)
@@ -42,9 +43,9 @@ def visible_absences_query(db: Session, ctx: AuthContext) -> Query:
     # `absence.approve` é uma capacidade de decisão global. O catálogo atual
     # também concede `view_all` ao Chefe/Admin, mas manter este ramo torna a
     # regra segura para permissões atribuídas individualmente.
-    if ctx.has_permission("absence.view_all") or can_approve_absence(ctx):
+    if ctx.has_permission(Perm.ABSENCE_VIEW_ALL) or can_approve_absence(ctx):
         return db.query(Absence)
-    if ctx.has_permission("absence.view_own"):
+    if ctx.has_permission(Perm.ABSENCE_VIEW_OWN):
         return db.query(Absence).filter(Absence.person_id == ctx.person_id)
     return db.query(Absence).filter(False)
 
@@ -82,7 +83,7 @@ def _now_utc() -> dt.datetime:
 
 def create_absence(db: Session, *, changes: AbsenceCreate, ctx: AuthContext) -> Absence:
     if not can_create_absence_for(ctx, changes.person_id):
-        raise PermissionDenied("absence.manage_all|absence.manage_own")
+        raise PermissionDenied(f"{Perm.ABSENCE_MANAGE_ALL}|{Perm.ABSENCE_MANAGE_OWN}")
     if db.get(Person, changes.person_id) is None:
         raise ValueError("Pessoa não encontrada.")
     if changes.type not in ABSENCE_TYPES:
@@ -112,7 +113,7 @@ def create_absence(db: Session, *, changes: AbsenceCreate, ctx: AuthContext) -> 
 
 def update_absence(db: Session, *, absence: Absence, changes: AbsenceUpdate, ctx: AuthContext) -> Absence:
     if not can_manage_absence(ctx, absence):
-        raise PermissionDenied("absence.manage_all|absence.manage_own")
+        raise PermissionDenied(f"{Perm.ABSENCE_MANAGE_ALL}|{Perm.ABSENCE_MANAGE_OWN}")
 
     changed_fields = changes.model_dump(exclude_unset=True)
     if "note" in changed_fields and changed_fields["note"] is not None:
@@ -125,7 +126,7 @@ def update_absence(db: Session, *, absence: Absence, changes: AbsenceUpdate, ctx
 
 def approve_absence(db: Session, *, absence: Absence, ctx: AuthContext) -> Absence:
     if not can_approve_absence(ctx):
-        raise PermissionDenied("absence.approve")
+        raise PermissionDenied(Perm.ABSENCE_APPROVE)
     if absence.status != STATUS_PENDENTE:
         raise ValueError("Só é possível aprovar uma ausência pendente.")
     absence.status = STATUS_APROVADA
@@ -138,7 +139,7 @@ def approve_absence(db: Session, *, absence: Absence, ctx: AuthContext) -> Absen
 
 def reject_absence(db: Session, *, absence: Absence, note: str, ctx: AuthContext) -> Absence:
     if not can_approve_absence(ctx):
-        raise PermissionDenied("absence.approve")
+        raise PermissionDenied(Perm.ABSENCE_APPROVE)
     if absence.status != STATUS_PENDENTE:
         raise ValueError("Só é possível rejeitar uma ausência pendente.")
     clean_note = note.strip()
@@ -155,7 +156,7 @@ def reject_absence(db: Session, *, absence: Absence, note: str, ctx: AuthContext
 
 def cancel_absence(db: Session, *, absence: Absence, ctx: AuthContext) -> Absence:
     if not can_manage_absence(ctx, absence):
-        raise PermissionDenied("absence.manage_all|absence.manage_own")
+        raise PermissionDenied(f"{Perm.ABSENCE_MANAGE_ALL}|{Perm.ABSENCE_MANAGE_OWN}")
     if absence.status not in APPROVAL_STATUSES:
         raise ValueError("Uma ausência rejeitada ou já cancelada não pode voltar a ser alterada.")
     absence.status = STATUS_CANCELADA

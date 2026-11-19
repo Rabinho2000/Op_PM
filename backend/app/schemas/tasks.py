@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
+
+# Vocabulários fechados (espelham `TASK_STATUSES/PRIORITIES/CATEGORIES` em
+# app/models/task.py — `tests/test_schema_literals.py` garante que coincidem).
+TaskStatus = Literal["todo", "in_progress", "blocked", "done", "cancelled"]
+TaskPriority = Literal["low", "medium", "high", "urgent"]
+TaskCategory = Literal["workflow", "field", "material", "documentation", "commercial", "other"]
 
 
 class TaskRead(BaseModel):
@@ -14,9 +21,9 @@ class TaskRead(BaseModel):
     title: str
     task_type: str
     description: str
-    status: str
-    priority: str
-    category: str
+    status: TaskStatus
+    priority: TaskPriority
+    category: TaskCategory
     assigned_to_person_id: uuid.UUID | None
     due_date: dt.date | None
     completed_at: dt.datetime | None
