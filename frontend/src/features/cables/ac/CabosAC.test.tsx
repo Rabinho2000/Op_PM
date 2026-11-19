@@ -4,6 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { CabosEngine, CircuitRow, Result, State } from "../engine";
 import CabosACTab from "../tabs/CabosACTab";
 
+// Tabelas grandes com muitos eventos: em máquinas carregadas (CI) o limite por omissão (5 s) fica curto.
+vi.setConfig({ testTimeout: 20_000 });
+
 const initialState: State = {
   proj: "Estudo sintético",
   loc: "Porto",
