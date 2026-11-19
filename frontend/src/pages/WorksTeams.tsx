@@ -2,13 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import InstallerMultiSelect from "../components/InstallerMultiSelect";
 import {
-  ApiError,
   getWorksTeams,
   Installer,
   listInstallers,
   TeamLocationAssignment,
   TeamLocationInstaller,
   TeamsView,
+  errorMessage,
 } from "../api/client";
 import Icon from "../components/Icon";
 import { LifecycleBadge, useLifecycleStatuses } from "../components/LifecycleStatus";
@@ -33,10 +33,6 @@ function validDate(value: string | null): value is string {
 function readDays(value: string | null, period: string | null): PeriodDays {
   const candidate = value ?? (period === "week" ? "7" : period === "fortnight" ? "14" : period === "today" ? "1" : null);
   return candidate === "7" || candidate === "14" ? Number(candidate) as PeriodDays : 1;
-}
-
-function apiErrorMessage(error: unknown): string {
-  return error instanceof ApiError ? error.detail : "Não foi possível contactar o servidor.";
 }
 
 function assignmentStatus(assignment: TeamLocationAssignment) {
@@ -153,7 +149,7 @@ export default function WorksTeams() {
     setError(null);
     getWorksTeams({ date, days, installer_ids: installerIds.length > 0 ? installerIds : undefined })
       .then((result) => !cancelled && setData(result))
-      .catch((reason) => !cancelled && setError(apiErrorMessage(reason)));
+      .catch((reason) => !cancelled && setError(errorMessage(reason)));
     return () => { cancelled = true; };
   }, [date, days, installerKey, reloadKey]);
 

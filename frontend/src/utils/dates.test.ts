@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { daysUntilLabel, formatDatePt, isIsoDateInRange, lisbonWallClockToIso } from "./dates";
+import { daysUntilLabel, formatDatePt, formatLisbonDateTime, isIsoDateInRange, lisbonWallClockToIso } from "./dates";
 
 describe("formatDatePt", () => {
   it("converts an ISO date to dd/mm/yyyy", () => {
@@ -63,5 +63,20 @@ describe("lisbonWallClockToIso", () => {
 
   it("rejeita valores que não são datetime-local", () => {
     expect(() => lisbonWallClockToIso("amanhã")).toThrow();
+  });
+});
+
+describe("formatLisbonDateTime", () => {
+  it("mostra data e hora de Lisboa (verão e inverno)", () => {
+    expect(formatLisbonDateTime("2026-07-15T08:00:00Z")).toMatch(/^15\/07\/2026,? 09:00$/);
+    expect(formatLisbonDateTime("2026-01-15T08:00:00Z")).toMatch(/^15\/01\/2026,? 08:00$/);
+  });
+
+  it("com weekday acrescenta o dia da semana", () => {
+    expect(formatLisbonDateTime("2026-11-19T15:30:00Z", { weekday: true })).toMatch(/^quinta-feira,? 19\/11\/2026,? 15:30$/);
+  });
+
+  it("devolve o valor tal e qual quando não é uma data", () => {
+    expect(formatLisbonDateTime("amanhã")).toBe("amanhã");
   });
 });

@@ -33,7 +33,7 @@ const options: ManualCableCircuitOptions[] = [
   },
 ];
 
-function renderResults(readOnly = false) {
+async function renderResults(readOnly = false) {
   const setManualCable = vi.fn((current: State) => current);
   const engine = {
     actions: { setManualCable },
@@ -43,12 +43,14 @@ function renderResults(readOnly = false) {
     updater(state);
   });
   render(<ResultsTable state={state} result={result} rows={rows} engine={engine} readOnly={readOnly} apply={apply} />);
+  // As opções vêm do motor (assíncrono, no worker): esperar que apareçam.
+  await screen.findAllByRole("combobox");
   return { engine, apply };
 }
 
 describe("controlos de seleção manual de cabos", () => {
-  it("aplica ao inversor a opção devolvida pelo motor", () => {
-    const { engine, apply } = renderResults();
+  it("aplica ao inversor a opção devolvida pelo motor", async () => {
+    const { engine, apply } = await renderResults();
     const control = screen.getByRole("combobox", { name: /circuito C1.*automático/i });
 
     fireEvent.change(control, { target: { value: inverterValue } });
@@ -57,24 +59,24 @@ describe("controlos de seleção manual de cabos", () => {
     expect(engine.actions.setManualCable).toHaveBeenCalledWith(state, { kind: "inv", id: 1, value: inverterValue });
   });
 
-  it("preserva o id do subpercurso dividido por gateway recebido do motor", () => {
-    const { engine } = renderResults();
+  it("preserva o id do subpercurso dividido por gateway recebido do motor", async () => {
+    const { engine } = await renderResults();
 
     fireEvent.change(screen.getByRole("combobox", { name: /circuito C2/i }), { target: { value: "auto" } });
 
     expect(engine.actions.setManualCable).toHaveBeenCalledWith(state, { kind: "perc", id: "42_3", value: "auto" });
   });
 
-  it("permite repor a seleção automática", () => {
-    const { engine } = renderResults();
+  it("permite repor a seleção automática", async () => {
+    const { engine } = await renderResults();
 
     fireEvent.change(screen.getByRole("combobox", { name: /circuito C1/i }), { target: { value: "auto" } });
 
     expect(engine.actions.setManualCable).toHaveBeenCalledWith(state, { kind: "inv", id: 1, value: "auto" });
   });
 
-  it("mantém o controlo desativado em modo de leitura e não aplica alterações", () => {
-    const { engine, apply } = renderResults(true);
+  it("mantém o controlo desativado em modo de leitura e não aplica alterações", async () => {
+    const { engine, apply } = await renderResults(true);
     const control = screen.getByRole("combobox", { name: /circuito C1/i });
 
     expect(control).toBeDisabled();

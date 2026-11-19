@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
-import { ApiError, deleteProject, Project } from "../api/client";
+import { deleteProject, Project } from "../api/client";
 import { Alert, Modal } from "./ui";
+import { errorDetail } from "../utils/errors";
 
 export default function ProjectDeletionModal({
   project,
@@ -29,7 +30,7 @@ export default function ProjectDeletionModal({
       await deleteProject(project.id, normalizedReason);
       onDeleted();
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : err instanceof Error ? err.message : "Não foi possível apagar o projeto.");
+      setError(errorDetail(err, "Não foi possível apagar o projeto."));
     } finally {
       setSaving(false);
     }

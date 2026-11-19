@@ -194,8 +194,8 @@ jobs:
             -color
 
   docker-build:
-    # Valida que backend/Dockerfile, frontend/Dockerfile e
-    # frontend/Dockerfile.tailscale (a imagem realmente usada em produção)
+    # Valida que backend/Dockerfile e frontend/Dockerfile (nas três
+    # variantes: estático, proxy = produção Tailscale e demonstração)
     # constroem, e que
     # docker-compose.staging.example.yml é sintaticamente válido (D-050) —
     # não foi possível validar isto localmente sem Docker disponível no
@@ -220,16 +220,50 @@ jobs:
             --build-arg VITE_ENTRA_TENANT_ID=00000000-0000-0000-0000-000000000000 \
             --build-arg VITE_ENTRA_API_SCOPE=api://00000000-0000-0000-0000-000000000000/access_as_user \
             ./frontend
-      - name: docker build — frontend de produção (Dockerfile.tailscale, placeholders óbvios)
+      - name: docker build — frontend com proxy (produção Tailscale; NGINX_CONF=nginx.proxy.conf)
         run: |
-          docker build -f frontend/Dockerfile.tailscale -t op_pm-frontend-tailscale:ci \
-            --build-arg VITE_API_BASE_URL=https://backend.staging.invalid \
+          docker build -t op_pm-frontend-proxy:ci \
+            --build-arg NGINX_CONF=docker/nginx.proxy.conf \
+            --build-arg VITE_API_BASE_URL=/ \
             --build-arg VITE_ENTRA_CLIENT_ID=00000000-0000-0000-0000-000000000000 \
             --build-arg VITE_ENTRA_TENANT_ID=00000000-0000-0000-0000-000000000000 \
             --build-arg VITE_ENTRA_API_SCOPE=api://00000000-0000-0000-0000-000000000000/access_as_user \
             ./frontend
-      - name: docker build — frontend de demonstração (Dockerfile.demo)
-        run: docker build -f frontend/Dockerfile.demo -t op_pm-frontend-demo:ci ./frontend
+      - name: docker build — frontend de demonstração (login de desenvolvimento, sem Entra)
+        run: |
+          docker build -t op_pm-frontend-demo:ci \
+            --build-arg NGINX_CONF=docker/nginx.proxy.conf \
+            --build-arg VITE_API_BASE_URL=/ \
+            --build-arg VITE_ENABLE_DEV_LOGIN=true \
+            ./frontend
+      - name: Dev login recusado quando há Entra definido
+        run: |
+          if docker build -t op_pm-frontend-bad:ci \
+              --build-arg VITE_ENABLE_DEV_LOGIN=true \
+              --build-arg VITE_ENTRA_CLIENT_ID=00000000-0000-0000-0000-000000000000 \
+              ./frontend; then
+            echo "o build deveria ter sido recusado"; exit 1
+          fi
+      - name: Frontend sem root e com CSP/cabeçalhos de segurança
+        run: |
+          set -euo pipefail
+          # `--add-host`: o nginx.proxy.conf resolve o upstream `backend` no arranque.
+          docker run -d --name fe-csp --add-host backend:127.0.0.1 -p 127.0.0.1:18081:80 op_pm-frontend-proxy:ci
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:18081/ > /dev/null 2>&1 && break; sleep 1; done
+          test "$(docker exec fe-csp id -u)" != "0"
+          headers="$(curl -fsSI http://127.0.0.1:18081/)"
+          echo "$headers"
+          echo "$headers" | grep -qi "^content-security-policy: default-src 'self'; script-src 'self'; connect-src 'self' https://login.microsoftonline.com"
+          echo "$headers" | grep -qi "^x-frame-options: DENY"
+          echo "$headers" | grep -qi "^x-content-type-options: nosniff"
+          # scripts: nunca 'unsafe-inline'/'unsafe-eval' (só os estilos têm 'unsafe-inline').
+          if echo "$headers" | grep -qi "script-src[^;]*unsafe"; then echo "script-src com unsafe-*"; exit 1; fi
+          curl -fsSI http://127.0.0.1:18081/theme-bootstrap.js | grep -qi "^content-security-policy:"
+          # A página do motor de cabos (iframe sandbox) tem CSP própria: sem rede, SAMEORIGIN.
+          frame="$(curl -fsSI http://127.0.0.1:18081/cable-engine-frame.html)"
+          echo "$frame" | grep -qi "^content-security-policy: default-src 'none'; script-src 'self' 'unsafe-eval'; .*connect-src 'none'"
+          echo "$frame" | grep -qi "^x-frame-options: SAMEORIGIN"
+          docker rm -f fe-csp
       - name: Trivy — vulnerabilidades HIGH/CRITICAL com correção disponível (informativo)
         # INFORMATIVO, não bloqueia (--exit-code 0 + continue-on-error): os
         # achados estão em pacotes do SO das imagens base (nginx stable-alpine
@@ -239,7 +273,7 @@ jobs:
         # pelo gitleaks (job supply-chain). Imagem do Trivy fixada por digest.
         continue-on-error: true
         run: |
-          for img in op_pm-backend:ci op_pm-frontend:ci op_pm-frontend-tailscale:ci; do
+          for img in op_pm-backend:ci op_pm-frontend:ci op_pm-frontend-proxy:ci; do
             echo "::group::trivy $img"
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \

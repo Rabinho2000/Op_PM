@@ -78,7 +78,13 @@ services:
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile.demo
+      # Dockerfile único: a demonstração escolhe o nginx com proxy de /api e
+      # liga o login de desenvolvimento (só aqui, sem variáveis Entra).
+      dockerfile: Dockerfile
+      args:
+        NGINX_CONF: docker/nginx.proxy.conf
+        VITE_API_BASE_URL: /
+        VITE_ENABLE_DEV_LOGIN: "true"
     image: op-pm-demo-frontend
     ports:
       - "127.0.0.1:8080:80"

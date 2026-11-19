@@ -3,7 +3,7 @@
 // das notificações in-app com filtro «não lidas».
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ApiError } from "../api/client";
+import { errorMessage } from "../api/client";
 import {
   getAlertSubscriptions,
   listProcessNotifications,
@@ -17,10 +17,6 @@ import { formatDateTimePt } from "../utils/dates";
 import "./ProcessAlerts.css";
 
 const HISTORY_PAGE_SIZE = 50;
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof ApiError ? error.detail : fallback;
-}
 
 export default function ProcessAlerts() {
   const [phases, setPhases] = useState<AlertPhase[] | null>(null);

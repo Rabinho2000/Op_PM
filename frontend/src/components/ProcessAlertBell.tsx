@@ -4,7 +4,7 @@
 // sino deixa de existir nesta sessão.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ApiError } from "../api/client";
+import { ApiError, errorMessage } from "../api/client";
 import {
   listProcessNotifications,
   getUnreadProcessNotificationCount,
@@ -20,10 +20,6 @@ import "./ProcessAlertBell.css";
 
 const POLL_INTERVAL_MS = 60_000;
 const PANEL_PAGE_SIZE = 20;
-
-function apiErrorMessage(error: unknown): string {
-  return error instanceof ApiError ? error.detail : "Não foi possível contactar o servidor.";
-}
 
 export default function ProcessAlertBell() {
   const { can } = useSession();
@@ -60,7 +56,7 @@ export default function ProcessAlertBell() {
       const page = await listProcessNotifications({ limit: PANEL_PAGE_SIZE, offset: 0 });
       setItems(page.items);
     } catch (error) {
-      if (!handleError(error)) setListError(apiErrorMessage(error));
+      if (!handleError(error)) setListError(errorMessage(error));
     }
   }, [handleError]);
 
@@ -112,7 +108,7 @@ export default function ProcessAlertBell() {
       setItems((current) => current?.map((row) => (row.id === updated.id ? updated : row)) ?? null);
       void loadCount();
     } catch (error) {
-      if (!handleError(error)) setActionError(apiErrorMessage(error));
+      if (!handleError(error)) setActionError(errorMessage(error));
     } finally {
       setBusy(false);
     }
@@ -126,7 +122,7 @@ export default function ProcessAlertBell() {
       await markAllProcessNotificationsRead();
       await Promise.all([loadItems(), loadCount()]);
     } catch (error) {
-      if (!handleError(error)) setActionError(apiErrorMessage(error));
+      if (!handleError(error)) setActionError(errorMessage(error));
     } finally {
       setBusy(false);
     }

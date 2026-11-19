@@ -13,6 +13,7 @@ import {
   SafetySheetUpdate,
   SafetySheetWorker,
   updateSafetySheet,
+  errorMessage,
 } from "../api/client";
 import { Alert, Card, LoadingState } from "./ui";
 import "./ProjectSafetySheet.css";
@@ -80,10 +81,6 @@ function textValue(value: string | null): string {
 
 function toggleValue<T extends string>(values: T[], value: T): T[] {
   return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
-}
-
-function errorMessage(err: unknown, fallback: string): string {
-  return err instanceof ApiError ? err.detail : fallback;
 }
 
 export default function ProjectSafetySheet({ projectId, canEdit }: { projectId: string; canEdit: boolean }) {

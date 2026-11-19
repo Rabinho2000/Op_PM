@@ -1,16 +1,16 @@
 import { Alert } from "../../../components/ui";
+import { EMPTY_VALUE, formatNumberPt } from "../../../utils/numbers";
 import type { BoardCable, BoardDevice, BoardView, Enclosure } from "../engine";
 import { SldViewer } from "../sld/SldViewer";
 import { BoardSpaceSvg } from "./BoardSpaceSvg";
 
 function number(value: number | null | undefined, digits = 1): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
-  return new Intl.NumberFormat("pt-PT", { maximumFractionDigits: digits }).format(value);
+  return formatNumberPt(value, { max: digits });
 }
 
 function money(value: number | null | undefined): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
-  return `${new Intl.NumberFormat("pt-PT", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)} €`;
+  const text = formatNumberPt(value, { min: 2, max: 2 });
+  return text === EMPTY_VALUE ? text : `${text} €`;
 }
 
 function roleLabel(role: string | undefined): string {

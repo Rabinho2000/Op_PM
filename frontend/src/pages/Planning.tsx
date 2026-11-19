@@ -23,12 +23,14 @@ import {
   Task,
   updateCalendarEvent,
   updatePlanningPreferences,
+  errorMessage,
 } from "../api/client";
 import Icon from "../components/Icon";
 import { useToast } from "../components/Toast";
 import { Alert, Avatar, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHeader, Tone } from "../components/ui";
 import { useSession } from "../session/SessionContext";
 import { lisbonWallClockToIso, todayIsoLisbon } from "../utils/dates";
+import { normalizeSearchText } from "../utils/text";
 import "./Planning.css";
 
 type ViewMode = "list" | "week" | "month";
@@ -60,14 +62,6 @@ const LISBON_TIME_ONLY = new Intl.DateTimeFormat("pt-PT", {
 
 const NATURAL_PROJECT_COLLATOR = new Intl.Collator("pt-PT", { numeric: true, sensitivity: "base" });
 const PERSON_COLLATOR = new Intl.Collator("pt-PT", { sensitivity: "base" });
-
-export function normalizePlanningSearch(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase("pt-PT")
-    .trim();
-}
 
 export function sortProjectsNaturally(projects: Project[]): Project[] {
   return [...projects].sort((a, b) => NATURAL_PROJECT_COLLATOR.compare(a.name, b.name) || a.id.localeCompare(b.id));
@@ -264,10 +258,10 @@ function PlanningProjectCombobox({
 
   const visibleProjects = useMemo(() => {
     const ordered = sortProjectsNaturally(projects);
-    const normalized = normalizePlanningSearch(query);
+    const normalized = normalizeSearchText(query);
     const matching = normalized.length === 0
       ? ordered
-      : ordered.filter((project) => normalizePlanningSearch(project.name).includes(normalized));
+      : ordered.filter((project) => normalizeSearchText(project.name).includes(normalized));
     if (selectedProject && !matching.some((project) => project.id === selectedProject.id)) {
       return [selectedProject, ...matching];
     }
@@ -623,7 +617,7 @@ function EventModal({
       else await createCalendarEvent(common);
       onSaved();
     } catch (saveError) {
-      setError(saveError instanceof ApiError ? saveError.detail : "Não foi possível guardar o evento.");
+      setError(errorMessage(saveError, "Não foi possível guardar o evento."));
     } finally {
       setSaving(false);
     }
@@ -930,13 +924,13 @@ export default function Planning() {
   useEffect(() => {
     let cancelled = false;
     listProjects({ is_active: true }).then((result) => !cancelled && setProjects(result)).catch((loadError) => {
-      if (!cancelled) setProjectError(loadError instanceof ApiError ? loadError.detail : "Não foi possível carregar os projetos.");
+      if (!cancelled) setProjectError(errorMessage(loadError, "Não foi possível carregar os projetos."));
     });
     listPeople().then((result) => !cancelled && setPeople(result)).catch((loadError) => {
-      if (!cancelled) setPeopleError(loadError instanceof ApiError ? loadError.detail : "Não foi possível carregar as pessoas.");
+      if (!cancelled) setPeopleError(errorMessage(loadError, "Não foi possível carregar as pessoas."));
     });
     listPlanningEventCategories().then((result) => !cancelled && setCategories(result)).catch((loadError) => {
-      if (!cancelled) setCategoryError(loadError instanceof ApiError ? loadError.detail : "Não foi possível carregar as categorias de eventos.");
+      if (!cancelled) setCategoryError(errorMessage(loadError, "Não foi possível carregar as categorias de eventos."));
     });
     getPlanningPreferences().then((preference) => {
       if (cancelled) return;
@@ -970,7 +964,7 @@ export default function Planning() {
       setEvents(manualEvents);
     }).catch((loadError) => {
       if (sequence !== loadSequence.current) return;
-      setError(loadError instanceof ApiError ? loadError.detail : "Não foi possível carregar os eventos do planeamento.");
+      setError(errorMessage(loadError, "Não foi possível carregar os eventos do planeamento."));
     });
   }, [categoryFilter, range.endIso, range.startIso, scope, scopeProjectId, scopeResponsibleId]);
 
@@ -1014,7 +1008,7 @@ export default function Planning() {
       setHideWeekends(saved.hide_weekends);
       notify("Vista de planeamento fixada.", "success");
     } catch (saveError) {
-      setPreferenceSaveError(saveError instanceof ApiError ? saveError.detail : "Não foi possível guardar a vista. Tente novamente.");
+      setPreferenceSaveError(errorMessage(saveError, "Não foi possível guardar a vista. Tente novamente."));
     } finally {
       setSavingPreference(false);
     }
@@ -1039,7 +1033,7 @@ export default function Planning() {
       setDetailEvent(null);
       loadEvents();
     } catch (cancelError) {
-      notify(cancelError instanceof ApiError ? cancelError.detail : "Não foi possível cancelar o evento.", "error");
+      notify(errorMessage(cancelError, "Não foi possível cancelar o evento."), "error");
     }
   }
 

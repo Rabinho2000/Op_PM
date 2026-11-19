@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiError } from "../../api/client";
 import { getCableTool } from "../../api/cableDesigns";
 import type { CabosEngine } from "./engine";
+import { startCableEngineWorker, type CableEngineHandle, type WorkerFactory } from "./engineWorker/client";
 
 export type CableEngineStatus = "idle" | "loading" | "ready" | "error";
 
@@ -13,9 +14,9 @@ export interface CableEngineState {
   ready: boolean;
 }
 
-type CableEngineWindow = Window & typeof globalThis & { CabosEngine?: CabosEngine };
-
 let enginePromise: Promise<CabosEngine> | null = null;
+let engineHandle: CableEngineHandle | null = null;
+let workerFactoryOverride: WorkerFactory | undefined;
 
 function engineError(reason: unknown): Error {
   if (reason instanceof ApiError) {
@@ -39,87 +40,34 @@ export async function sha256Script(script: string): Promise<string> {
   return bytesToHex(digest);
 }
 
-async function executeEngineScript(script: string, expectedEngineVersion: string): Promise<CabosEngine> {
-  if (typeof window === "undefined" || typeof document === "undefined") {
-    throw new Error("A ferramenta de cálculo só pode ser carregada no browser.");
-  }
-
-  const hostWindow = window as CableEngineWindow;
-  Reflect.deleteProperty(hostWindow, "CabosEngine");
-  if (hostWindow.CabosEngine !== undefined) {
-    try {
-      hostWindow.CabosEngine = undefined;
-    } catch {
-      // The value is checked below; fail closed if a page-owned global cannot be cleared.
-    }
-  }
-  if (hostWindow.CabosEngine !== undefined) {
-    throw new Error("Não foi possível limpar o objeto global anterior da ferramenta de cálculo.");
-  }
-
-  const blobUrl = URL.createObjectURL(new Blob([script], { type: "text/javascript" }));
-  const element = document.createElement("script");
-  element.async = false;
-  element.src = blobUrl;
-
-  return new Promise<CabosEngine>((resolve, reject) => {
-    let settled = false;
-    const cleanup = () => {
-      element.onload = null;
-      element.onerror = null;
-      element.remove();
-      URL.revokeObjectURL(blobUrl);
-    };
-    const finish = (callback: () => void) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      callback();
-    };
-
-    element.onload = () => {
-      finish(() => {
-        const loaded = hostWindow.CabosEngine;
-        if (!loaded || typeof loaded !== "object") {
-          reject(new Error("A ferramenta de cálculo não publicou window.CabosEngine."));
-          return;
-        }
-        if (loaded.protocol !== 1) {
-          reject(new Error("Versão de protocolo da ferramenta de cálculo não suportada."));
-          return;
-        }
-        if (loaded.engine_version !== expectedEngineVersion) {
-          reject(new Error("A versão engine_version da ferramenta de cálculo não corresponde ao manifesto."));
-          return;
-        }
-        resolve(loaded);
-      });
-    };
-    element.onerror = () => finish(() => reject(new Error("Não foi possível executar a ferramenta de cálculo.")));
-
-    try {
-      document.head.appendChild(element);
-    } catch (reason) {
-      finish(() => reject(reason instanceof Error ? reason : new Error("Não foi possível executar a ferramenta de cálculo.")));
-    }
-  });
-}
-
-/** Loads the engine once per browser session and keeps the global surface untouched. */
+/**
+ * Carrega o motor uma vez por sessão do browser, dentro de um iframe `sandbox`
+ * sem allow-same-origin (M2): o script nunca corre na página, por isso não vê
+ * o DOM nem os tokens MSAL, e tem DOM próprio para as exportações. A UI recebe a fachada assíncrona `CabosEngine`.
+ */
 export function getCableEngine(): Promise<CabosEngine> {
   if (enginePromise) return enginePromise;
 
   const pending = (async () => {
+    if (typeof document === "undefined" && !workerFactoryOverride) {
+      throw new Error("A ferramenta de cálculo só pode ser carregada no browser.");
+    }
     const manifest = await getCableTool();
     const actualHash = await sha256Script(manifest.script);
     if (actualHash.toLowerCase() !== manifest.sha256.trim().toLowerCase()) {
       throw new Error("A verificação SHA-256 da ferramenta de cálculo falhou.");
     }
-    const loaded = await executeEngineScript(manifest.script, manifest.engine_version);
-    if (loaded.protocol !== 1) {
-      throw new Error("Versão de protocolo da ferramenta de cálculo não suportada.");
-    }
-    return loaded;
+    const handle = await startCableEngineWorker({
+      script: manifest.script,
+      expectedEngineVersion: manifest.engine_version,
+      workerFactory: workerFactoryOverride,
+      onTerminated: () => {
+        // Worker morto (erro, falta de memória): o próximo uso recria-o.
+        if (engineHandle === handle) resetCableEngineCache();
+      },
+    });
+    engineHandle = handle;
+    return handle.engine;
   })();
 
   enginePromise = pending;
@@ -131,9 +79,17 @@ export function getCableEngine(): Promise<CabosEngine> {
 
 export const loadCableEngine = getCableEngine;
 
-/** Test/support reset; no production code calls this. */
+/** Termina o worker e esquece o motor carregado (testes e fim de sessão). */
 export function resetCableEngineCache(): void {
+  const handle = engineHandle;
+  engineHandle = null;
   enginePromise = null;
+  handle?.dispose();
+}
+
+/** Só para testes: fábrica de workers alternativa. */
+export function setCableWorkerFactoryForTests(factory: WorkerFactory | undefined): void {
+  workerFactoryOverride = factory;
 }
 
 export function useCableEngine(enabled = true): CableEngineState & { retry: () => void } {

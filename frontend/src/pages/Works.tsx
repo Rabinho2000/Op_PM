@@ -3,7 +3,6 @@ import InstallerMultiSelect from "../components/InstallerMultiSelect";
 import { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useSearchParams, useNavigate } from "react-router-dom";
 import {
-  ApiError,
   applySavedWorksView,
   createSavedWorksView,
   deleteSavedWorksView,
@@ -22,14 +21,15 @@ import {
   WorksPreferences,
   updateSavedWorksView,
   updateWorksPreferences,
+  errorMessage,
 } from "../api/client";
 import Icon from "../components/Icon";
 import { useLifecycleStatuses, LifecycleBadge } from "../components/LifecycleStatus";
 import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, PageHeader } from "../components/ui";
 import { useToast } from "../components/Toast";
 import WorksTimeline, { type WorksDensity } from "../components/WorksTimeline";
-import { todayIsoLisbon } from "../utils/dates";
-import { defaultWindow, formatIsoPt, shiftWindow, windowFrom, Zoom, ZOOMS } from "../utils/worksTimeline";
+import { formatDatePt, todayIsoLisbon } from "../utils/dates";
+import { defaultWindow, shiftWindow, windowFrom, Zoom, ZOOMS } from "../utils/worksTimeline";
 import { useSession } from "../session/SessionContext";
 import "./Works.css";
 
@@ -285,7 +285,7 @@ export default function Works() {
       if (!isCurrentRequest()) return;
       setViewReady(true);
       setPreferenceStatus("error");
-      setPreferenceError(e instanceof ApiError ? e.detail : "Não foi possível carregar a vista guardada; a usar a vista local.");
+      setPreferenceError(errorMessage(e, "Não foi possível carregar a vista guardada; a usar a vista local."));
     }
   }, [accountKey]);
 
@@ -306,7 +306,7 @@ export default function Works() {
       })
       .catch((e) => {
         if (cancelled) return;
-        setSavedViewsError(e instanceof ApiError ? e.detail : "Não foi possível carregar as vistas guardadas.");
+        setSavedViewsError(errorMessage(e, "Não foi possível carregar as vistas guardadas."));
       })
       .finally(() => {
         if (!cancelled) setSavedViewsLoading(false);
@@ -360,7 +360,7 @@ export default function Works() {
         if (cancelled) return;
         setLoading(false);
         setRefreshing(false);
-        setError(e instanceof ApiError ? e.detail : "Não foi possível contactar o servidor.");
+        setError(errorMessage(e, "Não foi possível contactar o servidor."));
       });
     return () => {
       cancelled = true;
@@ -405,12 +405,12 @@ export default function Works() {
         onClick: () => {
           updateProjectWorkPlan(work.project_id, undo)
             .then(() => notify("Alteração anulada."))
-            .catch((e) => notify(e instanceof ApiError ? e.detail : "Não foi possível anular.", "error"))
+            .catch((e) => notify(errorMessage(e, "Não foi possível anular."), "error"))
             .finally(() => setReloadKey((k) => k + 1));
         },
       });
     } catch (e) {
-      notify(e instanceof ApiError ? e.detail : "Não foi possível gravar a alteração.", "error");
+      notify(errorMessage(e, "Não foi possível gravar a alteração."), "error");
       setReloadKey((k) => k + 1);
     }
   }
@@ -424,7 +424,7 @@ export default function Works() {
       setPreferenceSaved(true);
       notify("Vista guardada.", "success");
     } catch (e) {
-      setPreferenceSaveError(e instanceof ApiError ? e.detail : "Não foi possível guardar a vista. Tente novamente.");
+      setPreferenceSaveError(errorMessage(e, "Não foi possível guardar a vista. Tente novamente."));
     } finally {
       setPreferenceSaving(false);
     }
@@ -445,7 +445,7 @@ export default function Works() {
       setPreferenceSaved(true);
       notify("Vista reposta.", "success");
     } catch (e) {
-      setPreferenceSaveError(e instanceof ApiError ? e.detail : "Não foi possível repor a vista. Tente novamente.");
+      setPreferenceSaveError(errorMessage(e, "Não foi possível repor a vista. Tente novamente."));
     } finally {
       setPreferenceSaving(false);
     }
@@ -466,7 +466,7 @@ export default function Works() {
       setSelectedSavedViewId(savedView.id);
       notify("Vista nomeada guardada.", "success");
     } catch (e) {
-      setSavedViewsActionError(e instanceof ApiError ? e.detail : "Não foi possível guardar a vista nomeada.");
+      setSavedViewsActionError(errorMessage(e, "Não foi possível guardar a vista nomeada."));
     } finally {
       setSavedViewsSaving(false);
     }
@@ -490,7 +490,7 @@ export default function Works() {
       setReloadKey((key) => key + 1);
       notify("Vista aplicada.", "success");
     } catch (e) {
-      setSavedViewsActionError(e instanceof ApiError ? e.detail : "Não foi possível aplicar a vista nomeada.");
+      setSavedViewsActionError(errorMessage(e, "Não foi possível aplicar a vista nomeada."));
     } finally {
       setSavedViewsApplyingId(null);
     }
@@ -512,7 +512,7 @@ export default function Works() {
       setSavedViews((current) => current.map((candidate) => (candidate.id === updated.id ? updated : candidate)));
       notify("Vista renomeada.", "success");
     } catch (e) {
-      setSavedViewsActionError(e instanceof ApiError ? e.detail : "Não foi possível renomear a vista.");
+      setSavedViewsActionError(errorMessage(e, "Não foi possível renomear a vista."));
     } finally {
       setSavedViewsManagingId(null);
     }
@@ -529,7 +529,7 @@ export default function Works() {
       setSelectedSavedViewId("");
       notify("Vista eliminada.", "success");
     } catch (e) {
-      setSavedViewsActionError(e instanceof ApiError ? e.detail : "Não foi possível eliminar a vista.");
+      setSavedViewsActionError(errorMessage(e, "Não foi possível eliminar a vista."));
     } finally {
       setSavedViewsManagingId(null);
     }
@@ -748,7 +748,7 @@ export default function Works() {
         <>
           <div className="works__timeline-meta">
             <p className="small muted" aria-live="polite">
-              {formatIsoPt(win.from)} a {formatIsoPt(win.to)} · {data.summary.works} obra{data.summary.works === 1 ? "" : "s"}
+              {formatDatePt(win.from)} a {formatDatePt(win.to)} · {data.summary.works} obra{data.summary.works === 1 ? "" : "s"}
               {data.summary.conflicts > 0 && <> · <strong className="text-danger">{data.summary.conflicts} em conflito</strong></>}
               {data.summary.estimated > 0 && <> · {data.summary.estimated} com datas estimadas</>}
               {data.summary.unscheduled > 0 && <> · {data.summary.unscheduled} por planear</>}
@@ -837,7 +837,7 @@ export default function Works() {
                       <LifecycleBadge status={p.lifecycle_status} statuses={statuses} />
                       {(p.work_start_date || p.work_end_date) && (
                         <Badge tone="warning">
-                          só {p.work_start_date ? `início ${formatIsoPt(p.work_start_date)}` : `fim ${formatIsoPt(p.work_end_date as string)}`}
+                          só {p.work_start_date ? `início ${formatDatePt(p.work_start_date)}` : `fim ${formatDatePt(p.work_end_date as string)}`}
                         </Badge>
                       )}
                     </li>

@@ -1,7 +1,6 @@
 import { FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
-  ApiError,
   errorMessage,
   collectProjectMaterial,
   consumeProjectMaterial,
@@ -151,7 +150,7 @@ function EditProjectModal({
     try {
       onSaved(await updateProject(project.id, changes as Partial<Project>));
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível guardar as alterações.");
+      setError(errorMessage(err, "Não foi possível guardar as alterações."));
     } finally {
       setSaving(false);
     }
@@ -325,7 +324,7 @@ function DataSectionCard<T extends object>({
       setEditing(false);
       notify("Dados atualizados.", "success");
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível guardar as alterações.");
+      setError(errorMessage(err, "Não foi possível guardar as alterações."));
     } finally {
       setSaving(false);
     }
@@ -493,7 +492,7 @@ function ProjectInventoryOperationModal({
       onDone();
     } catch (err) {
       if (!active.current) return;
-      setError(err instanceof ApiError ? err.detail : "Não foi possível registar o movimento.");
+      setError(errorMessage(err, "Não foi possível registar o movimento."));
     } finally {
       submitting.current = false;
       if (active.current) setSaving(false);
@@ -594,7 +593,7 @@ function ReverseMovementModal({
     try {
       await onDone(normalizedReason);
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível anular o movimento.");
+      setError(errorMessage(err, "Não foi possível anular o movimento."));
     } finally {
       setSaving(false);
     }
@@ -762,7 +761,7 @@ export default function ProjectDetail() {
     } catch (err) {
       setInventoryCatalogRefresh({
         status: "error",
-        error: err instanceof ApiError ? err.detail : "Não foi possível atualizar o catálogo de inventário.",
+        error: errorMessage(err, "Não foi possível atualizar o catálogo de inventário."),
       });
       return false;
     }
@@ -778,7 +777,7 @@ export default function ProjectDetail() {
     } catch (err) {
       setInventoryRefresh({
         status: "error",
-        error: err instanceof ApiError ? err.detail : "Não foi possível atualizar o inventário.",
+        error: errorMessage(err, "Não foi possível atualizar o inventário."),
       });
       return false;
     }
@@ -900,7 +899,7 @@ export default function ProjectDetail() {
       notify("Responsável atualizado.", "success");
       load();
     } catch (e) {
-      notify(e instanceof ApiError ? e.detail : "Não foi possível atualizar o responsável.", "error");
+      notify(errorMessage(e, "Não foi possível atualizar o responsável."), "error");
     }
   }
 

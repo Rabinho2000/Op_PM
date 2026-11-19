@@ -180,7 +180,11 @@ async function renderEditor(
     route: "/projects/project-1/cables/design-1",
     path: "/projects/:projectId/cables/:designId",
   });
-  if (waitForNative) await screen.findByRole("tab", { name: "Cabos AC" });
+  if (waitForNative) {
+    await screen.findByRole("tab", { name: "Cabos AC" });
+    // O conteúdo do separador vem do motor (assíncrono, no worker).
+    await screen.findByRole("heading", { name: "Cabos AC" });
+  }
   else await screen.findByRole("button", { name: /Nova revisão|Revisões e histórico/ });
 }
 
@@ -287,32 +291,29 @@ describe("CableDesignEditor nativo", () => {
   it("confirma saída imediata durante debounce e cancelar mantém a edição sem guardar", async () => {
     await renderEditor();
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    vi.useFakeTimers();
     try {
       fireEvent.change(screen.getByLabelText("Nome do projeto"), { target: { value: "Pendente imediato" } });
       fireEvent.click(screen.getByRole("button", { name: "← Voltar" }));
       expect(confirm).toHaveBeenCalledWith("Tem alterações por guardar. Sair sem guardar?");
-      expect(screen.getByLabelText("Nome do projeto")).toHaveValue("Pendente imediato");
+      // O motor corre num worker: a edição aplica-se de forma assíncrona.
+      await waitFor(() => expect(screen.getByLabelText("Nome do projeto")).toHaveValue("Pendente imediato"));
       expect(api.saveCableRevision).not.toHaveBeenCalled();
-    } finally { vi.useRealTimers(); confirm.mockRestore(); }
+    } finally { confirm.mockRestore(); }
   });
 
   it("descarrega edições pendentes antes de unload e antes da gravação explícita", async () => {
     await renderEditor();
-    vi.useFakeTimers();
-    try {
-      fireEvent.change(screen.getByLabelText("Nome do projeto"), { target: { value: "Unload pendente" } });
-      const unload = new Event("beforeunload", { cancelable: true });
-      fireEvent(window, unload);
-      expect(unload.defaultPrevented).toBe(true);
-      expect(screen.getByLabelText("Nome do projeto")).toHaveValue("Unload pendente");
-      expect(api.saveCableRevision).not.toHaveBeenCalled();
-      fireEvent.change(screen.getByLabelText("Nome do projeto"), { target: { value: "Guardar pendente" } });
-      fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
-      expect(api.saveCableRevision).toHaveBeenCalledWith("design-1", expect.objectContaining({
-        input: expect.objectContaining({ state: expect.objectContaining({ proj: "Guardar pendente" }) }),
-      }));
-    } finally { vi.useRealTimers(); }
+    fireEvent.change(screen.getByLabelText("Nome do projeto"), { target: { value: "Unload pendente" } });
+    const unload = new Event("beforeunload", { cancelable: true });
+    fireEvent(window, unload);
+    expect(unload.defaultPrevented).toBe(true);
+    await waitFor(() => expect(screen.getByLabelText("Nome do projeto")).toHaveValue("Unload pendente"));
+    expect(api.saveCableRevision).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Nome do projeto"), { target: { value: "Guardar pendente" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(api.saveCableRevision).toHaveBeenCalledWith("design-1", expect.objectContaining({
+      input: expect.objectContaining({ state: expect.objectContaining({ proj: "Guardar pendente" }) }),
+    })));
   });
 
   it("bloqueia todos os campos e ações de mutação durante um PUT pendente", async () => {

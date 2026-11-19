@@ -7,6 +7,7 @@ import type {
   TaskListSortDirection,
   TaskListViewMode,
 } from "../api/taskListViews";
+import { compareNatural, isSortDirection, normalizeColumnList, oneOf, sortStable } from "./listConfig";
 
 export const DEFAULT_TASK_LIST_COLUMNS: TaskListColumn[] = [
   "task",
@@ -69,42 +70,22 @@ export const defaultTaskListConfig = (): TaskListConfig => ({
   filters: defaultTaskListFilters(),
 });
 
-function isTaskListColumn(value: unknown): value is TaskListColumn {
-  return typeof value === "string" && TASK_LIST_COLUMN_ORDER.includes(value as TaskListColumn);
-}
-
-function isTaskListSortBy(value: unknown): value is TaskListSortBy {
-  return typeof value === "string" && TASK_LIST_SORT_KEYS.includes(value as TaskListSortBy);
-}
-
-function isTaskListSortDirection(value: unknown): value is TaskListSortDirection {
-  return value === "asc" || value === "desc";
-}
-
-function isTaskListViewMode(value: unknown): value is TaskListViewMode {
-  return value === "lista" || value === "kanban";
-}
+const isTaskListColumn = oneOf(TASK_LIST_COLUMN_ORDER);
+const isTaskListSortBy = oneOf(TASK_LIST_SORT_KEYS);
+const isTaskListSortDirection = isSortDirection;
+const isTaskListViewMode = oneOf<TaskListViewMode>(["lista", "kanban"]);
 
 function isTaskPriority(value: unknown): value is TaskPriority | "" {
-  return value === "" || (typeof value === "string" && TASK_PRIORITY_KEYS.includes(value as TaskPriority));
+  return value === "" || oneOf(TASK_PRIORITY_KEYS)(value);
 }
 
 function isTaskStatus(value: unknown): value is TaskStatus | "" {
-  return value === "" || (typeof value === "string" && TASK_STATUS_KEYS.includes(value as TaskStatus));
+  return value === "" || oneOf(TASK_STATUS_KEYS)(value);
 }
 
-function normalizeColumns(columns: unknown): TaskListColumn[] {
-  if (!Array.isArray(columns)) return [...DEFAULT_TASK_LIST_COLUMNS];
-  const seen = new Set<TaskListColumn>();
-  const normalized: TaskListColumn[] = ["task"];
-  seen.add("task");
-  for (const value of columns) {
-    if (!isTaskListColumn(value) || seen.has(value)) continue;
-    seen.add(value);
-    normalized.push(value);
-  }
-  return normalized;
-}
+// A coluna "task" é obrigatória e fica sempre à cabeça.
+const normalizeColumns = (columns: unknown): TaskListColumn[] =>
+  normalizeColumnList(columns, TASK_LIST_COLUMN_ORDER, DEFAULT_TASK_LIST_COLUMNS, ["task"]);
 
 export function normalizeTaskListConfig(input: Partial<TaskListConfig> | null | undefined): TaskListConfig {
   const fallback = defaultTaskListConfig();
@@ -125,14 +106,6 @@ export function normalizeTaskListConfig(input: Partial<TaskListConfig> | null | 
   };
 }
 
-function isNullish(value: unknown): boolean {
-  return value === null || value === undefined || value === "";
-}
-
-function compareNatural(a: unknown, b: unknown): number {
-  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
-}
-
 function compareTaskValues(a: Task, b: Task, sortBy: Exclude<TaskListSortBy, "default">): number {
   if (sortBy === "priority") return TASK_PRIORITY_ORDER[a.priority] - TASK_PRIORITY_ORDER[b.priority];
   if (sortBy === "title") return compareNatural(a.title || a.task_type, b.title || b.task_type);
@@ -143,21 +116,7 @@ function compareTaskValues(a: Task, b: Task, sortBy: Exclude<TaskListSortBy, "de
 
 export function sortTasks(tasks: Task[], sortBy: TaskListSortBy, direction: TaskListSortDirection): Task[] {
   if (sortBy === "default") return [...tasks];
-  return tasks
-    .map((task, index) => ({ task, index }))
-    .sort((left, right) => {
-      const aValue = sortValue(left.task, sortBy);
-      const bValue = sortValue(right.task, sortBy);
-      const aNull = isNullish(aValue);
-      const bNull = isNullish(bValue);
-      if (aNull || bNull) {
-        if (aNull && bNull) return left.index - right.index;
-        return aNull ? 1 : -1;
-      }
-      const compared = compareTaskValues(left.task, right.task, sortBy);
-      return compared === 0 ? left.index - right.index : direction === "desc" ? -compared : compared;
-    })
-    .map(({ task }) => task);
+  return sortStable(tasks, (task) => sortValue(task, sortBy), (a, b) => compareTaskValues(a, b, sortBy), direction);
 }
 
 function sortValue(task: Task, sortBy: Exclude<TaskListSortBy, "default">): unknown {

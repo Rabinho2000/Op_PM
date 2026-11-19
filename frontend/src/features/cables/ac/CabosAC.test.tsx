@@ -1,8 +1,11 @@
 import * as React from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { CabosEngine, CircuitRow, Result, State } from "../engine";
 import CabosACTab from "../tabs/CabosACTab";
+
+// Tabelas grandes com muitos eventos: em máquinas carregadas (CI) o limite por omissão (5 s) fica curto.
+vi.setConfig({ testTimeout: 20_000 });
 
 const initialState: State = {
   proj: "Estudo sintético",
@@ -201,15 +204,23 @@ function Harness({ engine, readOnly = false, state = initialState }: { engine: C
       result={result}
       engine={engine}
       readOnly={readOnly}
-      apply={(updater) => setCurrent((previous) => updater(previous))}
+      // Os motores de teste são síncronos: o updater devolve já o estado.
+      apply={(updater) => setCurrent((previous) => updater(previous) as State)}
     />
   );
 }
 
+async function renderTab(ui: React.ReactElement) {
+  const view = render(ui);
+  // O resumo e as linhas vêm do motor (assíncrono, no worker).
+  await screen.findByRole("heading", { name: "Cabos AC" });
+  return view;
+}
+
 describe("separador Cabos AC", () => {
-  it("mostra linhas de circuito, cabo, proteções e veredicto acessível", () => {
+  it("mostra linhas de circuito, cabo, proteções e veredicto acessível", async () => {
     const engine = makeEngine();
-    render(<Harness engine={engine} />);
+    await renderTab(<Harness engine={engine} />);
     expect(screen.getByText("C1")).toBeInTheDocument();
     expect(screen.getByText("C2")).toBeInTheDocument();
     expect(screen.getByText("a rever")).toBeInTheDocument();
@@ -219,9 +230,9 @@ describe("separador Cabos AC", () => {
     expect(screen.getByText("1 circuitos a rever")).toBeInTheDocument();
   });
 
-  it("adiciona, duplica e remove inversores através das actions", () => {
+  it("adiciona, duplica e remove inversores através das actions", async () => {
     const engine = makeEngine();
-    render(<Harness engine={engine} />);
+    await renderTab(<Harness engine={engine} />);
     fireEvent.click(screen.getByRole("button", { name: "Adicionar inversor" }));
     expect(engine.actions.addInverter).toHaveBeenCalled();
     expect(screen.getAllByRole("row", { name: /INV-A/ }).length).toBeGreaterThan(0);
@@ -232,14 +243,14 @@ describe("separador Cabos AC", () => {
     expect(engine.actions.removeInverter).toHaveBeenCalledWith(expect.anything(), { id: 1 });
   });
 
-  it("não expõe edição legada de Esteira nem cria passagem a partir de est", () => {
+  it("não expõe edição legada de Esteira nem cria passagem a partir de est", async () => {
     const engine = makeEngine();
     const state = {
       ...initialState,
       invs: [{ ...initialState.invs[0], id: 1, est: "Esteira legada" }],
       rts: [],
     };
-    render(<Harness engine={engine} state={state} />);
+    await renderTab(<Harness engine={engine} state={state} />);
 
     expect(screen.queryByRole("columnheader", { name: "Esteira" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Esteira do inversor 1")).not.toBeInTheDocument();
@@ -249,13 +260,13 @@ describe("separador Cabos AC", () => {
     expect(engine.actions.assignInverterRoute).not.toHaveBeenCalled();
   });
 
-  it("cria duas passagens e atribui cada uma ao inversor escolhido", () => {
+  it("cria duas passagens e atribui cada uma ao inversor escolhido", async () => {
     const engine = makeEngine();
     const state = {
       ...initialState,
       invs: [initialState.invs[0], { ...initialState.invs[0], id: 2, modelo: "INV-B" }],
     };
-    render(<Harness engine={engine} state={state} />);
+    await renderTab(<Harness engine={engine} state={state} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Gerir passagens" }));
     const dialog = screen.getByRole("dialog", { name: "Gerir passagens dos inversores" });
@@ -274,13 +285,13 @@ describe("separador Cabos AC", () => {
     expect(engine.actions.assignInverterRoute).toHaveBeenCalledWith(expect.anything(), { id: 2, routeId: 2 });
   });
 
-  it("edita o nome e os parâmetros da passagem pelas actions do motor", () => {
+  it("edita o nome e os parâmetros da passagem pelas actions do motor", async () => {
     const engine = makeEngine();
     const state = {
       ...initialState,
       rts: [{ ...initialState.rInv, id: 10, nome: "Esteira antiga" }],
     };
-    render(<Harness engine={engine} state={state} />);
+    await renderTab(<Harness engine={engine} state={state} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Gerir passagens" }));
     const dialog = screen.getByRole("dialog", { name: "Gerir passagens dos inversores" });
@@ -292,7 +303,7 @@ describe("separador Cabos AC", () => {
     expect(engine.actions.updateRoute).toHaveBeenCalledWith(expect.anything(), { id: 10, patch: { cons: "multi" } });
   });
 
-  it("ao remover uma passagem avisa e deixa os inversores existentes sem atribuição", () => {
+  it("ao remover uma passagem avisa e deixa os inversores existentes sem atribuição", async () => {
     const engine = makeEngine();
     const state = {
       ...initialState,
@@ -303,7 +314,7 @@ describe("separador Cabos AC", () => {
       rts: [{ ...initialState.rInv, id: 10, nome: "Esteira partilhada" }],
     };
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-    render(<Harness engine={engine} state={state} />);
+    await renderTab(<Harness engine={engine} state={state} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Gerir passagens" }));
     fireEvent.click(screen.getByRole("button", { name: "Remover passagem Esteira partilhada" }));
@@ -317,14 +328,14 @@ describe("separador Cabos AC", () => {
     confirm.mockRestore();
   });
 
-  it("não apresenta mutações de passagens nem atribuições em só leitura", () => {
+  it("não apresenta mutações de passagens nem atribuições em só leitura", async () => {
     const engine = makeEngine();
     const state = {
       ...initialState,
       invs: [{ ...initialState.invs[0], id: 1, rtId: 10 }],
       rts: [{ ...initialState.rInv, id: 10, nome: "Esteira principal" }],
     };
-    render(<Harness engine={engine} readOnly state={state} />);
+    await renderTab(<Harness engine={engine} readOnly state={state} />);
 
     expect(screen.queryByRole("button", { name: "Gerir passagens" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Passagem do inversor 1")).not.toBeInTheDocument();
@@ -336,9 +347,9 @@ describe("separador Cabos AC", () => {
     expect(engine.actions.assignInverterRoute).not.toHaveBeenCalled();
   });
 
-  it("abre o seletor pesquisável e rejeita valores numéricos inválidos", () => {
+  it("abre o seletor pesquisável e rejeita valores numéricos inválidos", async () => {
     const engine = makeEngine();
-    render(<Harness engine={engine} />);
+    await renderTab(<Harness engine={engine} />);
     fireEvent.click(screen.getByRole("button", { name: /Escolher modelo.*INV-A/ }));
     expect(screen.getByRole("dialog", { name: /Escolher modelo/ })).toBeInTheDocument();
     fireEvent.change(screen.getByRole("textbox", { name: "Pesquisar modelo de inversor" }), { target: { value: "INV-B" } });
@@ -350,18 +361,18 @@ describe("separador Cabos AC", () => {
     expect(screen.getByText(/valor entre 0 e 10000/)).toBeInTheDocument();
   });
 
-  it("desativa os controlos de edição em modo só leitura", () => {
+  it("desativa os controlos de edição em modo só leitura", async () => {
     const engine = makeEngine();
-    render(<Harness engine={engine} readOnly state={{ ...initialState, invs: [], percs: [], gws: [] }} />);
+    await renderTab(<Harness engine={engine} readOnly state={{ ...initialState, invs: [], percs: [], gws: [] }} />);
     expect(screen.queryByRole("button", { name: "Adicionar inversor" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Adicionar percurso" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Adicionar gateway" })).not.toBeInTheDocument();
     expect(screen.getByText("Sem inversores")).toBeInTheDocument();
   });
 
-  it("liga gateways às actions e mostra estados vazios", () => {
+  it("liga gateways às actions e mostra estados vazios", async () => {
     const engine = makeEngine();
-    render(<Harness engine={engine} />);
+    await renderTab(<Harness engine={engine} />);
     fireEvent.click(screen.getByRole("button", { name: "Adicionar gateway" }));
     expect(engine.actions.addGateway).toHaveBeenCalled();
     const gatewayRow = screen.getByRole("row", { name: /Gateway 1/ });
@@ -371,9 +382,9 @@ describe("separador Cabos AC", () => {
     expect(engine.actions.removeGateway).toHaveBeenCalledWith(expect.anything(), { id: 3 });
   });
 
-  it("edita obra e critérios apenas através das actions reais e não expõe lifecycle paralelo", () => {
+  it("edita obra e critérios apenas através das actions reais e não expõe lifecycle paralelo", async () => {
     const engine = makeEngine();
-    render(<Harness engine={engine} />);
+    await renderTab(<Harness engine={engine} />);
 
     expect(screen.queryByLabelText("Estado da obra")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Nome do projeto"), { target: { value: "Projeto editado" } });

@@ -160,8 +160,9 @@ services:
       context: ./frontend
       # Bundle de produção (VITE_ENABLE_DEV_LOGIN=false) com nginx a encaminhar
       # /api, /me e /health para o serviço `backend` (mesma origem).
-      dockerfile: Dockerfile.tailscale
+      dockerfile: Dockerfile
       args:
+        NGINX_CONF: docker/nginx.proxy.conf
         VITE_API_BASE_URL: /
         VITE_ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:?defina ENTRA_TENANT_ID}
         VITE_ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:?defina ENTRA_CLIENT_ID}

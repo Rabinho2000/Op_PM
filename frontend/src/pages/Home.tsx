@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import {
   ABSENCE_TYPE_LABELS,
   AbsenceMini,
-  ApiError,
   DashboardSummary,
   DashboardWorks,
   DEFAULT_TASK_TYPE_LABELS,
@@ -15,6 +14,7 @@ import {
   TASK_PRIORITY_LABELS,
   TaskMini,
   WeekDaySummary,
+  errorMessage,
 } from "../api/client";
 import DashboardWorksPanel from "../components/DashboardWorksPanel";
 import Icon, { IconName } from "../components/Icon";
@@ -322,14 +322,14 @@ export default function Home() {
     setMapError(null);
     getDashboardSummary()
       .then(setSummary)
-      .catch((e) => setError(e instanceof ApiError ? e.detail : "Não foi possível contactar o servidor."));
+      .catch((e) => setError(errorMessage(e, "Não foi possível contactar o servidor.")));
     getDashboardWorks()
       .then(setWorks)
-      .catch((e) => setWorksError(e instanceof ApiError ? e.detail : "Não foi possível carregar as obras."));
+      .catch((e) => setWorksError(errorMessage(e, "Não foi possível carregar as obras.")));
     if (mapAllowed) {
       getMapData()
         .then(setMapData)
-        .catch((e) => setMapError(e instanceof ApiError ? e.detail : "Não foi possível carregar o mapa."));
+        .catch((e) => setMapError(errorMessage(e, "Não foi possível carregar o mapa.")));
     }
   }, [mapAllowed]);
 

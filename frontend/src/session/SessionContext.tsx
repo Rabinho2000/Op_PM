@@ -3,7 +3,7 @@
 // As permissões vêm sempre do servidor — `can()` só serve para decidir o
 // que mostrar; cada escrita continua validada no backend.
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { ApiError, getHealth, getMe, HealthResponse, MeResponse } from "../api/client";
+import { errorMessage, getHealth, getMe, HealthResponse, MeResponse } from "../api/client";
 import type { Perm } from "../generated/permissions";
 
 export interface SessionState {
@@ -36,7 +36,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       .catch((e) => {
         if (cancelled) return;
         setMe(null);
-        setError(e instanceof ApiError ? e.detail : "Não foi possível contactar o servidor.");
+        setError(errorMessage(e, "Não foi possível contactar o servidor."));
       })
       .finally(() => !cancelled && setLoading(false));
     return () => {

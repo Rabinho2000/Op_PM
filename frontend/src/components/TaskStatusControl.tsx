@@ -1,11 +1,11 @@
 import { useCallback, useState } from "react";
 import {
-  ApiError,
   Task,
   TASK_ALLOWED_NEXT_STATUSES,
   TASK_STATUS_LABELS,
   TaskStatus,
   updateTask,
+  errorMessage,
 } from "../api/client";
 import { TASK_STATUS_TONES } from "../utils/labels";
 import { useToast } from "./Toast";
@@ -31,7 +31,7 @@ export function useTaskStatusChange(onChanged: (task: Task) => void) {
         }
         onChanged(updated);
       } catch (e) {
-        notify(e instanceof ApiError ? e.detail : "Não foi possível alterar o estado da tarefa.", "error");
+        notify(errorMessage(e, "Não foi possível alterar o estado da tarefa."), "error");
       } finally {
         setBusyId(null);
       }

@@ -1,12 +1,12 @@
 import { FormEvent, useState } from "react";
 import {
-  ApiError,
   createTask,
   Person,
   Project,
   Task,
   TASK_PRIORITY_LABELS,
   TaskPriority,
+  errorMessage,
 } from "../api/client";
 import { Alert, Modal } from "./ui";
 
@@ -57,7 +57,7 @@ export default function TaskFormModal({
       });
       onCreated(task);
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível criar a tarefa.");
+      setError(errorMessage(err, "Não foi possível criar a tarefa."));
     } finally {
       setSaving(false);
     }

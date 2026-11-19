@@ -10,6 +10,7 @@ import {
 } from "../api/client";
 import { Modal } from "./ui";
 import { ApiError } from "../api/client";
+import { errorDetail } from "../utils/errors";
 
 type Draft = Record<
   | "name"
@@ -74,12 +75,6 @@ function queryNumericPrefix(value: string): string | null {
   return value.match(/^\s*(\d+)(?:_|\s+)/)?.[1] ?? null;
 }
 
-function errorDetail(error: unknown): string {
-  if (error instanceof ApiError) return error.detail;
-  if (error instanceof Error && error.message) return error.message;
-  return "Não foi possível criar o projeto.";
-}
-
 export default function CreateProjectModal({
   statuses,
   onClose,
@@ -107,7 +102,7 @@ export default function CreateProjectModal({
         if (!cancelled) setEligibleManagers(managers);
       })
       .catch((error) => {
-        if (!cancelled) setManagersError(errorDetail(error));
+        if (!cancelled) setManagersError(errorDetail(error, "Não foi possível criar o projeto."));
       })
       .finally(() => {
         if (!cancelled) setManagersLoading(false);
@@ -222,7 +217,7 @@ export default function CreateProjectModal({
       const created = await createProject(payload);
       onCreated(created.id);
     } catch (error) {
-      setSubmitError(errorDetail(error));
+      setSubmitError(errorDetail(error, "Não foi possível criar o projeto."));
     } finally {
       setSubmitting(false);
     }

@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { Alert, Badge, Card } from "../../../components/ui";
+import { Alert, Badge, Card, LoadingState } from "../../../components/ui";
 import ObraPanel from "../panels/ObraPanel";
 import CriteriaPanel from "../panels/CriteriaPanel";
 import type { CableTabProps } from "./types";
+import type { Summary } from "../engine";
+import { useEngineValue } from "../useEngineValue";
 import GatewaysTable from "../ac/GatewaysTable";
 import InvertersTable from "../ac/InvertersTable";
 import PercursosTable from "../ac/PercursosTable";
@@ -14,7 +16,7 @@ import NewBoardDialog from "../dialogs/NewBoardDialog";
 import TemplatesDialog from "../dialogs/TemplatesDialog";
 import "../cableU4.css";
 
-function SummaryCards({ summary }: { summary: ReturnType<CableTabProps["engine"]["summarize"]> }) {
+function SummaryCards({ summary }: { summary: Summary }) {
   return (
     <div className="cable-summary-cards" aria-label="Resumo do cálculo">
       <Card className="cable-summary-card" title="Inversores" icon="activity">
@@ -45,8 +47,20 @@ export default function CabosACTab({ state, result, engine, readOnly, apply }: C
   const [compareOpen, setCompareOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [newBoardOpen, setNewBoardOpen] = useState(false);
-  const summary = engine.summarize(result, state);
-  const rows = engine.views.circuitRows(state, result) ?? [];
+  const view = useEngineValue(
+    async () => ({
+      summary: await engine.summarize(result, state),
+      rows: (await engine.views.circuitRows(state, result)) ?? [],
+    }),
+    [engine, state, result],
+  );
+
+  if (!view.value) {
+    return view.error
+      ? <Alert tone="danger">{view.error}</Alert>
+      : <LoadingState label="A calcular…" rows={4} />;
+  }
+  const { summary, rows } = view.value;
 
   return (
     <div className="cable-tab cable-tab--ac">

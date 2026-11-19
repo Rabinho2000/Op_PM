@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import "./MyTimeBank.css";
-import { ApiError } from "../api/client";
+import { errorMessage } from "../api/client";
 import {
   createMyTimeBankEntry,
   formatClockMinute,
@@ -33,10 +33,6 @@ type Validation = {
   startMinute: number | null;
   endMinute: number | null;
 };
-
-function apiErrorMessage(error: unknown): string {
-  return error instanceof ApiError ? error.detail : "Não foi possível contactar o servidor.";
-}
 
 function weekdayForIsoDate(value: string): number | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
@@ -163,7 +159,7 @@ function JourneyForm({ onSaved }: { onSaved: () => void }) {
         .catch((reason) => {
           if (!active) return;
           setPreview(null);
-          setPreviewError(apiErrorMessage(reason));
+          setPreviewError(errorMessage(reason));
         })
         .finally(() => {
           if (active) setPreviewLoading(false);
@@ -210,7 +206,7 @@ function JourneyForm({ onSaved }: { onSaved: () => void }) {
       setPreviewKey((key) => key + 1);
       onSaved();
     } catch (reason) {
-      setSaveError(apiErrorMessage(reason));
+      setSaveError(errorMessage(reason));
     } finally {
       setSaving(false);
     }
@@ -390,7 +386,7 @@ export default function MyTimeBank() {
       })
       .catch((reason) => {
         if (!active) return;
-        setDataError(apiErrorMessage(reason));
+        setDataError(errorMessage(reason));
         setEntries((current) => current ?? []);
         setAdjustments((current) => current ?? []);
       })
@@ -429,7 +425,7 @@ export default function MyTimeBank() {
       setActionNotice("Anulação registada. O lançamento original permanece visível.");
       reload();
     } catch (reasonValue) {
-      setReverseError(apiErrorMessage(reasonValue));
+      setReverseError(errorMessage(reasonValue));
     } finally {
       setReverseSaving(false);
     }

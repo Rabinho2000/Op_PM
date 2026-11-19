@@ -7,6 +7,7 @@ import type {
   ProjectListSortBy,
   ProjectListSortDirection,
 } from "../api/projectListViews";
+import { compareNatural, isSortDirection, normalizeColumnList, oneOf, sortStable } from "./listConfig";
 import { IN_PROGRESS_LIFECYCLE } from "./projectFilters";
 
 export const DEFAULT_PROJECT_LIST_COLUMNS: ProjectListColumn[] = [
@@ -89,39 +90,16 @@ export const defaultProjectListRowOptions = (): ProjectListRowOptions => ({
   inline_controls: true,
 });
 
-function isProjectListColumn(value: unknown): value is ProjectListColumn {
-  return typeof value === "string" && ALL_PROJECT_LIST_COLUMNS.includes(value as ProjectListColumn);
-}
-
-function isProjectListSortBy(value: unknown): value is ProjectListSortBy {
-  return typeof value === "string" && SORT_KEYS.includes(value as ProjectListSortBy);
-}
-
-function isProjectListSortDirection(value: unknown): value is ProjectListSortDirection {
-  return value === "asc" || value === "desc";
-}
-
-function normalizeColumns(columns: unknown): ProjectListColumn[] {
-  if (!Array.isArray(columns)) return [...DEFAULT_PROJECT_LIST_COLUMNS];
-  const seen = new Set<ProjectListColumn>();
-  const normalized: ProjectListColumn[] = [];
-  if (Array.isArray(columns)) {
-    for (const value of columns) {
-      if (!isProjectListColumn(value) || seen.has(value)) continue;
-      seen.add(value);
-      normalized.push(value);
-    }
-  }
-  return normalized;
-}
+const isProjectListColumn = oneOf(ALL_PROJECT_LIST_COLUMNS);
+const isProjectListSortBy = oneOf(SORT_KEYS);
+const isProjectListSortDirection = isSortDirection;
 
 export function normalizeProjectListConfig(input: Partial<ProjectListConfig> | null | undefined): ProjectListConfig {
   const fallback = defaultProjectListConfig();
   const filters: Partial<ProjectListFilters> = input?.filters ?? {};
   const rowOptions: Partial<ProjectListRowOptions> = input?.row_options ?? {};
-  const columns = normalizeColumns(input?.columns);
   return {
-    columns: columns.length > 0 ? columns : [...fallback.columns],
+    columns: normalizeColumnList(input?.columns, ALL_PROJECT_LIST_COLUMNS, DEFAULT_PROJECT_LIST_COLUMNS),
     sort_by: isProjectListSortBy(input?.sort_by) ? input.sort_by : fallback.sort_by,
     sort_direction: isProjectListSortDirection(input?.sort_direction) ? input.sort_direction : fallback.sort_direction,
     filters: {
@@ -141,39 +119,12 @@ export function normalizeProjectListConfig(input: Partial<ProjectListConfig> | n
   };
 }
 
-function isNullishValue(value: unknown): boolean {
-  return value === null || value === undefined || value === "";
-}
-
 function compareProjectValues(a: Project, b: Project, sortBy: ProjectListSortBy): number {
-  const aValue = a[sortBy];
-  const bValue = b[sortBy];
-  const aNull = isNullishValue(aValue);
-  const bNull = isNullishValue(bValue);
-  if (aNull && bNull) return 0;
-  if (aNull) return 1;
-  if (bNull) return -1;
-
-  if (sortBy === "name") {
-    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
-  }
+  if (sortBy === "name") return compareNatural(a.name, b.name);
   if (sortBy === "power_kwp") return Number(a.power_kwp) - Number(b.power_kwp);
-  return String(aValue).localeCompare(String(bValue), undefined, { numeric: true, sensitivity: "base" });
+  return compareNatural(a[sortBy], b[sortBy]);
 }
 
 export function sortProjects(projects: Project[], sortBy: ProjectListSortBy, direction: ProjectListSortDirection): Project[] {
-  return projects
-    .map((project, index) => ({ project, index }))
-    .sort((a, b) => {
-      const compared = compareProjectValues(a.project, b.project, sortBy);
-      if (compared !== 0) {
-        // Nulls are deliberately kept at the end in either direction.
-        const aNull = isNullishValue(a.project[sortBy]);
-        const bNull = isNullishValue(b.project[sortBy]);
-        if (aNull || bNull) return compared;
-        return direction === "desc" ? -compared : compared;
-      }
-      return a.index - b.index;
-    })
-    .map(({ project }) => project);
+  return sortStable(projects, (project) => project[sortBy], (a, b) => compareProjectValues(a, b, sortBy), direction);
 }

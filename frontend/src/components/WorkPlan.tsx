@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { ApiError, Installer, listInstallers, Project, updateProjectWorkPlan } from "../api/client";
+import { Installer, listInstallers, Project, updateProjectWorkPlan, errorMessage } from "../api/client";
 import { formatDatePt } from "../utils/dates";
 import Icon from "./Icon";
 import TeamAssignments from "./TeamAssignments";
@@ -127,7 +127,7 @@ function WorkPlanModal({
       notify("Plano da obra atualizado.");
       onSaved(updated);
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível guardar o plano da obra.");
+      setError(errorMessage(err, "Não foi possível guardar o plano da obra."));
     } finally {
       setSaving(false);
     }

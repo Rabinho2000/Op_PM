@@ -302,12 +302,6 @@ export function dayTicks(w: Window, dayPx: number): DayTick[] {
   return ticks;
 }
 
-/** "12/05/2026" (pt-PT) a partir de ISO, sem passar por `Date` local. */
-export function formatIsoPt(iso: string): string {
-  const [y, m, d] = iso.split("-");
-  return `${d}/${m}/${y}`;
-}
-
 // --- arrastar e redimensionar -------------------------------------------------------------
 
 export type DragMode = "move" | "resize-start" | "resize-end";

@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { ApiError, PaymentMilestoneCode, Project, ProjectPayments, updateProjectPayment } from "../api/client";
+import { PaymentMilestoneCode, Project, ProjectPayments, updateProjectPayment } from "../api/client";
 import { Alert, Card } from "./ui";
 import { PAYMENT_MILESTONE_LABELS, PAYMENT_MILESTONE_ORDER } from "../utils/labels";
+import { errorDetail } from "../utils/errors";
 
 export default function ProjectPaymentsCard({
   project,
@@ -32,13 +33,7 @@ export default function ProjectPaymentsCard({
       onPaymentsChanged({ ...currentPayments, [milestone]: saved.received });
     } catch (reason) {
       onPaymentsChanged({ ...currentPayments, [milestone]: previous });
-      setError(
-        reason instanceof ApiError
-          ? reason.detail
-          : reason instanceof Error && reason.message
-            ? reason.message
-            : "Não foi possível guardar o marco de pagamento."
-      );
+      setError(errorDetail(reason, "Não foi possível guardar o marco de pagamento."));
     } finally {
       setBusyMilestone(null);
     }

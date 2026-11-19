@@ -17,11 +17,11 @@ function confirmChange(confirm: ((message: string) => boolean) | undefined, mess
   return typeof window !== "undefined" && typeof window.confirm === "function" ? window.confirm(message) : false;
 }
 
-function applyTemplate(engine: CabosEngine, current: State, templateId: string): State {
+async function applyTemplate(engine: CabosEngine, current: State, templateId: string): Promise<State> {
   const actions = engine.actions as Partial<CabosEngine["actions"]>;
   const next = typeof actions.applyTemplate === "function"
-    ? actions.applyTemplate(current, templateId)
-    : engine.newState(templateId);
+    ? await actions.applyTemplate(current, templateId)
+    : await engine.newState(templateId);
   if (!next || typeof next !== "object") throw new Error("O motor não devolveu um estado válido para o modelo.");
   return {
     ...next,

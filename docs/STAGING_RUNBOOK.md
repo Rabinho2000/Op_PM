@@ -15,7 +15,7 @@
 > ver a lista de dados externos necessários na secção final.
 
 > **Não usar os ficheiros da demonstração local** (`docker-compose.demo.yml`,
-> `frontend/Dockerfile.demo`, `scripts/demo_local.py`, `app.cli.demo`) em
+> `scripts/demo_local.py`, `app.cli.demo`) em
 > staging: servem só `APP_ENV=local` com dados sintéticos, e a aplicação
 > recusa-se a arrancar em staging com `DEMO_MODE=true` (D-051,
 > `docs/MVP_DEMO.md`).
