@@ -8,9 +8,10 @@ from __future__ import annotations
 import datetime as dt
 import math
 import uuid
+from typing import Annotated
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 
 from app.services.project_lifecycle import LIFECYCLE_STATUS_CODES, ON_HOLD
 
@@ -103,36 +104,83 @@ class ProjectRead(BaseModel):
     installer_team_leader_name: str | None = None
 
 
+def _reject_non_finite_json_numbers(value: object) -> object:
+    # FastAPI serializes Pydantic's ``input`` in normal validation errors.
+    # For raw JSON Infinity/NaN (including 1e999), that both leaks the
+    # value and makes JSONResponse fail. Return a fixed, sanitized 422.
+    if isinstance(value, float) and not math.isfinite(value):
+        raise HTTPException(status_code=422, detail="Valor numérico inválido.")
+    return value
+
+
+# Limites partilhados por `ProjectCreate` e `ProjectUpdate` (espelham o
+# tamanho das colunas de `Project`): uma só definição, para a edição nunca
+# aceitar o que a criação rejeita (M5).
+ProjectName = Annotated[str, Field(min_length=1, max_length=512)]
+Latitude = Annotated[float, BeforeValidator(_reject_non_finite_json_numbers), Field(ge=-90, le=90, allow_inf_nan=False)]
+Longitude = Annotated[float, BeforeValidator(_reject_non_finite_json_numbers), Field(ge=-180, le=180, allow_inf_nan=False)]
+PowerKwp = Annotated[float, BeforeValidator(_reject_non_finite_json_numbers), Field(ge=0, allow_inf_nan=False)]
+ClientName = Annotated[str, Field(max_length=256)]
+ClientContact = Annotated[str, Field(max_length=256)]
+ClientEmail = Annotated[str, Field(max_length=320)]
+Address = Annotated[str, Field(max_length=512)]
+PowerRaw = Annotated[str, Field(max_length=64)]
+ProjectRole = Annotated[str, Field(max_length=128)]
+LongNote = Annotated[str, Field(max_length=20_000)]
+AwardYearRaw = Annotated[str, Field(max_length=16)]
+UpacRegistration = Annotated[str, Field(max_length=128)]
+M2mCard = Annotated[str, Field(max_length=128)]
+UpacConnectionDateRaw = Annotated[str, Field(max_length=64)]
+
+
 class ProjectUpdate(BaseModel):
     """Todos os campos opcionais — só os presentes no pedido são
     alterados. `None` explícito limpa o campo (distinto de omitido); ver
     `app/services/projects.py:update_project`, que usa
-    `model_dump(exclude_unset=True)` para essa distinção."""
+    `model_dump(exclude_unset=True)` para essa distinção.
+
+    Excepção: `name`, `notes` e `is_active` são NOT NULL na BD, por isso um
+    `null` explícito é rejeitado com 422 (antes dava 500 por violação de
+    NOT NULL). Os limites são os de `ProjectCreate`."""
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str | None = None
-    client_name: str | None = None
-    client_contact: str | None = None
-    client_email: str | None = None
-    address: str | None = None
-    lat: float | None = None
-    lon: float | None = None
-    power_kwp: float | None = None
-    power_raw: str | None = None
+    name: ProjectName | None = None
+    client_name: ClientName | None = None
+    client_contact: ClientContact | None = None
+    client_email: ClientEmail | None = None
+    address: Address | None = None
+    lat: Latitude | None = None
+    lon: Longitude | None = None
+    power_kwp: PowerKwp | None = None
+    power_raw: PowerRaw | None = None
     pm_person_id: uuid.UUID | None = None
     start_date: dt.date | None = None
-    role: str | None = None
-    equipment_notes: str | None = None
-    injection_notes: str | None = None
-    om_notes: str | None = None
-    commercial_assumptions: str | None = None
-    upac_registration: str | None = None
-    m2m_card: str | None = None
-    upac_connection_date_raw: str | None = None
-    award_year_raw: str | None = None
-    notes: str | None = None
+    role: ProjectRole | None = None
+    equipment_notes: LongNote | None = None
+    injection_notes: LongNote | None = None
+    om_notes: LongNote | None = None
+    commercial_assumptions: LongNote | None = None
+    upac_registration: UpacRegistration | None = None
+    m2m_card: M2mCard | None = None
+    upac_connection_date_raw: UpacConnectionDateRaw | None = None
+    award_year_raw: AwardYearRaw | None = None
+    notes: LongNote | None = None
     is_active: bool | None = None
+
+    @field_validator("name", "notes", "is_active", mode="before")
+    @classmethod
+    def reject_null_for_required_fields(cls, value: object) -> object:
+        # Só corre para campos presentes no pedido (os omitidos ficam como
+        # estão): `null` explícito num campo NOT NULL é um 422, não um 500.
+        if value is None:
+            raise ValueError("Este campo é obrigatório e não pode ser nulo.")
+        return value
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 
 
 class ProjectCreate(BaseModel):
@@ -141,35 +189,25 @@ class ProjectCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1, max_length=512)
-    client_name: str | None = Field(default=None, max_length=256)
-    client_contact: str | None = Field(default=None, max_length=256)
-    client_email: str | None = Field(default=None, max_length=320)
-    address: str | None = Field(default=None, max_length=512)
-    lat: float | None = Field(default=None, ge=-90, le=90, allow_inf_nan=False)
-    lon: float | None = Field(default=None, ge=-180, le=180, allow_inf_nan=False)
-    power_kwp: float | None = Field(default=None, ge=0, allow_inf_nan=False)
-    power_raw: str | None = Field(default=None, max_length=64)
+    name: ProjectName
+    client_name: ClientName | None = None
+    client_contact: ClientContact | None = None
+    client_email: ClientEmail | None = None
+    address: Address | None = None
+    lat: Latitude | None = None
+    lon: Longitude | None = None
+    power_kwp: PowerKwp | None = None
+    power_raw: PowerRaw | None = None
     pm_person_id: uuid.UUID | None = None
     start_date: dt.date | None = None
-    role: str | None = Field(default=None, max_length=128)
-    equipment_notes: str | None = Field(default=None, max_length=20_000)
-    injection_notes: str | None = Field(default=None, max_length=20_000)
-    om_notes: str | None = Field(default=None, max_length=20_000)
-    commercial_assumptions: str | None = Field(default=None, max_length=20_000)
-    award_year_raw: str | None = Field(default=None, max_length=16)
-    notes: str | None = Field(default=None, max_length=20_000)
+    role: ProjectRole | None = None
+    equipment_notes: LongNote | None = None
+    injection_notes: LongNote | None = None
+    om_notes: LongNote | None = None
+    commercial_assumptions: LongNote | None = None
+    award_year_raw: AwardYearRaw | None = None
+    notes: LongNote | None = None
     lifecycle_status: str | None = Field(default=ON_HOLD, max_length=32)
-
-    @field_validator("lat", "lon", "power_kwp", mode="before")
-    @classmethod
-    def reject_non_finite_json_numbers(cls, value: object) -> object:
-        # FastAPI serializes Pydantic's ``input`` in normal validation errors.
-        # For raw JSON Infinity/NaN (including 1e999), that both leaks the
-        # value and makes JSONResponse fail. Return a fixed, sanitized 422.
-        if isinstance(value, float) and not math.isfinite(value):
-            raise HTTPException(status_code=422, detail="Valor numérico inválido.")
-        return value
 
     @field_validator("name", mode="before")
     @classmethod
