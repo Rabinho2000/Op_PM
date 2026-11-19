@@ -220,9 +220,15 @@ por exemplo `chefe.sintetico@example.invalid`, criado pelo seed. Isto é um meca
 desenvolvimento explícito, só disponível em `local`/`test`, nunca autenticação real.
 
 Para testar a validação real de token Microsoft Entra ID sem um tenant de verdade,
-defina `AUTH_ENABLED=true` e `ENTRA_VALIDATION_MODE=mock` (só válido em `local`/`test` —
-ver `docs/DECISIONS.md` D-024) e envie `Authorization: Bearer <token>`, assinado com
-`app.security.entra_auth.issue_mock_token(...)`. Com um tenant real disponível, deixe
+defina `AUTH_ENABLED=true`, `ENTRA_VALIDATION_MODE=mock` (só válido em `local`/`test` —
+ver `docs/DECISIONS.md` D-024) e `ENTRA_MOCK_PUBLIC_KEY_FILE` (ficheiro PEM com a chave
+**pública**; o código não traz nenhuma chave, e sem ficheiro o modo mock rejeita todos os
+tokens), e envie `Authorization: Bearer <token>` assinado com a chave privada
+correspondente, gerada por si e guardada fora do repositório (issuer
+`https://mock-entra.test/tenant-sintetico/v2.0`, audience `mock-client-id-sintetico`,
+claims `oid`, `sub`, `exp`, `iat` e `scp=access_as_user`). A suite de testes faz isto
+sozinha: `backend/tests/entra_mock.py` gera um par efémero em cada execução. Com um tenant
+real disponível, deixe
 `ENTRA_VALIDATION_MODE=real` (omissão) e defina `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID`.
 
 > **Dependências do backend.** `requirements.in` e `requirements-postgres.in`

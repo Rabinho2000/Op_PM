@@ -14,25 +14,26 @@ e cacheadas no processo (`functools.lru_cache`) — nunca se cria um
   A identidade persistente vem sempre do claim `oid` — nunca de `sub`
   como recurso, porque `sub` pode variar por aplicação/tenant para o
   mesmo utilizador (é `pairwise` por desenho no protocolo OIDC).
-- `MockEntraTokenValidator`: valida contra uma chave de teste fixa, local,
-  sem qualquer chamada de rede — usada exclusivamente em testes
-  automatizados. **Nunca alcançável em staging/produção**:
-  `Settings._enforce_hardening_in_non_local_envs` (app/config.py, D-024)
-  exige `ENTRA_VALIDATION_MODE=real` nesses ambientes, e a aplicação
-  recusa-se a arrancar caso contrário — por isso `entra_validation_mode`
-  nunca chega a valer `'mock'` num processo em staging/produção.
+- `MockEntraTokenValidator`: valida contra uma chave PÚBLICA local
+  (`ENTRA_MOCK_PUBLIC_KEY_FILE`), sem qualquer chamada de rede — usada em
+  testes automatizados e em desenvolvimento local. **Nunca alcançável em
+  staging/produção**: `Settings._enforce_hardening_in_non_local_envs`
+  (app/config.py, D-024) exige `ENTRA_VALIDATION_MODE=real` nesses
+  ambientes, e a aplicação recusa-se a arrancar caso contrário — por isso
+  `entra_validation_mode` nunca chega a valer `'mock'` num processo em
+  staging/produção.
 
-A "chave de teste" abaixo (`_TEST_PRIVATE_KEY_PEM`/`_TEST_PUBLIC_KEY_PEM`)
-**não é um segredo real**: é um par de chaves RSA gerado uma única vez só
-para este repositório, usado apenas para assinar/validar tokens sintéticos
-em testes — nunca aceite por um Entra ID real, nunca usada para autenticar
-nada fora deste código. Documentado aqui de propósito, sem ambiguidade.
+O código da aplicação não contém nenhuma chave, pública ou privada: sem
+`ENTRA_MOCK_PUBLIC_KEY_FILE` o validador mock rejeita todos os tokens (503).
+Quem assina os tokens de teste é a suite (`tests/entra_mock.py`, que gera um
+par de chaves efémero em cada execução); em desenvolvimento local, ver o
+README.
 """
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Protocol
 
 import jwt
@@ -196,47 +197,8 @@ class RealEntraTokenValidator:
 
 
 # --------------------------------------------------------------------------
-# Mock — só para testes automatizados. Ver aviso no docstring do módulo.
+# Mock — só para testes e desenvolvimento local. Ver o docstring do módulo.
 # --------------------------------------------------------------------------
-
-_TEST_PRIVATE_KEY_PEM = """-----BEGIN PRIVATE KEY-----
-MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDGKU43F6T5dV5l
-y6DD+gEunsR5yu84wpCAb4guuW45jmO8DxaN37nkIpxHqNgeH2WWyLLDe9IuzsMP
-m6UQbIheAfxM/zBPdBmXGTw+f389oGFxITynLacJ/Y8KBnVpZ71k7xhdmveeeQ5X
-ehJR2cwhJoboWOM5wZh+SweVP/zqfGPmYEHL+rrMynNrwYDLRco6OA8ULAdb/r5N
-0irVR0ge8qLxqkby0hipsa3Kh4lc/qxaXWfSh7MZQUqHi8QotqP/ioNxdMjOR4As
-gBhz1SQW6wHgF23FhaU9Th0p0vLORUBOBZoQXCtVr/Gxik+8XC0PbvzSVPLO7700
-jUodPcRlAgMBAAECggEAGBC2HfyyHVWCpEwpdwNql1XSuJPLn5IJaH+jA0GjwDup
-oxIWBB7SfYEyh4Va0bWwabJv+0uTR/n2OHQHhMoZeYk2Mcef/1YzMWVwKorjUgGj
-M9D8g7UIny766xXDtoxRtOtQgzWpssYy1q7NgME5iCEcqyT4W3BGa7gC8L43oeZI
-qf4V+1V2/WojpMANy4jkv6J0jbpt2N/L1q/G62GpQGiIyhN3dFTow+mUZxnfqIiN
-ooZENNtTYzE2YYhiZOFNGXPcKY2x2naqeTfQenSa+cHxm9rTYNo2F52Hamgrd8g3
-Y0peUAktOuGSIgbowVUAxETWqMrbILb2nXHaoHN3NQKBgQDjl55E3lLW6CJbbWQp
-KqoAvR44BlvTMl3rDv6AX/MHpu49JE/ULIlpL+UxkFFnwvafMhNhwwEvO3XbR7DF
-303W1FTLsOlaEDSFCGzIURAv0wtiCUzpBd9wt1UBbOPdOfbimlx9psjH0wnvaygm
-liymi0Z1NPEuUZiY6TW1sVqZdwKBgQDe5UPe1zj5tG/21dCBzwhNWPknjoFhoko/
-JJe5Jw2pa6P+Rqu+dwSfHA8vXRn2bGH6mIP2Eh0aYZY/ZXa0pyXFQ5/PUM7/cnAZ
-q0mFQ3I2WiqWvivHDPyaCold3vpIHKGBtcqTP532X4fm8p/012O5z3gLJhLgIg27
-ImGUqz/IAwKBgAs3h8dhJbgNzNOwuoUE40gSChE8zv3Dt7lEDesJz5KK+abtyTlt
-0H/sqmEc+cYhZ8JE14uz7rUDOzXJfL7j2JRD9sHrQDT+I3iDB8l/pUqWHjOAvdem
-QHLvtjLRyRE4MCDO9swCkla24gB4yYvNTvoOVzSjnVdpEhpHNCx2Rz7VAoGAGVFJ
-SEKCAjrwjMT0jgoKE18LzeZt470fWdS6Nxmsf5XuZq94SoYSTFBPmT2l+UuORXyV
-YJnmHF0BR+oqdZKWw7VOramsGW/SM9g03aIvkuTi+YRYTJ+5AXY47CSroQ0/exA/
-FkKfmqB3O1BLwu/EMBLUu89zTWoQzTS2iMB62ikCgYBGXpImpDzfH4GwmGt2NM1M
-idIikatPH3xZS8MdcWlL7xc3Lyx0CZOYe7po5kd+r/zoEsoVPjJOEL8rvorTYnC1
-d5EZUvnNibfpdkeDCVqlD2K64tuqIWUnowxcQTyUmgnOeupjHAnRExN71BkimIeT
-Pl0LYzc5jCVc4r7zzq78TA==
------END PRIVATE KEY-----"""
-
-_TEST_PUBLIC_KEY_PEM = """-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxilONxek+XVeZcugw/oB
-Lp7EecrvOMKQgG+ILrluOY5jvA8Wjd+55CKcR6jYHh9llsiyw3vSLs7DD5ulEGyI
-XgH8TP8wT3QZlxk8Pn9/PaBhcSE8py2nCf2PCgZ1aWe9ZO8YXZr3nnkOV3oSUdnM
-ISaG6FjjOcGYfksHlT/86nxj5mBBy/q6zMpza8GAy0XKOjgPFCwHW/6+TdIq1UdI
-HvKi8apG8tIYqbGtyoeJXP6sWl1n0oezGUFKh4vEKLaj/4qDcXTIzkeALIAYc9Uk
-FusB4BdtxYWlPU4dKdLyzkVATgWaEFwrVa/xsYpPvFwtD2780lTyzu+9NI1KHT3E
-ZQIDAQAB
------END PUBLIC KEY-----"""
 
 TEST_ISSUER = "https://mock-entra.test/tenant-sintetico/v2.0"
 TEST_AUDIENCE = "mock-client-id-sintetico"
@@ -244,11 +206,12 @@ TEST_SCOPE = "access_as_user"
 
 
 class MockEntraTokenValidator:
-    """Só para testes — ver aviso no topo do módulo. Nunca faz nenhuma
-    chamada de rede; a "chave pública" usada aqui é o par da chave de
-    teste embutida, não algo obtido de um IdP. Aplica exatamente as mesmas
-    regras de negócio do validador real (oid obrigatório, token delegado,
-    tenant quando configurado) — só a origem da chave/rede muda."""
+    """Só para testes e desenvolvimento local — ver o docstring do módulo.
+    Nunca faz nenhuma chamada de rede; a chave pública vem de um ficheiro
+    local (`public_key_file`), nunca de um IdP nem do código. Sem ficheiro,
+    rejeita tudo. Aplica exatamente as mesmas regras de negócio do validador
+    real (oid obrigatório, token delegado, tenant quando configurado) — só a
+    origem da chave/rede muda."""
 
     def __init__(
         self,
@@ -257,17 +220,31 @@ class MockEntraTokenValidator:
         audience: str = TEST_AUDIENCE,
         tenant_id: str = "",
         required_scope: str = "",
+        public_key_file: str = "",
     ):
         self._issuer = issuer
         self._audience = audience
         self._tenant_id = tenant_id
         self._required_scope = required_scope
+        self._public_key_file = public_key_file
+
+    def _public_key(self) -> str:
+        if not self._public_key_file.strip():
+            raise TokenValidationUnavailableError(
+                "ENTRA_VALIDATION_MODE=mock exige ENTRA_MOCK_PUBLIC_KEY_FILE"
+            )
+        try:
+            return Path(self._public_key_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            raise TokenValidationUnavailableError(
+                f"ENTRA_MOCK_PUBLIC_KEY_FILE: não foi possível ler o ficheiro ({exc.strerror or type(exc).__name__})"
+            ) from None
 
     def validate(self, token: str) -> EntraClaims:
         try:
             payload = jwt.decode(
                 token,
-                _TEST_PUBLIC_KEY_PEM,
+                self._public_key(),
                 algorithms=["RS256"],
                 issuer=self._issuer,
                 audience=self._audience,
@@ -277,49 +254,6 @@ class MockEntraTokenValidator:
             raise TokenValidationError(str(exc)) from exc
         _validate_delegated_token(payload, required_scope=self._required_scope)
         return _claims_from_payload(payload, tenant_id=self._tenant_id)
-
-
-def issue_mock_token(
-    *,
-    object_id: str | None = "oid-sintetico-omisso",
-    email: str | None = None,
-    expires_in_seconds: int = 3600,
-    issued_seconds_ago: int = 0,
-    not_before_seconds_from_now: int | None = None,
-    issuer: str = TEST_ISSUER,
-    audience: str = TEST_AUDIENCE,
-    scope: str | None = TEST_SCOPE,
-    include_oid: bool = True,
-    include_sub: bool = True,
-    extra_claims: dict | None = None,
-) -> str:
-    """Só para testes automatizados: assina um token sintético com a chave
-    de teste local (nunca válido contra um Entra ID real, e nunca aceite
-    pelo validador real — issuer/audience diferentes). Por omissão já
-    inclui `scp='access_as_user'` (token delegado válido) e `oid`/`sub` —
-    usar `include_oid=False`/`scope=None`/etc. para construir cenários de
-    rejeição (claim em falta, token de aplicação, ...) sem ter de montar o
-    payload à mão em cada teste."""
-    now = int(time.time()) - issued_seconds_ago
-    payload: dict = {
-        "iss": issuer,
-        "aud": audience,
-        "iat": now,
-        "exp": now + expires_in_seconds,
-    }
-    if include_sub:
-        payload["sub"] = object_id
-    if include_oid:
-        payload["oid"] = object_id
-    if not_before_seconds_from_now is not None:
-        payload["nbf"] = now + not_before_seconds_from_now
-    if email:
-        payload["preferred_username"] = email
-    if scope is not None:
-        payload["scp"] = scope
-    if extra_claims:
-        payload.update(extra_claims)
-    return jwt.encode(payload, _TEST_PRIVATE_KEY_PEM, algorithm="RS256")
 
 
 # --------------------------------------------------------------------------
@@ -341,8 +275,12 @@ def _cached_real_validator(
 
 
 @lru_cache(maxsize=8)
-def _cached_mock_validator(tenant_id: str, required_scope: str) -> MockEntraTokenValidator:
-    return MockEntraTokenValidator(tenant_id=tenant_id, required_scope=required_scope)
+def _cached_mock_validator(
+    tenant_id: str, required_scope: str, public_key_file: str
+) -> MockEntraTokenValidator:
+    return MockEntraTokenValidator(
+        tenant_id=tenant_id, required_scope=required_scope, public_key_file=public_key_file
+    )
 
 
 def get_token_validator(settings) -> TokenValidator:
@@ -353,7 +291,9 @@ def get_token_validator(settings) -> TokenValidator:
     — um `PyJWKClient` (que já faz o seu próprio cache de chaves) só é
     criado uma vez por configuração distinta, nunca a cada pedido HTTP."""
     if settings.entra_validation_mode == "mock":
-        return _cached_mock_validator(settings.entra_tenant_id, settings.entra_required_scope)
+        return _cached_mock_validator(
+            settings.entra_tenant_id, settings.entra_required_scope, settings.entra_mock_public_key_file
+        )
     return _cached_real_validator(
         settings.resolved_entra_issuer(),
         settings.resolved_entra_audience(),

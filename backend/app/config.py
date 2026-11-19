@@ -134,6 +134,9 @@ class Settings(BaseSettings):
     # credentials, claim 'roles' sem 'scp'). Vazio: qualquer 'scp' não
     # vazio serve, mas um token sem 'scp' nenhum continua sempre recusado.
     entra_required_scope: str = Field(default="", alias="ENTRA_REQUIRED_SCOPE")
+    # Chave PÚBLICA (ficheiro PEM) com que o validador 'mock' verifica as
+    # assinaturas. Só em local/test: ver `app/security/entra_auth.py`.
+    entra_mock_public_key_file: str = Field(default="", alias="ENTRA_MOCK_PUBLIC_KEY_FILE")
     # None = "não configurado explicitamente" -> ver
     # resolved_entra_jit_link_by_email(): True em local/test, False em
     # staging/produção, a menos que definido aqui de propósito (D-029).

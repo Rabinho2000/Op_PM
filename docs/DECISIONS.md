@@ -498,11 +498,13 @@ com duas implementações atrás da mesma interface:
   (`PyJWKClient`, com cache), issuer/audience derivados de
   `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID` (ou explícitos via
   `ENTRA_ISSUER`/`ENTRA_AUDIENCE`/`ENTRA_JWKS_URL`).
-- `MockEntraTokenValidator`: valida contra uma chave RSA de teste fixa,
-  gerada uma única vez para este repositório, embutida no código — sem
-  qualquer chamada de rede. **Não é um segredo real**: nunca validaria
-  nada vindo de um Entra ID de verdade (issuer/audience diferentes), serve
-  só para assinar/validar tokens sintéticos em `issue_mock_token` (testes).
+- `MockEntraTokenValidator`: valida contra uma chave PÚBLICA lida de
+  `ENTRA_MOCK_PUBLIC_KEY_FILE`, sem qualquer chamada de rede. *(Fase 2, M13:
+  antes usava um par RSA fixo embutido no código da aplicação — um repositório
+  público com uma chave privada que permitia forjar tokens em modo mock. A
+  chave saiu do código: a suite gera um par efémero em `tests/entra_mock.py`
+  e sem ficheiro o validador rejeita tudo. A chave antiga continua no
+  histórico do Git, por isso nunca deve ser usada.)*
 
 `Settings.entra_validation_mode` (`'real'` por omissão) escolhe qual —
 `app/security/entra_auth.py:get_token_validator` é o único ponto que
