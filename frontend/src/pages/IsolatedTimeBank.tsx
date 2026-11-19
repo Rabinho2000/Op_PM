@@ -36,7 +36,7 @@ import {
   TimeBankSummary,
   timeBankDateRange,
 } from "../api/timeBank";
-import { ApiError } from "../api/client";
+import { errorMessage } from "../api/client";
 
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const TIME_BANK_PAGE_SIZE = 100;
@@ -75,10 +75,6 @@ function calculationModeLabel(mode: string): string {
 
 function adjustmentKindLabel(kind: string): string {
   return KIND_LABELS[kind as TimeBankAdjustmentKind] ?? kind;
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof ApiError ? error.detail : fallback;
 }
 
 function currentYearMonth(): { year: number; month: string } {

@@ -4,7 +4,6 @@ import {
   Absence,
   AbsenceMini,
   AbsenceType,
-  ApiError,
   errorMessage,
   approveAbsence,
   BirthdayMini,
@@ -109,7 +108,7 @@ function CreateAbsenceModal({
       await createAbsence({ ...form, person_id: canManageAll ? form.person_id : selfPersonId });
       onCreated();
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível registar a ausência.");
+      setError(errorMessage(err, "Não foi possível registar a ausência."));
     } finally {
       setSaving(false);
     }
@@ -251,7 +250,7 @@ function RejectAbsenceModal({
     try {
       await onRejected(clean);
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível rejeitar o pedido.");
+      setError(errorMessage(err, "Não foi possível rejeitar o pedido."));
       setSaving(false);
     }
   }
@@ -360,7 +359,7 @@ export default function Vacations() {
     try {
       setHolidays(await listHolidays(canManageHolidays ? undefined : days[0], canManageHolidays ? undefined : days[41], canManageHolidays));
     } catch (e) {
-      setHolidayError(e instanceof ApiError ? e.detail : "Não foi possível carregar os feriados.");
+      setHolidayError(errorMessage(e, "Não foi possível carregar os feriados."));
       setHolidays([]);
     }
   }, [canManageHolidays, days]);
@@ -413,7 +412,7 @@ export default function Vacations() {
       notify("Pedido de férias aprovado.", "success");
       load();
     } catch (e) {
-      notify(e instanceof ApiError ? e.detail : "Não foi possível aprovar o pedido.", "error");
+      notify(errorMessage(e, "Não foi possível aprovar o pedido."), "error");
     }
   }
 
@@ -431,7 +430,7 @@ export default function Vacations() {
       notify("Ausência cancelada.", "success");
       load();
     } catch (e) {
-      notify(e instanceof ApiError ? e.detail : "Não foi possível cancelar a ausência.", "error");
+      notify(errorMessage(e, "Não foi possível cancelar a ausência."), "error");
     } finally {
       setConfirmCancel(null);
     }
@@ -447,7 +446,7 @@ export default function Vacations() {
       notify("Feriado adicionado.", "success");
       await loadHolidays();
     } catch (e) {
-      setHolidayError(e instanceof ApiError ? e.detail : "Não foi possível guardar o feriado.");
+      setHolidayError(errorMessage(e, "Não foi possível guardar o feriado."));
     } finally {
       setSavingHoliday(false);
     }
@@ -460,7 +459,7 @@ export default function Vacations() {
       notify(holiday.is_active ? "Feriado desativado." : "Feriado reativado.", "success");
       await loadHolidays();
     } catch (e) {
-      notify(e instanceof ApiError ? e.detail : "Não foi possível alterar o feriado.", "error");
+      notify(errorMessage(e, "Não foi possível alterar o feriado."), "error");
     }
   }
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ApiError, ClientReportListItem, formatApiDetail, listClientReports } from "../api/client";
+import { ClientReportListItem, errorMessage, listClientReports } from "../api/client";
 import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, PageHeader } from "../components/ui";
 import "./ClientReports.css";
 
@@ -71,7 +71,7 @@ export default function ClientReports() {
     try {
       setItems(await listClientReports());
     } catch (loadError) {
-      setError(loadError instanceof ApiError ? formatApiDetail(loadError.detail) ?? "Não foi possível carregar os relatórios." : "Não foi possível carregar os relatórios.");
+      setError(errorMessage(loadError, "Não foi possível carregar os relatórios."));
     } finally {
       setLoading(false);
     }

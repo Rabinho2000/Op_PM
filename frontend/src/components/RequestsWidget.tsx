@@ -7,7 +7,7 @@ import {
   postRequestMessage,
 } from "../api/requests";
 import type { RequestListPage, RequestMessage, RequestThread } from "../api/requests";
-import { ApiError } from "../api/client";
+import { errorMessage } from "../api/client";
 import Icon from "./Icon";
 import { Alert, Badge, EmptyState, ErrorState, LoadingState, Modal } from "./ui";
 import { useSession } from "../session/SessionContext";
@@ -16,10 +16,6 @@ import "./RequestsWidget.css";
 
 const REQUEST_PAGE_SIZE = 50;
 type WidgetTab = "new" | "mine";
-
-function apiErrorMessage(error: unknown): string {
-  return error instanceof ApiError ? error.detail : "Não foi possível contactar o servidor.";
-}
 
 function statusLabel(status: RequestThread["status"]): string {
   return status === "open" ? "Aberto" : "Resolvido";
@@ -73,7 +69,7 @@ export default function RequestsWidget() {
     try {
       setMine(await listRequests({ scope: "mine", status: "all", limit: REQUEST_PAGE_SIZE, offset: 0 }));
     } catch (error) {
-      setMineError(apiErrorMessage(error));
+      setMineError(errorMessage(error));
     } finally {
       setMineLoading(false);
     }
@@ -127,7 +123,7 @@ export default function RequestsWidget() {
       setBody("");
       setNotice("Pedido enviado.");
     } catch (error) {
-      setFormError(apiErrorMessage(error));
+      setFormError(errorMessage(error));
     } finally {
       setSaving(false);
     }
@@ -143,7 +139,7 @@ export default function RequestsWidget() {
     try {
       setThread(await getRequest(id));
     } catch (error) {
-      setThreadError(apiErrorMessage(error));
+      setThreadError(errorMessage(error));
     } finally {
       setThreadLoading(false);
     }
@@ -160,7 +156,7 @@ export default function RequestsWidget() {
       await openThread(selectedId);
       void loadMine();
     } catch (error) {
-      setReplyError(apiErrorMessage(error));
+      setReplyError(errorMessage(error));
     } finally {
       setReplying(false);
     }

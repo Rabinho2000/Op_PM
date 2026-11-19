@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import {
-  ApiError,
   getProjectProcess,
   ProcessRead,
   ProcessResponsible,
@@ -9,6 +8,7 @@ import {
   setProcessContactDone,
   setProcessStageSubtasksDone,
   setProcessSubtaskDone,
+  errorMessage,
 } from "../api/client";
 import { formatDatePt } from "../utils/dates";
 import Icon from "./Icon";
@@ -73,7 +73,7 @@ export default function ProjectProcess({ projectId }: { projectId: string }) {
           return initial;
         });
       })
-      .catch((e) => !cancelled && setError(e instanceof ApiError ? e.detail : "Não foi possível carregar o processo."));
+      .catch((e) => !cancelled && setError(errorMessage(e, "Não foi possível carregar o processo.")));
     return () => {
       cancelled = true;
     };
@@ -85,7 +85,7 @@ export default function ProjectProcess({ projectId }: { projectId: string }) {
     try {
       setProcess(await action());
     } catch (e) {
-      setActionError(e instanceof ApiError ? e.detail : "Não foi possível guardar.");
+      setActionError(errorMessage(e, "Não foi possível guardar."));
     } finally {
       setPending(null);
     }

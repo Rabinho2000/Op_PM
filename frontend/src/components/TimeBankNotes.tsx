@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { ApiError } from "../api/client";
+import { errorMessage } from "../api/client";
 import { createTimeBankNote, listTimeBankNotes, TimeBankNoteRead } from "../api/timeBank";
 import { Alert, Card } from "./ui";
 import "./TimeBankNotes.css";
@@ -49,7 +49,7 @@ export default function TimeBankNotes({ personId, accountId, canManage }: { pers
     setReadError(null);
     listTimeBankNotes(personId, PAGE_SIZE, page * PAGE_SIZE)
       .then((result) => { if (active) { setItems(result.items); setTotal(result.total); } })
-      .catch((reason) => { if (active) setReadError(reason instanceof ApiError ? reason.detail : "Não foi possível carregar as notas."); })
+      .catch((reason) => { if (active) setReadError(errorMessage(reason, "Não foi possível carregar as notas.")); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [personId, accountId, page, reload]);
@@ -69,7 +69,7 @@ export default function TimeBankNotes({ personId, accountId, canManage }: { pers
         setReload((value) => value + 1);
       }
     } catch (reason) {
-      if (scope === requestScope.current) setError(reason instanceof ApiError ? reason.detail : "Não foi possível guardar a nota.");
+      if (scope === requestScope.current) setError(errorMessage(reason, "Não foi possível guardar a nota."));
     } finally { if (scope === requestScope.current) setSaving(false); }
   }
 

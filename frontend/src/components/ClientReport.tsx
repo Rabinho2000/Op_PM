@@ -1,17 +1,16 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ApiError,
   approveClientReportSend,
   ClientReportConfig,
   ClientReportPreview,
   ClientReportResponse,
   ClientReportSend,
   discardClientReportSend,
-  formatApiDetail,
   getClientReport,
   previewClientReport,
   sendClientReportNow,
   updateClientReport,
+  errorMessage,
 } from "../api/client";
 import { useToast } from "./Toast";
 import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, type Tone } from "./ui";
@@ -102,11 +101,6 @@ function sendDate(send: ClientReportSend): string {
   return formatLisbonDate(send.sent_at ?? send.created_at);
 }
 
-function apiErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof ApiError) return formatApiDetail(error.detail) ?? fallback;
-  return fallback;
-}
-
 function clientReportPreviewDocument(bodyHtml: string): string {
   const previewDocument = new DOMParser().parseFromString(bodyHtml, "text/html");
   previewDocument.documentElement.dataset.theme = "light";
@@ -173,7 +167,7 @@ export default function ClientReport({ projectId }: ClientReportProps) {
       setReport(data);
       setForm(formFromReport(data));
     } catch (loadError) {
-      setError(apiErrorMessage(loadError, "Não foi possível carregar o relatório semanal."));
+      setError(errorMessage(loadError, "Não foi possível carregar o relatório semanal."));
     } finally {
       setLoading(false);
     }
@@ -244,7 +238,7 @@ export default function ClientReport({ projectId }: ClientReportProps) {
       setPreview(null);
       notify("Configuração do relatório guardada.", "success");
     } catch (saveError) {
-      setFormError(apiErrorMessage(saveError, "Não foi possível guardar a configuração."));
+      setFormError(errorMessage(saveError, "Não foi possível guardar a configuração."));
     } finally {
       setBusy(null);
     }
@@ -256,7 +250,7 @@ export default function ClientReport({ projectId }: ClientReportProps) {
     try {
       setPreview(await previewClientReport(projectId));
     } catch (previewError) {
-      setFormError(apiErrorMessage(previewError, "Não foi possível gerar a pré-visualização."));
+      setFormError(errorMessage(previewError, "Não foi possível gerar a pré-visualização."));
     } finally {
       setBusy(null);
     }
@@ -271,7 +265,7 @@ export default function ClientReport({ projectId }: ClientReportProps) {
       notify("Pedido de envio criado.", "success");
       await load();
     } catch (sendError) {
-      setFormError(apiErrorMessage(sendError, "Não foi possível enviar o relatório agora."));
+      setFormError(errorMessage(sendError, "Não foi possível enviar o relatório agora."));
     } finally {
       setBusy(null);
     }
@@ -286,7 +280,7 @@ export default function ClientReport({ projectId }: ClientReportProps) {
       notify(action === "approve" ? "Rascunho aprovado." : "Rascunho descartado.", "success");
       await load();
     } catch (reviewError) {
-      setFormError(apiErrorMessage(reviewError, "Não foi possível atualizar o rascunho."));
+      setFormError(errorMessage(reviewError, "Não foi possível atualizar o rascunho."));
     } finally {
       setBusy(null);
     }

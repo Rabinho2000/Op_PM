@@ -2,7 +2,6 @@
 import { FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
-  ApiError,
   createCentralMovement,
   createInventoryItem,
   createInventoryLocation,
@@ -23,6 +22,7 @@ import {
   reactivateInventoryItem,
   updateInventoryItem,
   updateInventoryLocation,
+  errorMessage,
 } from "../api/client";
 import Icon from "../components/Icon";
 import InventoryItemDocuments from "../components/InventoryItemDocuments";
@@ -55,10 +55,6 @@ const LOCATION_TYPE_LABELS: Record<string, string> = {
 };
 
 type LocationType = "central" | "project" | "vehicle" | "supplier" | "office";
-
-function apiErrorMessage(error: unknown, fallback: string): string {
-  return error instanceof ApiError ? error.detail : fallback;
-}
 
 function newIdempotencyKey(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -110,7 +106,7 @@ function RegisterMovementModal({
       });
       onDone();
     } catch (err) {
-      setError(apiErrorMessage(err, "Não foi possível registar o movimento."));
+      setError(errorMessage(err, "Não foi possível registar o movimento."));
     } finally {
       setSaving(false);
     }
@@ -455,7 +451,7 @@ function ItemFormModal({
       const saved = item ? await updateInventoryItem(item.id, payload) : await createInventoryItem(payload);
       onSaved(saved, item === null);
     } catch (err) {
-      setError(apiErrorMessage(err, "Não foi possível guardar o artigo."));
+      setError(errorMessage(err, "Não foi possível guardar o artigo."));
     } finally {
       setSaving(false);
     }
@@ -581,7 +577,7 @@ function OpeningStockModal({ item, owner, locations, onClose, onDone }: {
       }, owner);
       onDone();
     } catch (err) {
-      setError(apiErrorMessage(err, "Não foi possível registar o stock inicial."));
+      setError(errorMessage(err, "Não foi possível registar o stock inicial."));
     } finally {
       setSaving(false);
     }
@@ -682,7 +678,7 @@ function LocationFormModal({
       const saved = location ? await updateInventoryLocation(location.id, payload) : await createInventoryLocation(payload);
       onSaved(saved, !editing);
     } catch (err) {
-      setError(apiErrorMessage(err, "Não foi possível guardar a localização."));
+      setError(errorMessage(err, "Não foi possível guardar a localização."));
     } finally {
       setSaving(false);
     }
@@ -781,7 +777,7 @@ function ConfirmDeactivateModal({
     try {
       await onConfirm();
     } catch (err) {
-      setError(apiErrorMessage(err, "Não foi possível desativar o registo."));
+      setError(errorMessage(err, "Não foi possível desativar o registo."));
     } finally {
       setSaving(false);
     }
@@ -923,7 +919,7 @@ export default function Inventory() {
         setCategoryImages(loadedCategoryDetails);
         setCategories(loadedCategoryDetails.map((detail) => detail.name));
       })
-      .catch((err) => setError(apiErrorMessage(err, "Não foi possível contactar o servidor.")));
+      .catch((err) => setError(errorMessage(err, "Não foi possível contactar o servidor.")));
   }, [owner]);
 
   useEffect(load, [load]);
@@ -975,7 +971,7 @@ export default function Inventory() {
       notify(`Artigo «${saved.name}» reativado.`, "success");
       load();
     } catch (err) {
-      notify(apiErrorMessage(err, "Não foi possível reativar o artigo."), "error");
+      notify(errorMessage(err, "Não foi possível reativar o artigo."), "error");
     }
   }
 

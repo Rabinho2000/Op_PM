@@ -8,7 +8,6 @@ import LifecycleMultiSelect from "../components/LifecycleMultiSelect";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  ApiError,
   createPickupPoint,
   createCalendarEvent,
   createSupplier,
@@ -30,6 +29,7 @@ import {
   TaskCategory,
   TaskPriority,
   updateProject,
+  errorMessage,
 } from "../api/client";
 import Icon, { IconName } from "../components/Icon";
 import {
@@ -115,7 +115,7 @@ function EditCoordinatesModal({
       await updateProject(project.id, { lat: Number(lat), lon: Number(lon) });
       onSaved();
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível guardar as coordenadas.");
+      setError(errorMessage(err, "Não foi possível guardar as coordenadas."));
     } finally {
       setSaving(false);
     }
@@ -189,7 +189,7 @@ function CreateTaskModal({
       });
       onDone();
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível criar a tarefa.");
+      setError(errorMessage(err, "Não foi possível criar a tarefa."));
     } finally {
       setSaving(false);
     }
@@ -291,7 +291,7 @@ function ScheduleVisitModal({
       });
       onDone();
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível agendar a visita.");
+      setError(errorMessage(err, "Não foi possível agendar a visita."));
     } finally {
       setSaving(false);
     }
@@ -357,7 +357,7 @@ function CreateSupplierModal({ onClose, onDone }: { onClose: () => void; onDone:
       });
       onDone();
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível criar o fornecedor.");
+      setError(errorMessage(err, "Não foi possível criar o fornecedor."));
     } finally {
       setSaving(false);
     }
@@ -445,7 +445,7 @@ function CreatePickupPointModal({
       });
       onDone();
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível criar o ponto de recolha.");
+      setError(errorMessage(err, "Não foi possível criar o ponto de recolha."));
     } finally {
       setSaving(false);
     }
@@ -598,7 +598,7 @@ export default function MapPage() {
     setError(null);
     getMapData()
       .then(setData)
-      .catch((e) => setError(e instanceof ApiError ? e.detail : "Não foi possível contactar o servidor."));
+      .catch((e) => setError(errorMessage(e, "Não foi possível contactar o servidor.")));
   }
 
   useEffect(load, []);
@@ -686,7 +686,7 @@ export default function MapPage() {
       });
       setOptimizedRoute(await optimizeRoute(stops, routeRoundTrip));
     } catch (err) {
-      setRouteError(err instanceof ApiError ? err.detail : "Não foi possível otimizar a rota.");
+      setRouteError(errorMessage(err, "Não foi possível otimizar a rota."));
     } finally {
       setOptimizingRoute(false);
     }
@@ -711,7 +711,7 @@ export default function MapPage() {
       });
       setTripPlan(await planTrip(stops, routeRoundTrip));
     } catch (err) {
-      setRouteError(err instanceof ApiError ? err.detail : "Não foi possível planear a deslocação.");
+      setRouteError(errorMessage(err, "Não foi possível planear a deslocação."));
     } finally {
       setPlanningTrip(false);
     }

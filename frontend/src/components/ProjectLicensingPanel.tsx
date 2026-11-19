@@ -34,6 +34,7 @@ import {
   updateProjectLicensingData,
   updateProjectSimCard,
   updateSurplusContract,
+  errorMessage,
 } from "../api/client";
 import { formatDatePt } from "../utils/dates";
 import Icon from "./Icon";
@@ -102,10 +103,10 @@ function nullable(value: string): string | null {
   return value === "" ? null : value;
 }
 
-function errorMessage(err: unknown, fallback: string): string {
+// 503 = cifra de segredos indisponível no servidor; o resto é a mensagem geral.
+function licensingErrorMessage(err: unknown, fallback: string): string {
   if (err instanceof ApiError && err.status === 503) return CIPHER_UNAVAILABLE_MESSAGE;
-  if (err instanceof ApiError) return err.detail;
-  return fallback;
+  return errorMessage(err, fallback);
 }
 
 function KvRow({ label, children }: { label: string; children: ReactNode }) {
@@ -283,7 +284,7 @@ function LicensingCard({
       setEditing(false);
       notify("Dados de licenciamento atualizados.", "success");
     } catch (err) {
-      setError(errorMessage(err, "Não foi possível guardar as alterações."));
+      setError(licensingErrorMessage(err, "Não foi possível guardar as alterações."));
     } finally {
       setSaving(false);
     }
@@ -536,7 +537,7 @@ function CommunicationCard({
       setEditing(false);
       notify("Dados de comunicação atualizados.", "success");
     } catch (err) {
-      setError(errorMessage(err, "Não foi possível guardar as alterações."));
+      setError(licensingErrorMessage(err, "Não foi possível guardar as alterações."));
     } finally {
       setSaving(false);
     }
@@ -652,7 +653,7 @@ function SimCardsCard({
       setSims(await listProjectSimCards(projectId));
       setLoadError(null);
     } catch (err) {
-      setLoadError(errorMessage(err, "Não foi possível carregar os cartões SIM."));
+      setLoadError(licensingErrorMessage(err, "Não foi possível carregar os cartões SIM."));
     }
   }, [projectId]);
 
@@ -686,7 +687,7 @@ function SimCardsCard({
       setShowRevealed(false);
       setCopied(null);
     } catch (err) {
-      setActionError(errorMessage(err, "Não foi possível revelar o PIN/PUK."));
+      setActionError(licensingErrorMessage(err, "Não foi possível revelar o PIN/PUK."));
     } finally {
       setRevealing(null);
     }
@@ -712,7 +713,7 @@ function SimCardsCard({
       notify("Cartão SIM removido.", "success");
       await load();
     } catch (err) {
-      setActionError(errorMessage(err, "Não foi possível remover o cartão SIM."));
+      setActionError(licensingErrorMessage(err, "Não foi possível remover o cartão SIM."));
     }
   }
 
@@ -1003,7 +1004,7 @@ function SimFormModal({
       setDraft((d) => ({ ...d, pin: "", puk: "" }));
       await onSaved();
     } catch (err) {
-      setError(errorMessage(err, "Não foi possível guardar o cartão SIM."));
+      setError(licensingErrorMessage(err, "Não foi possível guardar o cartão SIM."));
     } finally {
       setSaving(false);
     }
@@ -1145,7 +1146,7 @@ function CredentialsCard({
       setCredentials(await listProjectCredentials(projectId));
       setLoadError(null);
     } catch (err) {
-      setLoadError(errorMessage(err, "Não foi possível carregar as credenciais."));
+      setLoadError(licensingErrorMessage(err, "Não foi possível carregar as credenciais."));
     }
   }, [projectId]);
 
@@ -1179,7 +1180,7 @@ function CredentialsCard({
       setShowRevealed(false);
       setCopied(false);
     } catch (err) {
-      setActionError(errorMessage(err, "Não foi possível revelar a palavra-passe."));
+      setActionError(licensingErrorMessage(err, "Não foi possível revelar a palavra-passe."));
     } finally {
       setRevealing(null);
     }
@@ -1204,7 +1205,7 @@ function CredentialsCard({
       notify("Credencial removida.", "success");
       await load();
     } catch (err) {
-      setActionError(errorMessage(err, "Não foi possível remover a credencial."));
+      setActionError(licensingErrorMessage(err, "Não foi possível remover a credencial."));
     }
   }
 
@@ -1390,7 +1391,7 @@ function CredentialFormModal({
       setPassword("");
       await onSaved();
     } catch (err) {
-      setError(errorMessage(err, "Não foi possível guardar a credencial."));
+      setError(licensingErrorMessage(err, "Não foi possível guardar a credencial."));
     } finally {
       setSaving(false);
     }
@@ -1535,7 +1536,7 @@ function SurplusCard({
       setContracts(await listSurplusContracts(projectId));
       setLoadError(null);
     } catch (err) {
-      setLoadError(errorMessage(err, "Não foi possível carregar os contratos de excedente."));
+      setLoadError(licensingErrorMessage(err, "Não foi possível carregar os contratos de excedente."));
     }
   }, [projectId]);
 
@@ -1559,7 +1560,7 @@ function SurplusCard({
       notify("Contrato removido.", "success");
       await load();
     } catch (err) {
-      setActionError(errorMessage(err, "Não foi possível remover o contrato."));
+      setActionError(licensingErrorMessage(err, "Não foi possível remover o contrato."));
     }
   }
 
@@ -1706,7 +1707,7 @@ function SurplusFormModal({
       else await updateSurplusContract(projectId, target.id, payload);
       await onSaved();
     } catch (err) {
-      setError(errorMessage(err, "Não foi possível guardar o contrato."));
+      setError(licensingErrorMessage(err, "Não foi possível guardar o contrato."));
     } finally {
       setSaving(false);
     }

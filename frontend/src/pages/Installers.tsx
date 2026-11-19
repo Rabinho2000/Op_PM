@@ -1,6 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
 import {
-  ApiError,
   createInstaller,
   createInstallerTeam,
   Installer,
@@ -8,6 +7,7 @@ import {
   listInstallers,
   updateInstaller,
   updateInstallerTeam,
+  errorMessage,
 } from "../api/client";
 import Icon from "../components/Icon";
 import { useToast } from "../components/Toast";
@@ -38,7 +38,7 @@ export default function Installers() {
     setError(null);
     listInstallers()
       .then((r) => !cancelled && setInstallers(r))
-      .catch((e) => !cancelled && setError(e instanceof ApiError ? e.detail : "Não foi possível contactar o servidor."));
+      .catch((e) => !cancelled && setError(errorMessage(e, "Não foi possível contactar o servidor.")));
     return () => {
       cancelled = true;
     };
@@ -52,7 +52,7 @@ export default function Installers() {
       notify(i.is_active ? `«${i.name}» desativado.` : `«${i.name}» reativado.`);
       reload();
     } catch (e) {
-      notify(e instanceof ApiError ? e.detail : "Não foi possível alterar o instalador.", "error");
+      notify(errorMessage(e, "Não foi possível alterar o instalador."), "error");
     }
   }
 
@@ -195,7 +195,7 @@ function InstallerModal({ onClose, onSaved }: { onClose: () => void; onSaved: (n
       const created = await createInstaller(name.trim());
       onSaved(created.name);
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível criar o instalador.");
+      setError(errorMessage(err, "Não foi possível criar o instalador."));
     } finally {
       setSaving(false);
     }
@@ -270,7 +270,7 @@ function TeamModal({
       else await createInstallerTeam(installer.id, payload);
       onSaved(payload.name, team === null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível guardar a equipa.");
+      setError(errorMessage(err, "Não foi possível guardar a equipa."));
     } finally {
       setSaving(false);
     }

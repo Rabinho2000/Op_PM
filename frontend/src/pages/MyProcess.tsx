@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, getMyProcessStages, MyProcessStage } from "../api/client";
+import { getMyProcessStages, MyProcessStage, errorMessage } from "../api/client";
 import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, PageHeader } from "../components/ui";
 import { formatDatePt } from "../utils/dates";
 
@@ -24,7 +24,7 @@ export default function MyProcess() {
     setStages(null);
     getMyProcessStages()
       .then((value) => !cancelled && setStages(value))
-      .catch((e) => !cancelled && setError(e instanceof ApiError ? e.detail : "Não foi possível carregar as suas etapas."));
+      .catch((e) => !cancelled && setError(errorMessage(e, "Não foi possível carregar as suas etapas.")));
     return () => { cancelled = true; };
   }, [reload]);
 

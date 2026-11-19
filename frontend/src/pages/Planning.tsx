@@ -23,6 +23,7 @@ import {
   Task,
   updateCalendarEvent,
   updatePlanningPreferences,
+  errorMessage,
 } from "../api/client";
 import Icon from "../components/Icon";
 import { useToast } from "../components/Toast";
@@ -623,7 +624,7 @@ function EventModal({
       else await createCalendarEvent(common);
       onSaved();
     } catch (saveError) {
-      setError(saveError instanceof ApiError ? saveError.detail : "Não foi possível guardar o evento.");
+      setError(errorMessage(saveError, "Não foi possível guardar o evento."));
     } finally {
       setSaving(false);
     }
@@ -930,13 +931,13 @@ export default function Planning() {
   useEffect(() => {
     let cancelled = false;
     listProjects({ is_active: true }).then((result) => !cancelled && setProjects(result)).catch((loadError) => {
-      if (!cancelled) setProjectError(loadError instanceof ApiError ? loadError.detail : "Não foi possível carregar os projetos.");
+      if (!cancelled) setProjectError(errorMessage(loadError, "Não foi possível carregar os projetos."));
     });
     listPeople().then((result) => !cancelled && setPeople(result)).catch((loadError) => {
-      if (!cancelled) setPeopleError(loadError instanceof ApiError ? loadError.detail : "Não foi possível carregar as pessoas.");
+      if (!cancelled) setPeopleError(errorMessage(loadError, "Não foi possível carregar as pessoas."));
     });
     listPlanningEventCategories().then((result) => !cancelled && setCategories(result)).catch((loadError) => {
-      if (!cancelled) setCategoryError(loadError instanceof ApiError ? loadError.detail : "Não foi possível carregar as categorias de eventos.");
+      if (!cancelled) setCategoryError(errorMessage(loadError, "Não foi possível carregar as categorias de eventos."));
     });
     getPlanningPreferences().then((preference) => {
       if (cancelled) return;
@@ -970,7 +971,7 @@ export default function Planning() {
       setEvents(manualEvents);
     }).catch((loadError) => {
       if (sequence !== loadSequence.current) return;
-      setError(loadError instanceof ApiError ? loadError.detail : "Não foi possível carregar os eventos do planeamento.");
+      setError(errorMessage(loadError, "Não foi possível carregar os eventos do planeamento."));
     });
   }, [categoryFilter, range.endIso, range.startIso, scope, scopeProjectId, scopeResponsibleId]);
 
@@ -1014,7 +1015,7 @@ export default function Planning() {
       setHideWeekends(saved.hide_weekends);
       notify("Vista de planeamento fixada.", "success");
     } catch (saveError) {
-      setPreferenceSaveError(saveError instanceof ApiError ? saveError.detail : "Não foi possível guardar a vista. Tente novamente.");
+      setPreferenceSaveError(errorMessage(saveError, "Não foi possível guardar a vista. Tente novamente."));
     } finally {
       setSavingPreference(false);
     }
@@ -1039,7 +1040,7 @@ export default function Planning() {
       setDetailEvent(null);
       loadEvents();
     } catch (cancelError) {
-      notify(cancelError instanceof ApiError ? cancelError.detail : "Não foi possível cancelar o evento.", "error");
+      notify(errorMessage(cancelError, "Não foi possível cancelar o evento."), "error");
     }
   }
 

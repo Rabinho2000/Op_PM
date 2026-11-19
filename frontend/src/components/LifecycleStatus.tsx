@@ -1,10 +1,10 @@
 import { FormEvent, useEffect, useState } from "react";
 import {
-  ApiError,
   changeProjectStatus,
   getLifecycleStatuses,
   LifecycleStatus,
   Project,
+  errorMessage,
 } from "../api/client";
 import { LIFECYCLE_STATUS_TONES } from "../utils/labels";
 import { useToast } from "./Toast";
@@ -84,7 +84,7 @@ export function LifecycleStatusControl({
         notify(result.warning ?? "Estado do projeto atualizado.", result.warning ? "info" : "success");
         setOpen(false);
       })
-      .catch((err) => setError(err instanceof ApiError ? err.detail : "Não foi possível alterar o estado."))
+      .catch((err) => setError(errorMessage(err, "Não foi possível alterar o estado.")))
       .finally(() => setSaving(false));
   }
 

@@ -1,16 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
-import { ApiError, listDeletedProjects, Project, restoreProject } from "../api/client";
+import { listDeletedProjects, Project, restoreProject } from "../api/client";
 import { useToast } from "../components/Toast";
 import { EmptyState, ErrorState, LoadingState, PageHeader } from "../components/ui";
 import { useSession } from "../session/SessionContext";
 import { formatDateTimePt } from "../utils/dates";
-
-function errorDetail(error: unknown, fallback: string): string {
-  if (error instanceof ApiError) return error.detail;
-  if (error instanceof Error && error.message) return error.message;
-  return fallback;
-}
+import { errorDetail } from "../utils/errors";
 
 export default function DeletedProjects() {
   const { can } = useSession();

@@ -1,6 +1,5 @@
 import { ChangeEvent, useEffect, useRef, useState } from "react";
 import {
-  ApiError,
   deleteInventoryCategoryImage,
   deleteInventoryItemPhoto,
   getInventoryCategoryImageBlob,
@@ -8,6 +7,7 @@ import {
   InventoryCategoryImageInfo,
   uploadInventoryCategoryImage,
   uploadInventoryItemPhoto,
+  errorMessage,
 } from "../api/client";
 import { Alert } from "./ui";
 import CategoryIllustration from "../pages/CategoryIllustration";
@@ -16,10 +16,6 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 type CategoryUploadResult = InventoryCategoryImageInfo & { content_type: string };
-
-function friendlyError(error: unknown, fallback: string): string {
-  return error instanceof ApiError ? error.detail : fallback;
-}
 
 export function InventoryCategoryImage({
   category,
@@ -64,7 +60,7 @@ export function InventoryCategoryImage({
         setImageUrl(createdUrl);
       })
       .catch((cause: unknown) => {
-        if (active) setError(friendlyError(cause, "Não foi possível carregar a imagem da categoria."));
+        if (active) setError(errorMessage(cause, "Não foi possível carregar a imagem da categoria."));
       });
     return () => {
       active = false;
@@ -110,7 +106,7 @@ export function InventoryCategoryImage({
       setImageVersionLocal(result.image_version);
       onImageChanged?.(result);
     } catch (cause) {
-      setError(friendlyError(cause, "Não foi possível guardar a imagem da categoria."));
+      setError(errorMessage(cause, "Não foi possível guardar a imagem da categoria."));
     } finally {
       setBusy(false);
     }
@@ -126,7 +122,7 @@ export function InventoryCategoryImage({
       setImageVersionLocal(null);
       onImageChanged?.({ name: category, has_custom_image: false, image_version: null });
     } catch (cause) {
-      setError(friendlyError(cause, "Não foi possível remover a imagem da categoria."));
+      setError(errorMessage(cause, "Não foi possível remover a imagem da categoria."));
     } finally {
       setBusy(false);
     }
@@ -202,7 +198,7 @@ export function InventoryItemPhoto({
         setPhotoUrl(createdUrl);
       })
       .catch((cause: unknown) => {
-        if (active) setError(friendlyError(cause, "Não foi possível carregar a fotografia do artigo."));
+        if (active) setError(errorMessage(cause, "Não foi possível carregar a fotografia do artigo."));
       });
     return () => {
       active = false;
@@ -248,7 +244,7 @@ export function InventoryItemPhoto({
       setRefreshToken((value) => value + 1);
       onPhotoChanged?.(true);
     } catch (cause) {
-      setError(friendlyError(cause, "Não foi possível guardar a fotografia do artigo."));
+      setError(errorMessage(cause, "Não foi possível guardar a fotografia do artigo."));
     } finally {
       setBusy(false);
     }
@@ -263,7 +259,7 @@ export function InventoryItemPhoto({
       setHasPhotoLocal(false);
       onPhotoChanged?.(false);
     } catch (cause) {
-      setError(friendlyError(cause, "Não foi possível remover a fotografia do artigo."));
+      setError(errorMessage(cause, "Não foi possível remover a fotografia do artigo."));
     } finally {
       setBusy(false);
     }

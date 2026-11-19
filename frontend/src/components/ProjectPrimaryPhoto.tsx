@@ -1,5 +1,5 @@
 import { ChangeEvent, ReactNode, useEffect, useRef, useState } from "react";
-import { ApiError, deleteProjectPhoto, getProjectPhotoBlob, uploadProjectPhoto } from "../api/client";
+import { deleteProjectPhoto, getProjectPhotoBlob, uploadProjectPhoto, errorMessage } from "../api/client";
 import { Alert, EmptyState } from "./ui";
 
 const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
@@ -66,7 +66,7 @@ export default function ProjectPrimaryPhoto({
       })
       .catch((err: unknown) => {
         if (active && mountedRef.current && generation === requestGeneration.current) {
-          setError(err instanceof ApiError ? err.detail : "Não foi possível carregar a fotografia.");
+          setError(errorMessage(err, "Não foi possível carregar a fotografia."));
         }
       });
     return () => {
@@ -116,7 +116,7 @@ export default function ProjectPrimaryPhoto({
       onPhotoChanged?.(true);
     } catch (err) {
       if (mountedRef.current && generation === requestGeneration.current) {
-        setError(err instanceof ApiError ? err.detail : "Não foi possível guardar a fotografia.");
+        setError(errorMessage(err, "Não foi possível guardar a fotografia."));
       }
     } finally {
       if (mountedRef.current && generation === requestGeneration.current) setBusy(false);
@@ -135,7 +135,7 @@ export default function ProjectPrimaryPhoto({
       onPhotoChanged?.(false);
     } catch (err) {
       if (mountedRef.current && generation === requestGeneration.current) {
-        setError(err instanceof ApiError ? err.detail : "Não foi possível remover a fotografia.");
+        setError(errorMessage(err, "Não foi possível remover a fotografia."));
       }
     } finally {
       if (mountedRef.current && generation === requestGeneration.current) setBusy(false);

@@ -11,17 +11,13 @@ import type {
   RequestMessage,
   RequestThread,
 } from "../api/requests";
-import { ApiError } from "../api/client";
+import { errorMessage } from "../api/client";
 import { Badge, Card, EmptyState, ErrorState, LoadingState, PageHeader } from "../components/ui";
 import { formatDateTimePt } from "../utils/dates";
 import { useSession } from "../session/SessionContext";
 import "./Requests.css";
 
 const REQUEST_PAGE_SIZE = 50;
-
-function apiErrorMessage(error: unknown): string {
-  return error instanceof ApiError ? error.detail : "Não foi possível contactar o servidor.";
-}
 
 function statusLabel(status: "open" | "resolved"): string {
   return status === "open" ? "Aberto" : "Resolvido";
@@ -66,7 +62,7 @@ export default function Requests() {
     try {
       setList(await listRequests({ scope: "all", status, limit: REQUEST_PAGE_SIZE, offset: 0 }));
     } catch (error) {
-      setListError(apiErrorMessage(error));
+      setListError(errorMessage(error));
     } finally {
       setListLoading(false);
     }
@@ -91,7 +87,7 @@ export default function Requests() {
     try {
       setThread(await getRequest(id));
     } catch (error) {
-      setThreadError(apiErrorMessage(error));
+      setThreadError(errorMessage(error));
     } finally {
       setThreadLoading(false);
     }
@@ -101,7 +97,7 @@ export default function Requests() {
     try {
       setThread(await getRequest(id));
     } catch (error) {
-      setThreadError(apiErrorMessage(error));
+      setThreadError(errorMessage(error));
     }
   }
 
@@ -116,7 +112,7 @@ export default function Requests() {
       await refreshThread(selectedId);
       await loadList();
     } catch (error) {
-      setReplyError(apiErrorMessage(error));
+      setReplyError(errorMessage(error));
     } finally {
       setReplying(false);
     }
@@ -132,7 +128,7 @@ export default function Requests() {
       else await refreshThread(selectedId);
       await loadList();
     } catch (error) {
-      setReplyError(apiErrorMessage(error));
+      setReplyError(errorMessage(error));
     } finally {
       setStatusSaving(false);
     }
