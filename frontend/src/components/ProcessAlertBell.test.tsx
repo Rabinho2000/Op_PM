@@ -5,6 +5,7 @@ import type { ProcessNotification, ProcessNotificationPage } from "../api/proces
 import { makeMe } from "../test/fixtures";
 import { renderWithProviders } from "../test/render";
 import ProcessAlertBell from "./ProcessAlertBell";
+import type { Perm } from "../generated/permissions";
 
 const api = vi.hoisted(() => ({
   getUnreadProcessNotificationCount: vi.fn(),
@@ -18,7 +19,7 @@ vi.mock("../api/processAlerts", async () => {
   return { ...actual, ...api };
 });
 
-const ALERT_PERMISSION = { permissions: ["process_alert.use"] };
+const ALERT_PERMISSION: { permissions: Perm[] } = { permissions: ["process_alert.use"] };
 
 function notification(overrides: Partial<ProcessNotification> = {}): ProcessNotification {
   return {

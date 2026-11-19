@@ -11,6 +11,7 @@ import { makeMe, makeProject } from "../test/fixtures";
 import { renderWithProviders } from "../test/render";
 import { lisbonWallClockToIso, todayIsoLisbon } from "../utils/dates";
 import Planning from "./Planning";
+import type { Perm } from "../generated/permissions";
 
 const api = vi.hoisted(() => ({
   listCalendarEvents: vi.fn(),
@@ -123,7 +124,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const permissions = ["calendar.view", "calendar.manage", "project.view_all", "task.view_all"];
+const permissions: Perm[] = ["calendar.view", "calendar.manage", "project.view_all", "task.view_all"];
 
 function renderPlanning() {
   return renderWithProviders(<Planning />, { me: makeMe({ permissions }) });

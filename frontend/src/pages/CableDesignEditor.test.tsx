@@ -6,6 +6,7 @@ import type { CabosEngine, Result, State } from "../features/cables/engine";
 import CableDesignEditor from "./CableDesignEditor";
 import { makeMe, makeProject } from "../test/fixtures";
 import { renderWithProviders } from "../test/render";
+import type { Perm } from "../generated/permissions";
 
 const api = vi.hoisted(() => ({
   getCableDesign: vi.fn(),
@@ -171,7 +172,7 @@ beforeEach(() => {
 });
 
 async function renderEditor(
-  permissions = ["cable_design.view", "cable_design.edit", "cable_design.view_costs"],
+  permissions: Perm[] = ["cable_design.view", "cable_design.edit", "cable_design.view_costs"],
   waitForNative = true,
 ) {
   renderWithProviders(<CableDesignEditor />, {
@@ -225,7 +226,7 @@ describe("CableDesignEditor nativo", () => {
     const solve = vi.spyOn(fakeEngine, "solve");
     solve.mockClear();
     const before = JSON.stringify(historicalDesign);
-    await renderEditor(["cable_design.view", "cable_design.edit", ...(viewCosts ? ["cable_design.view_costs"] : [])], false);
+    await renderEditor(["cable_design.view", "cable_design.edit", ...(viewCosts ? (["cable_design.view_costs"] as const) : [])], false);
 
     expect(await screen.findByText("Resultado histórico aprovado · Rev. B")).toBeInTheDocument();
     expect(screen.getByText("cabos-historico@12")).toBeInTheDocument();

@@ -10,6 +10,7 @@ import { StaticSessionProvider } from "../session/SessionContext";
 import { ToastProvider } from "../components/Toast";
 import { renderWithProviders } from "../test/render";
 import Inventory, { LEGACY_INVENTORY_CATEGORY_ALIASES } from "./Inventory";
+import type { Perm } from "../generated/permissions";
 
 const api = vi.hoisted(() => ({
   listInventoryItems: vi.fn(),
@@ -89,7 +90,7 @@ function RouterControls() {
   return <><output data-testid="router-search">{location.search}</output><output data-testid="router-hash">{location.hash}</output><button type="button" onClick={() => navigate(-1)}>Voltar no histórico</button><button type="button" onClick={() => navigate(1)}>Avançar no histórico</button></>;
 }
 
-function renderWithHistory(initialEntry = "/inventory", permissions: string[] = ["inventory.view"]) {
+function renderWithHistory(initialEntry = "/inventory", permissions: Perm[] = ["inventory.view"]) {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <StaticSessionProvider me={makeMe({ permissions })} health={null}>

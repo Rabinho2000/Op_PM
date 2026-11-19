@@ -38,7 +38,7 @@ function expectedNavPaths(me: MeResponse): string[] {
   const canShow = (item: (typeof NAV_ITEMS)[number] | (typeof ADMIN_NAV_ITEMS)[number]) => {
     if (isInstallerCollaborator(me) && !INSTALLER_NAV_PATHS.has(item.to)) return false;
     if (item.roles?.some((role) => me.roles.includes(role))) return true;
-    if (!item.permission) return true;
+    if (!item.permission) return !item.roles;
     const codes = Array.isArray(item.permission) ? item.permission : [item.permission];
     return codes.some((permission) => me.permissions.includes(permission));
   };

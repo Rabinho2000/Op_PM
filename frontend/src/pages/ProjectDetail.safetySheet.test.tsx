@@ -4,6 +4,7 @@ import type { SafetySheetPrefillRead, SafetySheetRead } from "../api/client";
 import { makeMe, makeProject, makeTask } from "../test/fixtures";
 import { renderWithProviders } from "../test/render";
 import ProjectDetail from "./ProjectDetail";
+import type { Perm } from "../generated/permissions";
 
 const api = vi.hoisted(() => ({
   getProject: vi.fn(),
@@ -48,7 +49,7 @@ function safetySheet(overrides: Partial<SafetySheetRead> = {}): SafetySheetRead 
 
 const EDITABLE_PROJECT = makeProject({ editable_fields: ["notes"] });
 
-async function openSafetySheet(project = EDITABLE_PROJECT, permissions = ["project.view_all"]) {
+async function openSafetySheet(project = EDITABLE_PROJECT, permissions: Perm[] = ["project.view_all"]) {
   api.getProject.mockResolvedValue(project);
   renderWithProviders(<ProjectDetail />, {
     me: makeMe({ permissions }),
