@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ApiError,
+  errorMessage,
   getProject,
   getWorksCalendar,
   InstallerAccessInstaller,
@@ -19,10 +20,6 @@ import { formatQuantity } from "../utils/quantities";
 import { todayIsoLisbon } from "../utils/dates";
 import { Alert, Badge, Card, EmptyState, ErrorState, LoadingState, PageHeader, ProgressBar } from "../components/ui";
 
-function apiErrorMessage(error: unknown): string {
-  return error instanceof ApiError ? error.detail : "Não foi possível contactar o servidor.";
-}
-
 function useReloadable<T>(loader: () => Promise<T>, fallback: string) {
   const [value, setValue] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +30,7 @@ function useReloadable<T>(loader: () => Promise<T>, fallback: string) {
     setError(null);
     loader()
       .then((result) => !cancelled && setValue(result))
-      .catch((reason) => !cancelled && setError(apiErrorMessage(reason) || fallback));
+      .catch((reason) => !cancelled && setError(errorMessage(reason) || fallback));
     return () => {
       cancelled = true;
     };
@@ -105,6 +102,7 @@ export function InstallerProjectDetailPage() {
   const [project, setProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tasksError, setTasksError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const canTasks = hasInstallerCapability(me, "task.view_assigned_installer");
 
@@ -113,13 +111,14 @@ export function InstallerProjectDetailPage() {
     setProject(null);
     setTasks(null);
     setError(null);
+    setTasksError(null);
     getProject(projectId)
       .then((result) => {
         if (cancelled) return;
         setProject(result);
-        if (canTasks) listTasks({ project_id: projectId }).then((items) => !cancelled && setTasks(items)).catch(() => !cancelled && setTasks([]));
+        if (canTasks) listTasks({ project_id: projectId }).then((items) => !cancelled && setTasks(items)).catch((reason) => !cancelled && setTasksError(errorMessage(reason)));
       })
-      .catch((reason) => !cancelled && setError(reason instanceof ApiError && reason.status === 404 ? "Projeto não encontrado ou fora do seu âmbito." : apiErrorMessage(reason)));
+      .catch((reason) => !cancelled && setError(reason instanceof ApiError && reason.status === 404 ? "Projeto não encontrado ou fora do seu âmbito." : errorMessage(reason)));
     return () => {
       cancelled = true;
     };
@@ -141,7 +140,7 @@ export function InstallerProjectDetailPage() {
           </div>
         </Card>
         {canTasks && <Card title="Tarefas" icon="tasks">
-          {tasks === null ? <LoadingState label="A carregar tarefas…" rows={2} /> : tasks.length === 0 ? <EmptyState compact title="Sem tarefas visíveis." /> : <div className="stack stack--sm">{tasks.map((task) => <div key={task.id} className="card__row"><strong>{task.title}</strong><span className="small muted">{task.status}{task.due_date ? ` · ${task.due_date}` : ""}</span></div>)}</div>}
+          {tasks === null && tasksError ? <ErrorState message={tasksError} onRetry={() => setReloadKey((key) => key + 1)} /> : tasks === null ? <LoadingState label="A carregar tarefas…" rows={2} /> : tasks.length === 0 ? <EmptyState compact title="Sem tarefas visíveis." /> : <div className="stack stack--sm">{tasks.map((task) => <div key={task.id} className="card__row"><strong>{task.title}</strong><span className="small muted">{task.status}{task.due_date ? ` · ${task.due_date}` : ""}</span></div>)}</div>}
         </Card>}
       </div>
     </>

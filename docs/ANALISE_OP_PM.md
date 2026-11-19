@@ -94,6 +94,7 @@ Formato: **ID — título** · `ficheiro:linha` · problema → impacto → corr
   - Remover o `demo-setup` deste compose.
   - Fixar `ENTRA_JIT_LINK_BY_EMAIL=false` depois de ligar todos os utilizadores.
   - Definir um `SECRET_KEY` real.
+- **Estado (2026-11-18): preparado, cutover pendente.** `docker-compose.production.example.yml` (genérico) e um compose concreto fora do Git: `APP_ENV=production`, `DEMO_MODE=false`, segredos por ficheiro (`SECRET_KEY_FILE`, `DATABASE_PASSWORD_FILE`), `migrate` à parte (sem seed), PostgreSQL saudável antes do `migrate`. Ensaiado numa cópia; procedimento em `docs/RUNBOOK_CUTOVER_POSTGRES.md`. Falta correr o cutover e decidir a ligação dos utilizadores Entra sem `entra_object_id` (JIT desligado em production).
 
 **C2 — O relatório semanal ao cliente quase nunca dispara e, quando disparar, pode ser enviado em duplicado**
 - `backend/app/services/client_report_scheduler.py:32-35` (exige `hora == hh and minuto == mm`); `docker-compose.tailscale.yml:74` (`--interval 300`); `client_report_scheduler.py:39-47` (`db.rollback()` por projeto, `commit` único no fim).
@@ -157,19 +158,19 @@ Formato: **ID — título** · `ficheiro:linha` · problema → impacto → corr
 - `backend/app/config.py:28, 46-50, 65-68, 83-87`: `APP_ENV=local`, `AUTH_ENABLED=false`, `SECRET_KEY` público e SQLite por omissão.
 - **Impacto:** se `APP_ENV` for omitido ou estiver mal escrito, a API aceita `X-Dev-User-Email` e qualquer pessoa pode fazer-se passar pelo administrador.
 - **Correção:** por omissão, `APP_ENV=production`, e exigir `APP_ENV=local` de forma explícita para desenvolvimento. Em alternativa, recusar o arranque quando `APP_ENV` não está definido.
+- **Estado (Fase 1, frente A):** ✅ resolvido pela alternativa: `APP_ENV` é obrigatório e a app, o Alembic e as CLIs recusam arrancar sem ele (`ConfigurationError`). Os outros defaults (`AUTH_ENABLED`, `SECRET_KEY`, SQLite) só são aceitáveis em `local`/`test`, que agora têm de ser pedidos de forma explícita.
+- **Cutover (frente E):** o compose de produção fixa `APP_ENV=production` de forma explícita; a instância deixa de correr em `local` quando o cutover for feito.
 
 **A8 — Produção em SQLite com dois processos a escrever, e locks que o SQLite ignora**
 - `docker-compose.tailscale.yml:31, 51, 74` (o backend e o scheduler usam o mesmo ficheiro); `backend/app/services/safety_sheet.py:125-142` (`with_for_update()` sem efeito em SQLite; o comentário diz o contrário). Os testes de concorrência só correm em PostgreSQL.
 - **Impacto:** erros `database is locked`, perda de escrita na primeira gravação da ficha de segurança, e garantias de concorrência validadas num motor que não é o de produção.
 - **Correção:** migrar para PostgreSQL (o projeto já suporta e o CI já testa). Até lá, aplicar o padrão de "UPDATE vazio" que o inventário e o banco de horas já usam.
+- **Estado (2026-11-18): preparado, cutover pendente.** CLI `app.cli.migrate_sqlite_to_postgres` (esquema por Alembic, cópia em lotes, checksums por tabela, `--dry-run`, deteção de linhas rejeitáveis). Ensaio sobre um backup real: 109 tabelas e 12 943 linhas copiadas em cerca de 2 s, contagens e checksums iguais, sem linhas rejeitadas. A suíte pytest contra PostgreSQL passou (1596 testes, 0 falhas) depois de corrigidos o `FOR UPDATE` com `joinedload` da ficha de segurança (dava 500 em PostgreSQL) e dois testes que só o PostgreSQL apanha. Falta o cutover real.
 
-**A9 — Os backups não cobrem os ficheiros e ficam no mesmo host**
-- Script de utilizador do servidor (fora do repo): faz `sqlite.backup` das 2 BDs 4 vezes por dia, guarda 14 dias e corre `integrity_check`. Isto está bem feito.
-- **Problema:** `project_photos/`, `inventory/` (documentos) e `outbox/` **não** entram no backup. Não há cópia fora do servidor nem teste de restauro documentado, e o repo não documenta o backup.
-- **Correção:**
-  - Incluir os diretórios de ficheiros (tar ou rsync).
-  - Ter uma cópia off-site cifrada.
-  - Fazer um ensaio de restauro trimestral e escrever o runbook em `docs/`.
+**A9 — Os backups não cobrem os ficheiros e ficam no mesmo host** — *parcialmente resolvido (Fase 1, 2026-11-18)*
+- O script de utilizador do servidor (fora do repo) passou a guardar, por execução, a BD (`sqlite.backup` + `integrity_check`, como antes), um tar.gz com todos os ficheiros do volume (`project_photos/`, `inventory/`, `outbox/` e outros), um manifesto (tabelas/linhas e ficheiros/bytes por diretório) e o `sha256` de cada artefacto. Retenção de 14 dias para tudo, falha com código diferente de zero e marca `LAST_OK`. Há um script de ensaio de restauro (volume descartável + `alembic current` + contagens contra o manifesto) e o runbook em [`BACKUP_RESTORE.md`](BACKUP_RESTORE.md).
+- **Em aberto:** continua a não haver cópia fora do servidor (decisão atual: só local) nem cifra dos backups; alerta ativo por falha; variante PostgreSQL do backup quando A8 for executado; ensaio trimestral.
+- **Correção (resto):** cópia off-site cifrada e ensaio de restauro trimestral registado.
 
 **A10 — A produção corre a partir de código por commitar**
 - `git status` mostra 318 entradas (M e ??), incluindo 17 migrações Alembic novas e 13 routers novos. A branch local `snapshot/op-pm-production-2026-11-09` guarda uma cópia e não foi enviada ao GitHub. Isto está correto, porque contém IDs de tenant e o repo é público.
@@ -185,14 +186,14 @@ Formato: **ID — título** · `ficheiro:linha` · problema → impacto → corr
 |---|---|---|
 | M1 | `frontend/docker/nginx.demo.conf`, `backend/app/main.py:55` | `/docs` e `/openapi.json` estão acessíveis sem login no tailnet (confirmado: HTTP 200), o que expõe o mapa completo da API. → Usar `docs_url=None` fora de local, ou deixar de os encaminhar no nginx. |
 | M2 | `frontend/docker/nginx*.conf`, `frontend/Dockerfile*` | Não há CSP, HSTS, X-Frame-Options nem `nosniff`, e falta `server_tokens off` (o nginx anuncia a versão 1.27.5). O nginx corre como root. O motor de cabos é executado através de um `<script src=blob:>` com acesso a toda a página, incluindo os tokens MSAL em `sessionStorage`. → Acrescentar os cabeçalhos, usar `nginxinc/nginx-unprivileged` e uma CSP com `blob:` restrito. Em alternativa, correr o motor num Web Worker ou num iframe isolado. |
-| M3 | `backend/app/security/entra_auth.py:122,138`; `current_user.py:109-117` | Uma falha de JWKS ou de rede chega ao utilizador como 401 "token inválido". O frontend mostra então "sessão expirada". O `PyJWKClient` não tem timeout. → Devolver 503 com log e definir um timeout explícito. |
+| M3 | `backend/app/security/entra_auth.py:122,138`; `current_user.py:109-117` | Uma falha de JWKS ou de rede chega ao utilizador como 401 "token inválido". O frontend mostra então "sessão expirada". O `PyJWKClient` não tem timeout. → Devolver 503 com log e definir um timeout explícito. **✅ Backend resolvido na Fase 1 (frente A):** timeout de 5 s no `PyJWKClient`, falha de ligação ou JWKS inutilizável → 503 com `logger.warning`; tokens inválidos continuam 401. O frontend não trata o 503 como sessão expirada. |
 | M4 | `frontend/src/pages/ProjectDetail.tsx:790,793`; `CableDesignEditor.tsx:311,314-315,352-353`; `Vacations.tsx:328-332`; `InstallerAccessPages.tsx:120` | `.catch(() => [])`: um erro de rede ou um 403 aparece como "sem histórico", "sem tarefas", "sem revisões" ou "ninguém ausente". → Mostrar um estado de erro por secção, com botão para tentar de novo. |
 | M5 | `backend/app/schemas/projects.py:119-135` | `ProjectUpdate` não tem os limites de `ProjectCreate` (lat/lon, `power_kwp`, `max_length`) e aceita `{"name": null}`, o que dá um 500 por violação de NOT NULL. → Usar tipos `Annotated` partilhados e rejeitar `None` nos campos obrigatórios. |
 | M6 | `frontend/src/session/installerAccess.ts:17`; `components/Layout.tsx:57,60`; `backend/app/security/permissions.py:163` | Há drift de permissões: `inventory.manage`, `process.view_own`, `process.update_own` e o papel `admin` não existem no catálogo. Como as permissões são strings livres (`AuthContext.require(code: str)`, cerca de 185 chamadas), um erro de escrita nega o acesso em silêncio. → Criar `Perm(StrEnum)`, gerar o tipo TypeScript e escrever um teste que confirme que cada literal existe no catálogo. |
 | M7 | `backend/app/models/project.py:109`; `models/inventory.py:240-311`; `models/time_bank.py:18-57` | Os vocabulários fechados (`lifecycle_status`, `movement_type`, `MaterialRequest.status`, `calculation_mode`, `kind`) e as quantidades não têm CHECK na BD. Como o stock é derivado por somas, uma linha inválida corrompe os saldos. → Uma migração com CHECKs gerados a partir das constantes Python; o modelo a seguir é `UserRequest`. |
 | M8 | `backend/app/models/identity.py:65` | `User.email` é único mas distingue maiúsculas, enquanto a autenticação compara com `lower(email)`. `A@x` e `a@x` bloqueiam a ligação JIT sem dar erro. → Índice único em `lower(email)` e normalizar o email ao gravar. |
-| M9 | `.github/workflows/ci.yml` | Não há ruff, mypy, `pip-audit`, `npm audit`, gitleaks, Trivy, Dependabot nem limiar de cobertura. Usa `npm install` em vez de `npm ci`. Não constrói o `Dockerfile.tailscale`, que é o que está em produção. As actions não estão fixadas por SHA e falta `permissions:`. |
-| M10 | `backend/requirements.txt`; `backend/Dockerfile`; `frontend/Dockerfile*` | As dependências são intervalos sem lockfile e as imagens base são tags sem digest, por isso o build não é reproduzível. → Gerar um lock com `pip-compile`/`uv` e fixar as imagens por digest, com Dependabot. |
+| M9 | `.github/workflows/ci.yml` | Não há ruff, mypy, `pip-audit`, `npm audit`, gitleaks, Trivy, Dependabot nem limiar de cobertura. Usa `npm install` em vez de `npm ci`. Não constrói o `Dockerfile.tailscale`, que é o que está em produção. As actions não estão fixadas por SHA e falta `permissions:`. | **Resolvido na Fase 1 (frente C, branch `fase1/ci-supply-chain`, sem push):** `permissions: contents: read`, `concurrency` por ref, actions fixadas por SHA, `npm ci`, build do `Dockerfile.tailscale`, ruff e mypy gradual (bloqueantes), limiar de cobertura de 85 % (medido: 89 %), `pip-audit`, `npm audit`, gitleaks (bloqueantes) e Trivy (informativo: 70 achados HIGH/CRITICAL corrigíveis no `nginx:1.27-alpine`), `actionlint` e Dependabot semanal.
+| M10 | `backend/requirements.txt`; `backend/Dockerfile`; `frontend/Dockerfile*` | As dependências são intervalos sem lockfile e as imagens base são tags sem digest, por isso o build não é reproduzível. → Gerar um lock com `pip-compile`/`uv` e fixar as imagens por digest, com Dependabot. | **Resolvido na Fase 1 (frente C):** lock com hashes (`uv pip compile --generate-hashes`, Python 3.12) para `requirements.txt`, `requirements-postgres.txt` e `requirements-dev.txt`, instalado com `--require-hashes` no Dockerfile e no CI; imagens base dos quatro Dockerfiles fixadas por digest; Dependabot para pip, npm, docker e github-actions. O `nginx` subiu de 1.27 (sem correções) para `stable-alpine` 1.30.7, fixado por digest.
 | M11 | `backend/app/adapters/__init__.py:1-13, 27-60`; `README.md:57-61, 310-324`; `backend/app/main.py:56-63`; `docs/API_CLIENT_REPORTS.md:3-5` | A documentação diz que "não há nenhuma integração real", mas o `graph_mail.py` é real e é chamado diretamente. As fábricas `get_*_adapter` são código morto e lançam `NotImplementedError` se alguém ligar `CLICKUP_ENABLED`. → Atualizar os textos e remover ou ligar a fábrica. |
 | M12 | `backend/.env.example:48-52`; `.env.staging.example:72-76` | Documentam `GRAPH_CLIENT_SECRET`, mas o código lê `GRAPH_CLIENT_SECRET_FILE`. Faltam `OPPM_SECRETS_KEY_FILE`, `CABLE_TOOL_FILE`, `PROJECT_PHOTO_DIR` e `INVENTORY_FILE_DIR` nos exemplos e nos runbooks. |
 | M13 | `backend/app/security/entra_auth.py:148-185` | A chave privada RSA de teste está no código da aplicação, e qualquer pessoa a pode ler (repo público). Se alguém ligar `ENTRA_VALIDATION_MODE=mock` em local, é possível forjar tokens. A config bloqueia isto fora de local/test. → Mover a chave para `tests/`. |
@@ -239,12 +240,12 @@ Formato: **ID — título** · `ficheiro:linha` · problema → impacto → corr
 |---|---|---|---|
 | 9 | Scheduler (`client_report_scheduler.py`, `cli/client_reports.py`) | 58 % / **0 %** | Um ciclo de 300 s não pode saltar a hora configurada. Uma falha a meio do ciclo não reverte os envios anteriores. Correr `run_due` em paralelo não deve gerar dois envios. Testar o contexto de sistema com as permissões certas e o comportamento do loop perante exceções. |
 | 8 | `adapters/graph_mail.py` | **0 %** | Formato do pedido de token (form-urlencoded). Resposta sem `access_token`. Erros 4xx e 5xx devem dar `failed` e manter a nota. Segredo em falta. |
-| 8 | `RealEntraTokenValidator` | Não testado (só o mock) | Token RS256 assinado com outra chave. Token com `alg: none`. `kid` desconhecido. JWKS indisponível. Token mock rejeitado em modo real. `exp` ou `iat` em falta. |
-| 7 | Autenticação em todas as rotas | Correto hoje, mas nada impede uma regressão | Percorrer `app.routes`, exigir `get_current_user` na árvore de dependências (allowlist: `/` e `/health`) e confirmar que um GET sem cabeçalho recebe 401. Montar uma matriz papel × rota. `routes_installer_access.py` não tem nenhum teste de 403/404. |
-| 7 | Modelos vs. migrações | `conftest` usa `create_all` | Correr `alembic upgrade head` numa BD vazia e depois `compare_metadata`. Verificar que há um só head (hoje é `a6c8e0f2d4b1`). |
+| 8 | `RealEntraTokenValidator` | ✅ Testado na Fase 1 (`tests/test_auth_entra_real_validator.py`) com um `PyJWKClient` falso, incluindo `alg: none`, HS256 com a chave pública, `tid` de outro tenant e JWKS indisponível (503) | Token RS256 assinado com outra chave. Token com `alg: none`. `kid` desconhecido. JWKS indisponível. Token mock rejeitado em modo real. `exp` ou `iat` em falta. |
+| 7 | Autenticação em todas as rotas | ✅ `tests/test_routes_require_auth.py` (Fase 1). Falta a matriz papel × rota | Percorrer `app.routes`, exigir `get_current_user` na árvore de dependências (allowlist: `/` e `/health`) e confirmar que um GET sem cabeçalho recebe 401. Montar uma matriz papel × rota. `routes_installer_access.py` não tem nenhum teste de 403/404. |
+| 7 | Modelos vs. migrações | ✅ `tests/test_alembic_schema.py` (Fase 1; head único + drift). `conftest` continua a usar `create_all` | Correr `alembic upgrade head` numa BD vazia e depois `compare_metadata`. Verificar que há um só head (hoje é `a6c8e0f2d4b1`). |
 | 7 | Importação de notas vs. allowlist (A5) | Sem teste | Um Comercial aplica notas a um projeto existente: deve dar 403, ou os campos administrativos devem ser ignorados. |
 | 6 | Banco de horas em SQLite | Concorrência só testada em PostgreSQL | Duas threads a gravar para a mesma pessoa: o saldo final tem de ficar consistente. Isto importa porque a produção é SQLite. |
-| 6 | `secret_box` | Só o caso "sem chave" | Chave mal formada. Dados cifrados com outra chave. Rotação de chave. |
+| 6 | `secret_box` | ✅ `tests/test_secret_box.py` (Fase 1): chave mal formada e chave errada; a rotação de chave não existe, só está testado que a troca dá erro tratado | Chave mal formada. Dados cifrados com outra chave. Rotação de chave. |
 | 5 | Frontend: MSAL e sessão | Só `client.dev-login.test.ts` | `acquireTokenSilent` → `InteractionRequiredAuthError` → redirecionamento. Um 401 limpa a sessão. Testes de `SessionContext` e `Login`. |
 | 4 | ClickUp / Sales Support | Mock testado | Quando o adaptador for real: rate limit (429), idempotência da promoção e erro de custom field em falta. |
 
@@ -314,13 +315,40 @@ O CI corre o pytest em SQLite e em PostgreSQL 16, e no frontend `tsc`, `vitest` 
 
 | # | Ação | Resolve | Esforço |
 |---|---|---|---|
-| 11 | Novo compose de produção: `APP_ENV=production`, sem `demo-setup`, `migrate` separado com backup prévio, `SECRET_KEY` real, JIT desligado | C1, A7 | 2 d |
-| 12 | Migrar de SQLite para PostgreSQL (o caminho de migração já existe), com ensaio em staging | A8 | 3–4 d |
-| 13 | Backups: incluir fotos, documentos e outbox; cópia off-site cifrada; ensaio de restauro; runbook | A9 | 1–2 d |
+| 11 | Novo compose de produção: `APP_ENV=production`, sem `demo-setup`, `migrate` separado com backup prévio, `SECRET_KEY` real, JIT desligado (preparado, cutover pendente) | C1, A7 | 2 d |
+| 12 | Migrar de SQLite para PostgreSQL (o caminho de migração já existe), com ensaio em staging (preparado, cutover pendente) | A8 | 3–4 d |
+| 13 | Backups: incluir fotos, documentos e outbox; cópia off-site cifrada; ensaio de restauro; runbook | A9 | 1–2 d (fotos/documentos/outbox, ensaio e runbook feitos; falta off-site) |
 | 14 | Defaults fail-closed (`APP_ENV=production` por omissão) | A7 | 0,5 d |
 | 15 | Testes: autenticação em todas as rotas, validador Entra real, drift entre migrações e modelos, scheduler | Secção 4 | 2–3 d |
 | 16 | CI: ruff, mypy (gradual), `pip-audit`/`npm audit`, gitleaks, Trivy, Dependabot, `npm ci`, build do Dockerfile de produção, `permissions:` | M9, M10 | 1–2 d |
-| 17 | JWKS: 503 com log e timeout; estados de erro no frontend em vez de listas vazias | M3, M4 | 1–2 d |
+| 17 | JWKS: 503 com log e timeout; estados de erro no frontend em vez de listas vazias (**frontend feito** no branch `fase1/frontend-error-states`, ainda sem deploy: M4 resolvido; falta a parte do JWKS, M3) | M3, M4 | 1–2 d |
+
+**Estado da Fase 1 — frente A, backend (2026-11-18, branch `fase1/backend-hardening`, sem deploy):**
+
+| # | Estado | Notas |
+|---|---|---|
+| 14 | ✅ | Escolhida a alternativa "recusar o arranque": `APP_ENV` sem valor por omissão. Em `main`/`alembic`/CLIs sem `APP_ENV` há uma `ConfigurationError` com mensagem clara. O CI tem de definir `APP_ENV` nos passos do Alembic. |
+| 15 | ◐ Parcial | Feitos: autenticação em todas as rotas, validador Entra real, drift migrações/modelos (corrigidos 3 índices em falta no modelo) e `secret_box`. Falta o scheduler. |
+| 17 | ◐ Parcial | Backend feito (503 + log + timeout). Faltam os estados de erro no frontend (M4). |
+
+**Deploy da Fase 1 (2026-11-18, branch `fase1/integracao`, frentes A a E integradas):**
+- **Testes antes do deploy:**
+  - SQLite: 1 629 passaram, 23 foram ignorados, cobertura acima de 85 %.
+  - PostgreSQL: 1 649 passaram, 3 foram ignorados.
+  - Frontend: `tsc` sem erros e 825 testes Vitest a passar.
+  - ruff e mypy sem erros.
+- **Cutover para PostgreSQL e `APP_ENV=production`:**
+  - Indisponibilidade de cerca de 1 minuto.
+  - A cópia teve contagens e checksums iguais nas 109 tabelas (13 163 linhas), sem nenhuma linha rejeitada.
+  - Testes de fumo: `/health` em `production`/`postgresql`, 401 sem token, `/docs` em 404, 307 projetos e 11 utilizadores.
+  - O SQLite ficou parado no volume e serve de rollback.
+- **nginx:** passou para `stable-alpine` 1.30.7.
+- **Backup:** passou a `pg_dump -Fc`; o restauro foi ensaiado num PostgreSQL descartável e as contagens bateram certo.
+- **Pendentes:**
+  - `ENTRA_JIT_LINK_BY_EMAIL=true` é temporário; retirar quando os 4 utilizadores ativos sem `entra_object_id` tiverem entrado uma vez.
+  - O script de ensaio de restauro (`op_pm_restore_drill.sh`) ainda é para SQLite e tem de ser adaptado ao `pg_dump`.
+  - Falta o off-site.
+  - Alinhar os `server_default` entre modelos e migrações.
 
 ### Fase 2 — Trabalho estrutural (≈ 3–5 semanas)
 
@@ -344,17 +372,17 @@ O CI corre o pytest em SQLite e em PostgreSQL 16, e no frontend `tsc`, `vitest` 
 - [x] Segredos de projeto cifrados (Fernet), falha fechada, revelação auditada
 - [x] Uploads validados pelo conteúdo, sem path traversal
 - [ ] Instância real em `APP_ENV=production` com o hardening ativo (C1)
-- [ ] Defaults fail-closed (A7)
+- [x] Defaults fail-closed (A7): `APP_ENV` obrigatório
 - [ ] JIT por email desligado depois de ligar todos os utilizadores (C1)
 - [ ] Importação de notas respeita a allowlist de campos (A5)
 - [ ] `/docs` e `/openapi.json` fechados; CSP, HSTS e cabeçalhos de segurança; nginx sem root (M1, M2)
 - [ ] Chave de teste fora do código da aplicação (M13)
-- [ ] Teste automático "todas as rotas exigem auth" e testes do validador real
+- [x] Teste automático "todas as rotas exigem auth" e testes do validador real
 
 **Dados**
 - [ ] PostgreSQL em produção (A8)
 - [ ] Migrações separadas do seed, com backup prévio automático (C1)
-- [ ] Backups com fotos e documentos, off-site, restauro ensaiado (A9)
+- [ ] Backups com fotos e documentos, restauro ensaiado e runbook (feitos); off-site cifrado (falta) (A9)
 - [ ] CHECKs na BD para vocabulários e quantidades; e-mail único sem distinção de maiúsculas (M7, M8)
 - [x] Cadeia Alembic linear, com um só head
 
@@ -364,7 +392,7 @@ O CI corre o pytest em SQLite e em PostgreSQL 16, e no frontend `tsc`, `vitest` 
 - [ ] Healthcheck/heartbeat do scheduler (A3)
 - [x] Healthcheck do backend e `restart: unless-stopped`
 - [x] Frontend publicado só em 127.0.0.1, sem portas do backend expostas
-- [ ] Imagens fixadas por digest e dependências com lock (M10)
+- [x] Imagens fixadas por digest e dependências com lock (M10)
 - [ ] Alertas para falhas de envio e do scheduler
 
 **Integrações**
@@ -375,8 +403,9 @@ O CI corre o pytest em SQLite e em PostgreSQL 16, e no frontend `tsc`, `vitest` 
 
 **Qualidade e CI**
 - [x] Pytest em SQLite + PostgreSQL; vitest; tsc; build; smoke test da demo
-- [ ] Lint e typecheck do backend, auditoria de dependências, scan de segredos e de imagens
-- [ ] Limiar de cobertura; teste de drift entre modelos e migrações
+- [x] Lint e typecheck do backend (ruff, mypy gradual), auditoria de dependências (pip-audit, npm audit), scan de segredos (gitleaks) e de imagens (Trivy, ainda só informativo)
+- [x] Limiar de cobertura (85 %)
+- [x] Teste de drift entre modelos e migrações (só tipos e nulidade; os `server_default` ficam por alinhar)
 - [ ] Teste intermitente B4 corrigido
 
 **Documentação**

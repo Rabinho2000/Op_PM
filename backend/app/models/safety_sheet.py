@@ -35,7 +35,7 @@ class ProjectSafetySheet(UUIDPk, TimestampMixin, Base):
     work_start_date: Mapped[dt.date | None] = mapped_column(nullable=True)
     work_end_date: Mapped[dt.date | None] = mapped_column(nullable=True)
 
-    workers: Mapped[list["ProjectSafetySheetWorker"]] = relationship(
+    workers: Mapped[list[ProjectSafetySheetWorker]] = relationship(
         back_populates="sheet",
         cascade="all, delete-orphan",
         order_by="ProjectSafetySheetWorker.position",

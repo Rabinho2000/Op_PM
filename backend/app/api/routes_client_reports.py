@@ -18,7 +18,6 @@ from app.services.client_reports import (
     ClientReportError,
     ClientReportForbidden,
     ClientReportNotFound,
-    ClientReportValidationError,
     _send_row_dict,
     approve_send,
     discard_send,

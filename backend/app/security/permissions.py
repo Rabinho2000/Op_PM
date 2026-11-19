@@ -62,7 +62,7 @@ def load_auth_context(db: Session, user: User) -> AuthContext:
         .all()
     )
     permission_codes = frozenset(rp.permission.code for rp in perm_rows)
-    delegating_pm_ids = frozenset()
+    delegating_pm_ids: frozenset[UUID] = frozenset()
     if "project.view_delegated" in permission_codes:
         delegating_pm_ids = frozenset(
             pm_person_id
@@ -70,7 +70,7 @@ def load_auth_context(db: Session, user: User) -> AuthContext:
             .filter(SupportDelegation.support_person_id == user.person_id)
             .all()
         )
-    active_installer_ids = frozenset()
+    active_installer_ids: frozenset[UUID] = frozenset()
     if "project.view_assigned_installer" in permission_codes:
         active_installer_ids = frozenset(
             installer_id

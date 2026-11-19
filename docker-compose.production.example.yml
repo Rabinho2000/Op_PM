@@ -1,0 +1,188 @@
+# EXEMPLO de composição de PRODUÇÃO (APP_ENV=production, PostgreSQL) para uma
+# instância interna da Op_PM. Genérico, sem dados reais: copiar para um
+# ficheiro FORA do Git (por exemplo `docker-compose.<instância>.production.yml`,
+# coberto pelo .gitignore) e preencher o `.env` ao lado (também ignorado).
+# Procedimento completo de migração a partir de SQLite:
+# docs/RUNBOOK_CUTOVER_POSTGRES.md.
+#
+# O que este ficheiro garante (cada ponto é uma barreira independente das
+# de app/config.py, que recusa arrancar em production sem eles):
+#   - APP_ENV=production, DEMO_MODE=false, AUTH_ENABLED=true;
+#   - PostgreSQL 16 num volume nomeado, sem portas publicadas, só acessível
+#     aos serviços desta composição pela rede interna;
+#   - nenhum segredo em variáveis de ambiente nem no ficheiro: a password da
+#     BD, o SECRET_KEY e a chave Fernet vêm de ficheiros (compose `secrets`,
+#     montados só leitura em /run/secrets/...);
+#   - `migrate` (alembic upgrade head) é um passo à parte que espera pelo
+#     PostgreSQL saudável; o backend e o scheduler só arrancam depois de ele
+#     terminar com sucesso; nunca há seed;
+#   - a ligação JIT por email fica desligada por omissão em production
+#     (ENTRA_JIT_LINK_BY_EMAIL só se for definido de propósito).
+#
+# Variáveis do `.env` (o compose recusa arrancar se faltar uma obrigatória):
+#   OP_PM_SECRETS_DIR           pasta (0700) com os 3 ficheiros de segredos abaixo
+#   ENTRA_TENANT_ID, ENTRA_CLIENT_ID, ENTRA_REQUIRED_SCOPE
+#   CORS_ALLOWED_ORIGINS        origem(ns) do frontend, separadas por vírgula
+#   VITE_ENTRA_API_SCOPE        scope completo (api://<client-id>/<scope>), embutido no build
+#   VITE_ENTRA_REDIRECT_URI     URL público do frontend
+#   OP_PM_HTTP_PORT             porta local do frontend (omissão 18080, só 127.0.0.1)
+#   POSTGRES_USER / POSTGRES_DB (omissão op_pm / op_pm)
+#
+# Segredos (ficheiros em OP_PM_SECRETS_DIR, modo 0600, nunca no Git):
+#   oppm_db_password       password do PostgreSQL (hex/URL-safe), uma linha
+#   oppm_app_secret_key        SECRET_KEY da app (>= 32 bytes aleatórios), uma linha
+#   oppm_secrets.key       chave Fernet das credenciais de portais (a mesma de antes!)
+# O utilizador `app` do contentor (uid 999) tem de os conseguir ler:
+#   setfacl -m u:999:r "$OP_PM_SECRETS_DIR"/oppm_db_password "$OP_PM_SECRETS_DIR"/oppm_app_secret_key
+#
+# Dados (fotos, documentos, outbox) ficam no volume `op_pm_data` (/app/data);
+# a base de dados no volume `op_pm_pgdata`. Para reutilizar volumes já
+# existentes, acrescente `name:` aos volumes na cópia concreta.
+
+name: op-pm-production
+
+x-entra: &entra
+  ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:?defina ENTRA_TENANT_ID}
+  ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:?defina ENTRA_CLIENT_ID}
+  ENTRA_REQUIRED_SCOPE: ${ENTRA_REQUIRED_SCOPE:?defina ENTRA_REQUIRED_SCOPE}
+  ENTRA_VALIDATION_MODE: real
+
+x-backend-env: &backend-env
+  <<: *entra
+  APP_ENV: production
+  AUTH_ENABLED: "true"
+  DEMO_MODE: "false"
+  # Aviso de "dados reais" na UI (não abre nada; /docs fica fechado em production).
+  DEMO_REAL_DATA: "true"
+  # Sem password no URL: vem de DATABASE_PASSWORD_FILE.
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-op_pm}@postgres:5432/${POSTGRES_DB:-op_pm}
+  DATABASE_PASSWORD_FILE: /run/secrets/oppm_db_password
+  SECRET_KEY_FILE: /run/secrets/oppm_app_secret_key
+  OPPM_SECRETS_KEY_FILE: /run/secrets/oppm_secrets_key
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?defina CORS_ALLOWED_ORIGINS}
+  GRAPH_FALLBACK_DIR: /app/data/outbox
+  # Integrações externas: ligar só de forma explícita.
+  GRAPH_ENABLED: "false"
+  CLICKUP_ENABLED: "false"
+  FINANCIAL_ENABLED: "false"
+  CLAUDE_ENABLED: "false"
+  # Janela de transição opcional (ver o runbook): descomentar para permitir
+  # que utilizadores já existentes, ainda sem ligação Entra, se liguem pelo
+  # email no primeiro login. Voltar a remover (= desligado) depois.
+  # ENTRA_JIT_LINK_BY_EMAIL: "true"
+
+x-backend-secrets: &backend-secrets
+  - oppm_db_password
+  - oppm_app_secret_key
+  - oppm_secrets_key
+
+services:
+  postgres:
+    # Fixado por digest (a etiqueta 16-alpine muda); atualizar de forma deliberada.
+    image: postgres:16-alpine@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-op_pm}
+      POSTGRES_DB: ${POSTGRES_DB:-op_pm}
+      POSTGRES_PASSWORD_FILE: /run/secrets/oppm_db_password
+    secrets:
+      - oppm_db_password
+    volumes:
+      - op_pm_pgdata:/var/lib/postgresql/data
+    # Sem `ports:` de propósito: só os serviços desta composição chegam à BD.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  # Só migrações Alembic (nunca seed). Corre depois de o PostgreSQL estar
+  # saudável e termina; é também o serviço a usar para a cópia de dados:
+  #   docker compose run --rm --no-deps -v <backup>:/in/source.db:ro \
+  #     migrate python -m app.cli.migrate_sqlite_to_postgres --source /in/source.db
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    environment: *backend-env
+    secrets: *backend-secrets
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - op_pm_data:/app/data
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment: *backend-env
+    secrets: *backend-secrets
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - op_pm_data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      timeout: 5s
+      interval: 5s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.cli.client_reports", "loop", "--interval", "300"]
+    environment: *backend-env
+    secrets: *backend-secrets
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - op_pm_data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.cli.client_reports", "health", "--max-age", "900"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      # Bundle de produção (VITE_ENABLE_DEV_LOGIN=false) com nginx a encaminhar
+      # /api, /me e /health para o serviço `backend` (mesma origem).
+      dockerfile: Dockerfile.tailscale
+      args:
+        VITE_API_BASE_URL: /
+        VITE_ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:?defina ENTRA_TENANT_ID}
+        VITE_ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:?defina ENTRA_CLIENT_ID}
+        VITE_ENTRA_API_SCOPE: ${VITE_ENTRA_API_SCOPE:?defina VITE_ENTRA_API_SCOPE}
+        VITE_ENTRA_REDIRECT_URI: ${VITE_ENTRA_REDIRECT_URI:?defina VITE_ENTRA_REDIRECT_URI}
+        VITE_REAL_DATA_INSTANCE: "true"
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${OP_PM_HTTP_PORT:-18080}:80"
+    restart: unless-stopped
+
+secrets:
+  oppm_db_password:
+    file: ${OP_PM_SECRETS_DIR:?defina OP_PM_SECRETS_DIR}/oppm_db_password
+  oppm_app_secret_key:
+    file: ${OP_PM_SECRETS_DIR:?defina OP_PM_SECRETS_DIR}/oppm_app_secret_key
+  oppm_secrets_key:
+    file: ${OP_PM_SECRETS_DIR:?defina OP_PM_SECRETS_DIR}/oppm_secrets.key
+
+volumes:
+  op_pm_data:
+  op_pm_pgdata:

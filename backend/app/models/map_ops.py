@@ -6,12 +6,16 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, Float, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
+
+if TYPE_CHECKING:
+    from app.models.project import Project
 
 ISSUE_CATEGORIES: frozenset[str] = frozenset({"obra", "material", "documentacao", "visita", "outro"})
 ISSUE_STATUSES: frozenset[str] = frozenset({"aberta", "em_curso", "resolvida", "cancelada"})
@@ -59,4 +63,4 @@ class ProjectIssue(UUIDPk, TimestampMixin, Base):
         GUID(), ForeignKey("people.id"), nullable=True
     )
 
-    project: Mapped["Project"] = relationship()
+    project: Mapped[Project] = relationship()

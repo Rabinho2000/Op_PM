@@ -47,11 +47,30 @@ from jwt import PyJWKClient
 REQUIRED_CLAIMS = ["exp", "iat", "iss", "aud", "sub", "oid"]
 
 
+# Tempo máximo (s) de cada pedido ao endpoint JWKS. Sem isto o PyJWKClient
+# espera 30 s por omissão e um problema de rede prende os workers da API.
+JWKS_TIMEOUT_SECONDS = 5
+
+# Mensagem do PyJWT quando o `kid` do token não está no JWKS (token que
+# nunca foi emitido por este tenant, ou chave já retirada) — é um problema do
+# token (401), não do serviço. Qualquer outro erro do cliente JWKS é um
+# problema do JWKS/da rede (503).
+_UNKNOWN_KID_MARKER = "Unable to find a signing key that matches"
+
+
 class TokenValidationError(Exception):
-    """Levantado por qualquer falha de validação. O chamador HTTP
+    """Levantado por qualquer falha de validação do token. O chamador HTTP
     (`app/security/current_user.py`) converte isto sempre num 401 genérico
     — a mensagem detalhada fica só em log/exceção, nunca na resposta, para
     não ajudar um atacante a "afinar" um token inválido."""
+
+
+class TokenValidationUnavailableError(Exception):
+    """Não foi possível validar o token por um problema do serviço, não do
+    token: o endpoint JWKS está inacessível (rede, DNS, timeout, HTTP de
+    erro) ou devolveu um conjunto de chaves inutilizável. O chamador HTTP
+    converte isto em 503 (com log), nunca em 401 — para que o frontend não
+    trate uma falha transitória como "sessão expirada"."""
 
 
 @dataclass(frozen=True)
@@ -110,7 +129,16 @@ class RealEntraTokenValidator:
     `get_token_validator()`, para não recriar o `PyJWKClient` a cada
     pedido HTTP."""
 
-    def __init__(self, *, issuer: str, audience: str, jwks_url: str, tenant_id: str = "", required_scope: str = ""):
+    def __init__(
+        self,
+        *,
+        issuer: str,
+        audience: str,
+        jwks_url: str,
+        tenant_id: str = "",
+        required_scope: str = "",
+        jwks_client: PyJWKClient | None = None,
+    ):
         if not issuer or not audience or not jwks_url:
             raise TokenValidationError(
                 "configuração Entra ID incompleta — issuer/audience/jwks_url em falta "
@@ -120,11 +148,37 @@ class RealEntraTokenValidator:
         self._audience = audience
         self._tenant_id = tenant_id
         self._required_scope = required_scope
-        self._jwks_client = PyJWKClient(jwks_url)
+        # `jwks_client` só existe para os testes poderem injetar um cliente
+        # falso, sem rede; em produção cria-se sempre o cliente real, com
+        # timeout explícito.
+        self._jwks_client = jwks_client or PyJWKClient(jwks_url, timeout=JWKS_TIMEOUT_SECONDS)
+
+    def _signing_key(self, token: str):
+        """Obtém a chave pública do `kid` do token, separando um token
+        inválido (`TokenValidationError` -> 401) de uma falha do JWKS ou da
+        rede (`TokenValidationUnavailableError` -> 503)."""
+        try:
+            return self._jwks_client.get_signing_key_from_jwt(token)
+        except jwt.PyJWKClientConnectionError as exc:
+            raise TokenValidationUnavailableError(f"JWKS inacessível: {exc}") from exc
+        except jwt.PyJWKClientError as exc:
+            if _UNKNOWN_KID_MARKER in str(exc):
+                raise TokenValidationError(str(exc)) from exc
+            raise TokenValidationUnavailableError(f"JWKS inutilizável: {exc}") from exc
+        except (jwt.PyJWKError, jwt.PyJWKSetError) as exc:
+            # Chave do JWKS que o PyJWT não consegue carregar (inclui
+            # PyJWKSetError): o conjunto de chaves está avariado.
+            raise TokenValidationUnavailableError(f"JWKS inutilizável: {exc}") from exc
+        except jwt.PyJWTError as exc:
+            # Cabeçalho do token ilegível (DecodeError, ...): token inválido.
+            raise TokenValidationError(str(exc)) from exc
+        except ValueError as exc:
+            # JSON inválido na resposta do endpoint JWKS.
+            raise TokenValidationUnavailableError(f"JWKS com resposta inválida: {exc}") from exc
 
     def validate(self, token: str) -> EntraClaims:
+        signing_key = self._signing_key(token)
         try:
-            signing_key = self._jwks_client.get_signing_key_from_jwt(token)
             payload = jwt.decode(
                 token,
                 signing_key.key,

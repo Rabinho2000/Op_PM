@@ -12,6 +12,7 @@ import {
 } from "../api/client";
 import Icon from "../components/Icon";
 import { LifecycleBadge, useLifecycleStatuses } from "../components/LifecycleStatus";
+import { useToast } from "../components/Toast";
 import { Card, EmptyState, ErrorState, LoadingState, PageHeader } from "../components/ui";
 import { formatDatePt, todayIsoLisbon } from "../utils/dates";
 
@@ -125,12 +126,19 @@ export default function WorksTeams() {
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const statuses = useLifecycleStatuses();
+  const { notify } = useToast();
 
   useEffect(() => {
     let cancelled = false;
-    listInstallers().then((result) => !cancelled && setInstallers(result)).catch(() => !cancelled && setInstallers([]));
+    listInstallers()
+      .then((result) => !cancelled && setInstallers(result))
+      .catch(() => {
+        if (cancelled) return;
+        setInstallers([]);
+        notify("Não foi possível carregar a lista de instaladores.", "error");
+      });
     return () => { cancelled = true; };
-  }, []);
+  }, [notify]);
 
   const activeInstallers = useMemo(() => installers.filter((installer) => installer.is_active), [installers]);
   const installerIds = useMemo(

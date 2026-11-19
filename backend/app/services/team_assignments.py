@@ -243,7 +243,7 @@ def update_project_assignment(
     )
     assert locked_assignment is not None
     assignment = locked_assignment
-    team = _validate_team(
+    _validate_team(
         db,
         project,
         team_id,

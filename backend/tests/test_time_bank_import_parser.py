@@ -22,7 +22,7 @@ def _workbook_bytes(*, unknown_formula: bool = False) -> bytes:
     summary = workbook.create_sheet("Balanço final")
     summary.append([2026])
     summary.append(["Mês", "Person Alpha", "Person Beta"])
-    for month in range(12):
+    for _month in range(12):
         summary.append(["Mês", 0, 0])
     summary.append(["Total", 0, 0])
     buffer = io.BytesIO()

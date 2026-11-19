@@ -20,7 +20,7 @@ class UserTaskListPreference(UUIDPk, TimestampMixin, Base):
     )
     config: Mapped[dict] = mapped_column(JSON, nullable=False)
 
-    user: Mapped["User"] = relationship()
+    user: Mapped[User] = relationship()
 
 
 class TaskListView(UUIDPk, TimestampMixin, Base):
@@ -45,7 +45,7 @@ class TaskListView(UUIDPk, TimestampMixin, Base):
     config: Mapped[dict] = mapped_column(JSON, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    user: Mapped["User"] = relationship()
+    user: Mapped[User] = relationship()
 
 
 TaskListPreference = UserTaskListPreference

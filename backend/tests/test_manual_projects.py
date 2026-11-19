@@ -373,7 +373,6 @@ def test_created_project_is_in_list_and_visible_detail_for_assigned_pm(db_sessio
 
 def test_create_rolls_back_project_and_history_when_audit_fails_midway(db_session, monkeypatch):
     from app.schemas.projects import ProjectCreate
-    from app.security.permissions import load_auth_context
     from app.services import projects as project_service
 
     ctx = _admin_context(db_session)

@@ -5,7 +5,38 @@ on:
     branches: [main]
   pull_request:
 
+# Menor privilégio (M9): nenhum job escreve no repositório nem em PRs.
+permissions:
+  contents: read
+
+# Um run por ref: um novo push à mesma branch/PR cancela o anterior. Em main
+# não se cancela, para cada commit publicado ter o seu resultado completo.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
+  backend-lint:
+    # Lint (ruff) e tipos graduais (mypy) — bloqueantes. Regras e âmbito em
+    # backend/ruff.toml e backend/mypy.ini; alargar aos poucos.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Instalar dependências e ferramentas (lock com hashes)
+        run: pip install --require-hashes -r requirements.txt -r requirements-postgres.txt -r requirements-dev.txt
+      - name: ruff
+        run: ruff check .
+      - name: mypy (gradual — app/security e client_reports*)
+        run: mypy
+
   backend-sqlite:
     # Rápido, sem serviços externos — o que um dev corre localmente por
     # omissão (ver backend/.env.example, docs/DECISIONS.md D-002).
@@ -15,23 +46,27 @@ jobs:
         working-directory: backend
     env:
       DATABASE_URL: "sqlite:///./data/ci_op_pm.db"
+      APP_ENV: "test"
       # Declarado explicitamente (mesmo aqui, onde já se sabe que é
       # SQLite) para simetria com o job PostgreSQL abaixo e para que
       # tests/test_database_dialect.py também corra aqui, não só lá.
       EXPECTED_DB_DIALECT: "sqlite"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Instalar dependências
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+        run: pip install --require-hashes -r requirements.txt
       - name: Aplicar migrações (SQLite local, sem dados reais)
         run: python -m alembic upgrade head
-      - name: Testes
-        run: python -m pytest -q
+      - name: Testes (com limiar de cobertura)
+        # Limiar de cobertura (M9): a cobertura medida era ~89 %; 85 % dá
+        # margem sem deixar a cobertura regredir à vontade. Só neste job
+        # (o PostgreSQL corre os mesmos testes, sem medir cobertura).
+        run: python -m pytest -q --cov=app --cov-report=term --cov-fail-under=85
 
   backend-postgres:
     # Valida contra o motor de produção-alvo (docs/ARCHITECTURE_PROPOSAL.md)
@@ -58,6 +93,7 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: "postgresql+psycopg://op_pm:op_pm_ci_only@localhost:5432/op_pm_ci"
+      APP_ENV: "test"
       # Lido por tests/conftest.py::_prepare_database (pytest.exit duro,
       # antes de qualquer teste correr) e por
       # tests/test_database_dialect.py — a dupla garantia de que este job
@@ -66,14 +102,14 @@ jobs:
       # DATABASE_URL com um SQLite temporário, ignorando este valor.
       EXPECTED_DB_DIALECT: "postgresql"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Instalar dependências (incl. driver PostgreSQL)
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-postgres.txt
+        run: pip install --require-hashes -r requirements.txt -r requirements-postgres.txt
       - name: Confirmar ligação real ao PostgreSQL antes de migrar
         # Verificação independente das duas de cima, escrita diretamente
         # no workflow para ser auditável só de olhar para este ficheiro,
@@ -97,17 +133,70 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
       - run: npm run lint
       - run: npm test
       - run: npm run build
 
+  supply-chain:
+    # Cadeia de abastecimento (M9). BLOQUEANTE: pip-audit e npm audit (só
+    # dependências de produção, nível high) e gitleaks — hoje dão 0
+    # achados (pip-audit com uma exceção justificada), por isso falhar é
+    # sinal real. O Trivy está no job docker-build, informativo.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Histórico completo: o gitleaks varre todos os commits.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: pip-audit (lock do backend)
+        # PYSEC-2026-1845 (pytest < 9.0.3, tmpdir previsível em /tmp
+        # partilhado): ferramenta só de testes, o CI corre num runner
+        # efémero de um só utilizador. Remover quando pytest passar a >=9.0.3.
+        working-directory: backend
+        run: |
+          pip install --require-hashes -r requirements-dev.txt
+          pip-audit -r requirements.txt -r requirements-postgres.txt \
+            --require-hashes --disable-pip --ignore-vuln PYSEC-2026-1845
+      - name: npm audit (produção, nível high)
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
+      - name: gitleaks (histórico completo, .gitleaks.toml)
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" \
+            ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git /repo --config /repo/.gitleaks.toml --redact --no-banner
+
+  workflow-lint:
+    # actionlint sobre os workflows (imagem fixada por digest).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: actionlint
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" -w /repo \
+            rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
+            -color
+
   docker-build:
-    # Valida que backend/Dockerfile e frontend/Dockerfile constroem, e que
+    # Valida que backend/Dockerfile, frontend/Dockerfile e
+    # frontend/Dockerfile.tailscale (a imagem realmente usada em produção)
+    # constroem, e que
     # docker-compose.staging.example.yml é sintaticamente válido (D-050) —
     # não foi possível validar isto localmente sem Docker disponível no
     # ambiente onde estes ficheiros foram escritos. Só confirma que os
@@ -118,7 +207,9 @@ jobs:
     # temporário é apagado no fim do job, dentro do runner efémero do CI).
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: docker build — backend
         run: docker build -t op_pm-backend:ci ./backend
       - name: docker build — frontend (com placeholders óbvios, nunca segredos reais)
@@ -129,8 +220,34 @@ jobs:
             --build-arg VITE_ENTRA_TENANT_ID=00000000-0000-0000-0000-000000000000 \
             --build-arg VITE_ENTRA_API_SCOPE=api://00000000-0000-0000-0000-000000000000/access_as_user \
             ./frontend
+      - name: docker build — frontend de produção (Dockerfile.tailscale, placeholders óbvios)
+        run: |
+          docker build -f frontend/Dockerfile.tailscale -t op_pm-frontend-tailscale:ci \
+            --build-arg VITE_API_BASE_URL=https://backend.staging.invalid \
+            --build-arg VITE_ENTRA_CLIENT_ID=00000000-0000-0000-0000-000000000000 \
+            --build-arg VITE_ENTRA_TENANT_ID=00000000-0000-0000-0000-000000000000 \
+            --build-arg VITE_ENTRA_API_SCOPE=api://00000000-0000-0000-0000-000000000000/access_as_user \
+            ./frontend
       - name: docker build — frontend de demonstração (Dockerfile.demo)
         run: docker build -f frontend/Dockerfile.demo -t op_pm-frontend-demo:ci ./frontend
+      - name: Trivy — vulnerabilidades HIGH/CRITICAL com correção disponível (informativo)
+        # INFORMATIVO, não bloqueia (--exit-code 0 + continue-on-error): os
+        # achados estão em pacotes do SO das imagens base (nginx stable-alpine
+        # e python:3.12-slim), que o repositório só corrige subindo a base —
+        # tratado pelo Dependabot (docker). Passar a --exit-code 1 quando as
+        # bases estiverem limpas. Só `vuln`: os segredos já são cobertos
+        # pelo gitleaks (job supply-chain). Imagem do Trivy fixada por digest.
+        continue-on-error: true
+        run: |
+          for img in op_pm-backend:ci op_pm-frontend:ci op_pm-frontend-tailscale:ci; do
+            echo "::group::trivy $img"
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              ghcr.io/aquasecurity/trivy@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb \
+              image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+              --exit-code 0 --no-progress "$img"
+            echo "::endgroup::"
+          done
       - name: Validar docker-compose.staging.example.yml (config, sem subir containers)
         run: |
           cat > backend/.env <<'EOF'
@@ -160,13 +277,15 @@ jobs:
     # onde isto foi escrito — este job é a validação real.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Validar docker-compose.demo.yml (config)
         run: docker compose -f docker-compose.demo.yml config --quiet
       - name: Construir e arrancar a demonstração
         run: |
           docker compose -f docker-compose.demo.yml up --build -d
-          for i in $(seq 1 90); do
+          for _ in $(seq 1 90); do
             if curl -fsS http://127.0.0.1:8080/health > /dev/null 2>&1; then echo "demo pronta"; exit 0; fi
             sleep 2
           done
@@ -187,7 +306,7 @@ jobs:
           set -euo pipefail
           docker compose -f docker-compose.demo.yml up -d --force-recreate
           sleep 5
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             curl -fsS http://127.0.0.1:8080/health > /dev/null 2>&1 && break
             sleep 2
           done

@@ -2,14 +2,13 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import re
 import uuid
 from collections import defaultdict
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -268,7 +267,7 @@ def _mark_reversed_rows(
     reversed_ids = {row[0] for row in db.query(model.reversal_of_id).filter(model.reversal_of_id.in_(page_ids)).all()}
     for item in items:
         # This is response enrichment only; the client cannot supply or alter it.
-        setattr(item, "is_reversed", item.id in reversed_ids)
+        item.is_reversed = item.id in reversed_ids
 
 
 def list_entries(
@@ -867,7 +866,7 @@ def apply_import(db: Session, ctx: AuthContext, batch_id: uuid.UUID) -> TimeBank
         raise TimeBankImportConflict("O lote contém anomalias bloqueantes que exigem correção da fonte.")
     if any(label not in resolutions for label in labels):
         raise TimeBankImportConflict("Todas as pessoas de origem têm de ser resolvidas antes da aplicação.")
-    for label, person_id in resolutions.items():
+    for person_id in resolutions.values():
         _person_or_404(db, person_id)
 
     applied_entries = 0

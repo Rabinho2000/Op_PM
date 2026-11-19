@@ -1,10 +1,11 @@
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Project } from "../api/client";
+import { ApiError, type Project } from "../api/client";
 import { makeMe, makeProject } from "../test/fixtures";
 import { renderWithProviders } from "../test/render";
 import {
   InstallerInventoryPage,
+  InstallerProjectDetailPage,
   InstallerProjectsPage,
   InstallerTeamsPage,
   InstallerWorksPage,
@@ -12,6 +13,8 @@ import {
 
 const api = vi.hoisted(() => ({
   listProjects: vi.fn(),
+  getProject: vi.fn(),
+  listTasks: vi.fn(),
   listInstallerInventory: vi.fn(),
   listInstallerAccessTeams: vi.fn(),
   getWorksCalendar: vi.fn(),
@@ -69,5 +72,26 @@ describe("consulta do colaborador por instalador", () => {
     await waitFor(() => expect(api.getWorksCalendar).toHaveBeenCalledTimes(1));
     expect(screen.getByText(/Modo consulta/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /guardar|aplicar|arrastar/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("detalhe do projeto atribuído — erro nas tarefas", () => {
+  it("mostra o erro (e não 'sem tarefas') e volta a carregar ao tentar de novo", async () => {
+    api.getProject.mockResolvedValue(makeProject({ id: "project-a", name: "Obra A" }) as Project);
+    api.listTasks.mockRejectedValueOnce(new ApiError(403, "Sem acesso às tarefas."));
+    renderWithProviders(<InstallerProjectDetailPage />, {
+      me: EXTERNAL_ME,
+      route: "/projects/project-a",
+      path: "/projects/:projectId",
+    });
+
+    expect(await screen.findByText("Sem acesso às tarefas.")).toBeInTheDocument();
+    expect(screen.queryByText("Sem tarefas visíveis.")).not.toBeInTheDocument();
+
+    api.listTasks.mockResolvedValueOnce([]);
+    fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
+
+    expect(await screen.findByText("Sem tarefas visíveis.")).toBeInTheDocument();
+    expect(api.listTasks).toHaveBeenCalledTimes(2);
   });
 });

@@ -14,6 +14,7 @@ from app.models.project import Project
 from app.services.inventory import (
     InsufficientReservationError,
     InsufficientStockError,
+    InventoryError,
     adjust_stock,
     available_stock,
     consume_from_project,
@@ -124,7 +125,7 @@ def test_cannot_return_more_than_consumed(db_session, cable_item, project_a):
     consume_from_project(
         db, item=cable_item, project_id=project_a.id, quantity=Decimal("2"), created_by_person_id=None
     )
-    with pytest.raises(Exception):
+    with pytest.raises(InventoryError):
         return_to_stock(
             db, item=cable_item, project_id=project_a.id, quantity=Decimal("3"), created_by_person_id=None
         )

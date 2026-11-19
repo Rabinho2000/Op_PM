@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
@@ -48,6 +49,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
 from app.models.installer import Installer, InstallerTeam
+
+if TYPE_CHECKING:
+    from app.models.people import Person
 
 
 class Project(UUIDPk, TimestampMixin, Base):
@@ -141,7 +145,7 @@ class Project(UUIDPk, TimestampMixin, Base):
     primary_photo_storage_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     primary_photo_content_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
-    pm: Mapped["Person | None"] = relationship(foreign_keys=[pm_person_id])
+    pm: Mapped[Person | None] = relationship(foreign_keys=[pm_person_id])
     installer: Mapped[Installer | None] = relationship(
         primaryjoin="Project.installer_id == Installer.id", foreign_keys=[installer_id], lazy="selectin"
     )
@@ -151,11 +155,11 @@ class Project(UUIDPk, TimestampMixin, Base):
         viewonly=True,
         lazy="selectin",
     )
-    external_ids: Mapped[list["ProjectExternalId"]] = relationship(back_populates="project")
+    external_ids: Mapped[list[ProjectExternalId]] = relationship(back_populates="project")
     # Do not load this collection while deleting a project: the cascade load can
     # autoflush unrelated caller state before import preconditions are checked.
     # Unloaded rows are removed by the project's FK ON DELETE CASCADE.
-    team_assignments: Mapped[list["ProjectTeamAssignment"]] = relationship(
+    team_assignments: Mapped[list[ProjectTeamAssignment]] = relationship(
         back_populates="project",
         cascade="all, delete-orphan",
         passive_deletes=True,
@@ -209,14 +213,14 @@ class ProjectTeamAssignment(UUIDPk, TimestampMixin, Base):
         GUID(), ForeignKey("people.id"), nullable=True
     )
 
-    project: Mapped["Project"] = relationship(back_populates="team_assignments")
+    project: Mapped[Project] = relationship(back_populates="team_assignments")
     team: Mapped[InstallerTeam] = relationship(
         primaryjoin="and_(ProjectTeamAssignment.team_id == InstallerTeam.id, "
         "ProjectTeamAssignment.installer_id == InstallerTeam.installer_id)",
         foreign_keys="[ProjectTeamAssignment.team_id, ProjectTeamAssignment.installer_id]",
         viewonly=True,
     )
-    created_by: Mapped["Person | None"] = relationship(foreign_keys=[created_by_person_id])
+    created_by: Mapped[Person | None] = relationship(foreign_keys=[created_by_person_id])
 
 
 class ProjectExternalId(UUIDPk, TimestampMixin, Base):
@@ -237,7 +241,7 @@ class ProjectExternalId(UUIDPk, TimestampMixin, Base):
     sync_status: Mapped[str] = mapped_column(String(32), default="pending")  # pending|ok|error
     sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    project: Mapped["Project"] = relationship(back_populates="external_ids")
+    project: Mapped[Project] = relationship(back_populates="external_ids")
 
 
 class ProjectStageProgress(UUIDPk, TimestampMixin, Base):

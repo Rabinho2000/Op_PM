@@ -20,6 +20,9 @@ build/
 *.egg-info/
 .pytest_cache/
 .coverage
+.coverage.*
+.ruff_cache/
+.mypy_cache/
 htmlcov/
 *.eml
 *.ics
@@ -33,4 +36,4 @@ htmlcov/
 *.pfx
 secrets/
 # Instância interna: contém IDs de tenant e caminhos do servidor — nunca versionar
-docker-compose.tailscale.yml
+docker-compose.tailscale*.yml

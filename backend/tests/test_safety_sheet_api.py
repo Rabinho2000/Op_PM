@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from datetime import date
 
 from app.models.identity import Role, User, UserRole
 from app.models.installer_access import InstallerAccessMembership
 from app.models.people import Person
 from app.models.project import Project
-from app.models.project_data import ProjectDataHistory
 
 
 def _headers(email: str) -> dict[str, str]:

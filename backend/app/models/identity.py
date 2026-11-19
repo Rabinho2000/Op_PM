@@ -15,12 +15,16 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
+
+if TYPE_CHECKING:
+    from app.models.people import Person
 
 
 class Role(UUIDPk, TimestampMixin, Base):
@@ -30,7 +34,7 @@ class Role(UUIDPk, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[str] = mapped_column(String(512), default="")
 
-    permissions: Mapped[list["RolePermission"]] = relationship(back_populates="role")
+    permissions: Mapped[list[RolePermission]] = relationship(back_populates="role")
 
 
 class Permission(UUIDPk, TimestampMixin, Base):
@@ -49,8 +53,8 @@ class RolePermission(UUIDPk, TimestampMixin, Base):
         GUID(), ForeignKey("permissions.id"), nullable=False
     )
 
-    role: Mapped["Role"] = relationship(back_populates="permissions")
-    permission: Mapped["Permission"] = relationship()
+    role: Mapped[Role] = relationship(back_populates="permissions")
+    permission: Mapped[Permission] = relationship()
 
 
 class User(UUIDPk, TimestampMixin, Base):
@@ -66,8 +70,8 @@ class User(UUIDPk, TimestampMixin, Base):
     entra_object_id: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    person: Mapped["Person"] = relationship(back_populates="user")
-    roles: Mapped[list["UserRole"]] = relationship(back_populates="user")
+    person: Mapped[Person] = relationship(back_populates="user")
+    roles: Mapped[list[UserRole]] = relationship(back_populates="user")
 
 
 class UserRole(UUIDPk, TimestampMixin, Base):
@@ -77,8 +81,8 @@ class UserRole(UUIDPk, TimestampMixin, Base):
     user_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("users.id"), nullable=False)
     role_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("roles.id"), nullable=False)
 
-    user: Mapped["User"] = relationship(back_populates="roles")
-    role: Mapped["Role"] = relationship()
+    user: Mapped[User] = relationship(back_populates="roles")
+    role: Mapped[Role] = relationship()
 
 
 class AuthAuditLog(UUIDPk, Base):

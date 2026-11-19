@@ -169,7 +169,7 @@ class PlanningProcessOptionRead(BaseModel):
     planned_end: dt.date | None
     responsible_person_ids: list[uuid.UUID] = Field(default_factory=list)
     responsible_display_names: list[str] = Field(default_factory=list)
-    subtasks: list["PlanningProcessSubtaskOptionRead"] = Field(default_factory=list)
+    subtasks: list[PlanningProcessSubtaskOptionRead] = Field(default_factory=list)
 
 
 class PlanningProcessSubtaskOptionRead(BaseModel):

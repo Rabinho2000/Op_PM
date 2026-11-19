@@ -16,20 +16,26 @@
 # A app recusa-se a arrancar com configuração insegura em
 # APP_ENV=staging/production (app/config.py,
 # Settings._enforce_hardening_in_non_local_envs) -- isto continua a ser
-# a barreira real; a imagem em si não assume nenhum valor de ambiente.
+# a barreira real; a imagem em si não assume nenhum valor de ambiente
+# (APP_ENV não tem valor por omissão: sem ele a app e o Alembic recusam
+# arrancar -- tem de vir sempre do compose/orquestrador).
 
-FROM python:3.12-slim AS builder
+# python:3.12-slim — digest do índice multi-arquitetura; o Dependabot (docker) atualiza tag e digest.
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS builder
 WORKDIR /app
 
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# Lock com hashes (M10): `--require-hashes` recusa qualquer pacote cujo hash
+# não conste de requirements*.txt. Os ficheiros .in só servem para o
+# regenerar e não entram na imagem.
 COPY requirements.txt requirements-postgres.txt ./
-RUN pip install --no-cache-dir --upgrade pip \
- && pip install --no-cache-dir -r requirements.txt -r requirements-postgres.txt
+RUN pip install --no-cache-dir --require-hashes -r requirements.txt -r requirements-postgres.txt
 
 
-FROM python:3.12-slim AS runtime
+# python:3.12-slim — digest do índice multi-arquitetura; o Dependabot (docker) atualiza tag e digest.
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS runtime
 WORKDIR /app
 
 RUN groupadd --system app && useradd --system --gid app --home-dir /app app

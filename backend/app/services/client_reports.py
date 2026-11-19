@@ -20,9 +20,10 @@ import unicodedata
 import uuid
 from email.message import EmailMessage
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Protocol
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -134,8 +135,8 @@ def validate_report_config(payload: dict) -> dict:
     if not isinstance(cc_emails, list) or not 0 <= len(cc_emails) <= 10:
         raise ClientReportValidationError("cc_emails deve conter entre 0 e 10 endereços.")
 
-    normalised_to = []
-    normalised_cc = []
+    normalised_to: list[str] = []
+    normalised_cc: list[str] = []
     seen: set[str] = set()
     for bucket, output in ((to_emails, normalised_to), (cc_emails, normalised_cc)):
         for raw in bucket:
@@ -228,7 +229,8 @@ def _phase_and_stage(db: Session, project: Project) -> tuple[str, str]:
             phase_name = phase.name
     stages = (
         db.query(WorkflowStage)
-        .filter(WorkflowStage.phase_id == project.current_phase_id if project.current_phase_id else True)
+        # Sem fase atual: `true()` (sem filtro de fase).
+        .filter(WorkflowStage.phase_id == project.current_phase_id if project.current_phase_id else true())
         .order_by(WorkflowStage.sort_order, WorkflowStage.id)
         .all()
     )
@@ -473,7 +475,6 @@ def _send_row_dict(row: ClientReportSend) -> dict:
 
 
 def _response(db: Session, project: Project, config: ClientReportConfig | None, ctx: AuthContext) -> dict:
-    now = dt.datetime.now(dt.timezone.utc)
     sends = (
         db.query(ClientReportSend)
         .filter(ClientReportSend.project_id == project.id)

@@ -5,12 +5,16 @@ operações, técnicos — independentemente de terem ou não uma conta de login
 from __future__ import annotations
 
 import datetime as dt
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
 from app.models.base import TimestampMixin, UUIDPk
+
+if TYPE_CHECKING:
+    from app.models.identity import User
 
 
 class Person(UUIDPk, TimestampMixin, Base):
@@ -28,4 +32,4 @@ class Person(UUIDPk, TimestampMixin, Base):
     # nesta fase (ver app/services/dashboard.py).
     birth_date: Mapped[dt.date | None] = mapped_column(nullable=True)
 
-    user: Mapped["User | None"] = relationship(back_populates="person", uselist=False)
+    user: Mapped[User | None] = relationship(back_populates="person", uselist=False)

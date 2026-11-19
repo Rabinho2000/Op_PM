@@ -7,7 +7,7 @@ import math
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
+from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr, field_validator
 
 CABLE_JSON_MAX_BYTES = 2 * 1024 * 1024
 

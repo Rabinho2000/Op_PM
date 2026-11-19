@@ -56,6 +56,6 @@ class Absence(UUIDPk, TimestampMixin, Base):
     )
     cancelled_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    person: Mapped["Person"] = relationship(foreign_keys=[person_id])
-    decided_by_person: Mapped["Person | None"] = relationship(foreign_keys=[decided_by_person_id])
-    cancelled_by_person: Mapped["Person | None"] = relationship(foreign_keys=[cancelled_by_person_id])
+    person: Mapped[Person] = relationship(foreign_keys=[person_id])
+    decided_by_person: Mapped[Person | None] = relationship(foreign_keys=[decided_by_person_id])
+    cancelled_by_person: Mapped[Person | None] = relationship(foreign_keys=[cancelled_by_person_id])

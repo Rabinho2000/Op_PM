@@ -47,7 +47,7 @@ class WorksCalendarSavedView(UUIDPk, TimestampMixin, Base):
         Boolean, default=False, nullable=False
     )
 
-    user: Mapped["User"] = relationship()
+    user: Mapped[User] = relationship()
 
 
 from typing import TYPE_CHECKING

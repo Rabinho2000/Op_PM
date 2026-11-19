@@ -75,7 +75,7 @@ class FieldImportBatch(UUIDPk, TimestampMixin, Base):
     )
     applied_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    records: Mapped[list["FieldImportRecord"]] = relationship(back_populates="batch")
+    records: Mapped[list[FieldImportRecord]] = relationship(back_populates="batch")
 
 
 class FieldImportRecord(UUIDPk, TimestampMixin, Base):
@@ -97,8 +97,8 @@ class FieldImportRecord(UUIDPk, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(32), default=RECORD_STATUS_PENDING, nullable=False)
     promoted_project_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("projects.id"), nullable=True)
 
-    batch: Mapped["FieldImportBatch"] = relationship(back_populates="records")
-    conflicts: Mapped[list["FieldImportConflict"]] = relationship(back_populates="record")
+    batch: Mapped[FieldImportBatch] = relationship(back_populates="records")
+    conflicts: Mapped[list[FieldImportConflict]] = relationship(back_populates="record")
 
 
 class FieldImportConflict(UUIDPk, TimestampMixin, Base):
@@ -119,7 +119,7 @@ class FieldImportConflict(UUIDPk, TimestampMixin, Base):
     )
     resolved_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    record: Mapped["FieldImportRecord"] = relationship(back_populates="conflicts")
+    record: Mapped[FieldImportRecord] = relationship(back_populates="conflicts")
 
 
 class SurplusContract(UUIDPk, TimestampMixin, Base):

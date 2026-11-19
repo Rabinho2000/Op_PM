@@ -18,7 +18,7 @@ class Phase(UUIDPk, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     color_hex: Mapped[str] = mapped_column(String(16), default="#888888")
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
-    stages: Mapped[list["WorkflowStage"]] = relationship(back_populates="phase")
+    stages: Mapped[list[WorkflowStage]] = relationship(back_populates="phase")
 
 
 class WorkflowStage(UUIDPk, TimestampMixin, Base):
@@ -38,8 +38,8 @@ class WorkflowStage(UUIDPk, TimestampMixin, Base):
     note: Mapped[str] = mapped_column(Text, default="", nullable=False)
     responsible_rule: Mapped[str | None] = mapped_column(String(32), nullable=True)
     responsible_label: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    phase: Mapped["Phase"] = relationship(back_populates="stages")
-    subtasks: Mapped[list["WorkflowSubtask"]] = relationship(back_populates="stage")
+    phase: Mapped[Phase] = relationship(back_populates="stages")
+    subtasks: Mapped[list[WorkflowSubtask]] = relationship(back_populates="stage")
 
 
 class WorkflowSubtask(UUIDPk, TimestampMixin, Base):
@@ -48,7 +48,7 @@ class WorkflowSubtask(UUIDPk, TimestampMixin, Base):
     code: Mapped[str] = mapped_column(String(96), unique=True, nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
-    stage: Mapped["WorkflowStage"] = relationship(back_populates="subtasks")
+    stage: Mapped[WorkflowStage] = relationship(back_populates="subtasks")
 
 
 class SupportDelegation(UUIDPk, TimestampMixin, Base):

@@ -11,7 +11,7 @@ from alembic import context
 # qualquer diretório de trabalho.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import app.models  # noqa: E402  — regista todas as tabelas em Base.metadata
+import app.models  # noqa: E402, F401  — regista todas as tabelas em Base.metadata
 from app.config import get_settings  # noqa: E402
 from app.db import Base  # noqa: E402
 
@@ -29,7 +29,10 @@ target_metadata = Base.metadata
 # A URL real vem sempre de Settings (variável de ambiente DATABASE_URL),
 # nunca do valor estático em alembic.ini — evita divergência entre o que a
 # app usa e o que as migrações veem.
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# `%` tem de ser duplicado: o set_main_option passa pelo ConfigParser, que o
+# interpreta como interpolação (uma password com caracteres especiais fica
+# percent-encoded no URL e rebentava aqui).
+config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
 
 
 def run_migrations_offline() -> None:
