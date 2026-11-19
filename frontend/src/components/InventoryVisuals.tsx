@@ -11,6 +11,7 @@ import {
 } from "../api/client";
 import { Alert } from "./ui";
 import CategoryIllustration from "../pages/CategoryIllustration";
+import { useAuthenticatedBlob, useObjectUrl } from "../utils/useAuthenticatedBlob";
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -34,9 +35,7 @@ export function InventoryCategoryImage({
 }) {
   const [hasCustomImageLocal, setHasCustomImageLocal] = useState(hasCustomImage);
   const [imageVersionLocal, setImageVersionLocal] = useState(imageVersion);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -46,37 +45,15 @@ export function InventoryCategoryImage({
     setImageVersionLocal(imageVersion);
   }, [hasCustomImage, imageVersion]);
 
-  useEffect(() => {
-    let active = true;
-    let createdUrl: string | null = null;
-    setImageUrl(null);
-    if (!hasCustomImageLocal) {
-      return () => { active = false; };
-    }
-    getInventoryCategoryImageBlob(category, imageVersionLocal)
-      .then((blob) => {
-        if (!active) return;
-        createdUrl = URL.createObjectURL(blob);
-        setImageUrl(createdUrl);
-      })
-      .catch((cause: unknown) => {
-        if (active) setError(errorMessage(cause, "Não foi possível carregar a imagem da categoria."));
-      });
-    return () => {
-      active = false;
-      if (createdUrl) URL.revokeObjectURL(createdUrl);
-    };
-  }, [category, hasCustomImageLocal, imageVersionLocal, accountKey]);
-
-  useEffect(() => {
-    if (!selectedFile) {
-      setPreviewUrl(null);
-      return;
-    }
-    const url = URL.createObjectURL(selectedFile);
-    setPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [selectedFile]);
+  const imageUrl = useAuthenticatedBlob(
+    () => getInventoryCategoryImageBlob(category, imageVersionLocal),
+    [category, imageVersionLocal, accountKey],
+    {
+      enabled: hasCustomImageLocal,
+      onError: (cause) => setError(errorMessage(cause, "Não foi possível carregar a imagem da categoria.")),
+    },
+  );
+  const previewUrl = useObjectUrl(selectedFile);
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] ?? null;
@@ -176,9 +153,7 @@ export function InventoryItemPhoto({
   onPhotoChanged?: (hasPhoto: boolean) => void;
 }) {
   const [hasPhotoLocal, setHasPhotoLocal] = useState(hasPhoto);
-  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -186,35 +161,15 @@ export function InventoryItemPhoto({
 
   useEffect(() => setHasPhotoLocal(hasPhoto), [hasPhoto]);
 
-  useEffect(() => {
-    let active = true;
-    let createdUrl: string | null = null;
-    setPhotoUrl(null);
-    if (!hasPhotoLocal) return () => { active = false; };
-    getInventoryItemPhotoBlob(itemId)
-      .then((blob) => {
-        if (!active) return;
-        createdUrl = URL.createObjectURL(blob);
-        setPhotoUrl(createdUrl);
-      })
-      .catch((cause: unknown) => {
-        if (active) setError(errorMessage(cause, "Não foi possível carregar a fotografia do artigo."));
-      });
-    return () => {
-      active = false;
-      if (createdUrl) URL.revokeObjectURL(createdUrl);
-    };
-  }, [itemId, hasPhotoLocal, refreshToken, accountKey]);
-
-  useEffect(() => {
-    if (!selectedFile) {
-      setPreviewUrl(null);
-      return;
-    }
-    const url = URL.createObjectURL(selectedFile);
-    setPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [selectedFile]);
+  const photoUrl = useAuthenticatedBlob(
+    () => getInventoryItemPhotoBlob(itemId),
+    [itemId, refreshToken, accountKey],
+    {
+      enabled: hasPhotoLocal,
+      onError: (cause) => setError(errorMessage(cause, "Não foi possível carregar a fotografia do artigo.")),
+    },
+  );
+  const previewUrl = useObjectUrl(selectedFile);
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] ?? null;

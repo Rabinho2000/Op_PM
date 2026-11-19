@@ -1,6 +1,7 @@
 import { ChangeEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { deleteProjectPhoto, getProjectPhotoBlob, uploadProjectPhoto, errorMessage } from "../api/client";
 import { Alert, EmptyState } from "./ui";
+import { useAuthenticatedBlob, useObjectUrl } from "../utils/useAuthenticatedBlob";
 
 const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 const ACCEPTED_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -19,9 +20,7 @@ export default function ProjectPrimaryPhoto({
   children?: ReactNode;
 }) {
   const [hasPhotoLocal, setHasPhotoLocal] = useState(hasPhoto);
-  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -48,42 +47,17 @@ export default function ProjectPrimaryPhoto({
     setHasPhotoLocal(hasPhoto);
   }, [hasPhoto]);
 
-  useEffect(() => {
-    let active = true;
-    let createdUrl: string | null = null;
-    const generation = requestGeneration.current;
-    setPhotoUrl(null);
-    if (!hasPhotoLocal) {
-      return () => {
-        active = false;
-      };
-    }
-    getProjectPhotoBlob(projectId)
-      .then((blob) => {
-        if (!active || !mountedRef.current || generation !== requestGeneration.current) return;
-        createdUrl = URL.createObjectURL(blob);
-        setPhotoUrl(createdUrl);
-      })
-      .catch((err: unknown) => {
-        if (active && mountedRef.current && generation === requestGeneration.current) {
-          setError(errorMessage(err, "Não foi possível carregar a fotografia."));
-        }
-      });
-    return () => {
-      active = false;
-      if (createdUrl) URL.revokeObjectURL(createdUrl);
-    };
-  }, [projectId, hasPhotoLocal, refreshToken]);
-
-  useEffect(() => {
-    if (!selectedFile) {
-      setPreviewUrl(null);
-      return;
-    }
-    const url = URL.createObjectURL(selectedFile);
-    setPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [selectedFile]);
+  const photoUrl = useAuthenticatedBlob(
+    () => getProjectPhotoBlob(projectId),
+    [projectId, refreshToken],
+    {
+      enabled: hasPhotoLocal,
+      onError: (err) => {
+        if (mountedRef.current) setError(errorMessage(err, "Não foi possível carregar a fotografia."));
+      },
+    },
+  );
+  const previewUrl = useObjectUrl(selectedFile);
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] ?? null;
