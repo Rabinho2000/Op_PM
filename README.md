@@ -54,10 +54,11 @@ projeto + tarefas ad-hoc, máquina de estados, histórico), férias/ausências
 (`Absence`), e o aviso persistente de fotos por colocar na Drive quando visita
 técnica/comissionamento é concluído — ver `docs/DECISIONS.md` D-039 a D-047.
 719 testes automatizados de backend a passar (+3 skipped) em SQLite (e em
-PostgreSQL, ver abaixo) + 238 testes Vitest no frontend. Sem integrações
-externas reais ligadas (Claude, Microsoft
-Graph, ClickUp, Financial); sem migração de dados reais (os 295 projetos reais
-continuam por migrar); sem envio de email ou criação de eventos reais; sem
+PostgreSQL, ver abaixo) + 238 testes Vitest no frontend. Só o envio do
+relatório semanal por Microsoft Graph é uma integração real (opcional,
+`GRAPH_ENABLED`); ClickUp, Financial e Claude ainda não têm integração; sem
+migração de dados reais (os 295 projetos reais continuam por migrar); sem
+criação de eventos reais; sem
 biblioteca documental (os pedidos de material a fornecedores existem, mas
 nunca enviam email — D-067). Ver
 `docs/PLAN.md` para o roadmap completo, `docs/STAGING_CHECKLIST.md`/
@@ -314,21 +315,22 @@ Login Microsoft real requer uma app registration SPA (Authorization Code + PKCE,
 client secret) e uma app registration de API expondo o âmbito `access_as_user` — ver
 `frontend/.env.example` e `docs/OPEN_QUESTIONS.md`, pergunta 1.
 
-## Integrações — todas em modo mock/fallback nesta fase
+## Integrações
 
-Nenhuma integração externa real está ligada. Cada uma tem uma flag explícita
-(`*_ENABLED`, omissão `false`) e uma implementação mock ou de fallback local:
+Só o **Microsoft Graph** (envio do relatório semanal por email) tem implementação
+real, em `backend/app/adapters/graph_mail.py`. As restantes estão por implementar:
+as flags `CLICKUP_ENABLED`, `FINANCIAL_ENABLED` e `CLAUDE_ENABLED` **não ligam a
+nada** e a configuração recusa-se a arrancar se alguma for `true`.
 
-| Integração | Flag | Comportamento em Fase 0 |
+| Integração | Flag | Estado |
 |---|---|---|
-| Microsoft Graph (email/calendário) | `GRAPH_ENABLED` | Escreve rascunhos `.eml`/`.ics` localmente (`GRAPH_FALLBACK_DIR`); nunca envia nem publica nada real, mesmo com "aprovação". |
-| ClickUp | `CLICKUP_ENABLED` | Lê tarefas de uma fixture sintética (`backend/fixtures/synthetic_clickup_tasks.json`). |
-| Financial | `FINANCIAL_ENABLED` / `FINANCIAL_MODE` | `mock` (registo sintético) ou `csv` (lê um CSV local real — ver `backend/fixtures/synthetic_financial_costs.csv`); `api`/`excel` ainda não implementados. |
-| Claude | `CLAUDE_ENABLED` | Devolve texto determinístico marcado `[MOCK]`, sem qualquer chamada de rede. |
+| Microsoft Graph (email) | `GRAPH_ENABLED` | **Real**: com `true`, o relatório semanal é enviado por Graph (client credentials, segredo ou certificado lidos de ficheiro — `GRAPH_CLIENT_SECRET_FILE`). Com `false`, grava um `.eml` na pasta `GRAPH_FALLBACK_DIR` (outbox local) e não envia nada. Calendário/eventos: não implementado. |
+| ClickUp | `CLICKUP_ENABLED` | Adiada. Só existe a interface de leitura e um mock com fixture sintética (`backend/app/adapters/clickup/`, `backend/fixtures/synthetic_clickup_tasks.json`), ainda não chamados pela aplicação. |
+| Financial | `FINANCIAL_ENABLED` / `FINANCIAL_MODE` | Por implementar. Existe um leitor de CSV (`CsvFinancialAdapter`, ver `backend/fixtures/synthetic_financial_costs.csv`), ainda não ligado à aplicação. |
+| Claude | `CLAUDE_ENABLED` | Fora do âmbito atual; sem código. |
 
-Ativar qualquer uma destas para chamadas reais é trabalho de uma fase futura — ver
-`docs/PLAN.md`. Tentar ativar a flag sem a implementação correspondente levanta
-`NotImplementedError` de propósito, em vez de falhar silenciosamente para mock.
+O plano das integrações por implementar está em `docs/ANALISE_OP_PM.md` ("Mock vs.
+real") e `docs/PLAN.md`.
 
 ## Segurança
 

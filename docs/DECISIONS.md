@@ -154,6 +154,10 @@ fora do respetivo pacote de adapter.
 
 ## D-010 — Fallback do Graph nunca envia nem publica nada real
 
+> Nota (Fase 2): o `LocalFallbackGraphAdapter` foi removido por estar sem uso; o
+> fallback sem Graph é agora a gravação de `.eml` em `client_reports` (outbox).
+> O envio real existe em `app/adapters/graph_mail.py` (`GRAPH_ENABLED=true`).
+
 **Decisão:** `LocalFallbackGraphAdapter` escreve sempre um ficheiro `.eml`
 ou `.ics` local. Mesmo os métodos `send_mail`/`create_event` — que exigem
 `approved_by` preenchido — só gravam o ficheiro; nunca há entrega real.
