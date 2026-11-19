@@ -153,6 +153,14 @@ def test_valid_production_config_does_not_raise():
     assert settings.auth_enabled is True
 
 
+@pytest.mark.parametrize("app_env", ["local", "test", "staging", "production"])
+@pytest.mark.parametrize("flag", ["clickup_enabled", "financial_enabled", "claude_enabled"])
+def test_integration_flags_without_implementation_are_rejected(app_env, flag):
+    kwargs = _valid_production_kwargs(app_env=app_env, **{flag: True})
+    with pytest.raises(ValidationError, match=flag.upper()):
+        Settings(**kwargs)
+
+
 @pytest.mark.parametrize("app_env", ["local", "test"])
 def test_local_and_test_environments_are_never_blocked(app_env):
     """As mesmas condições 'inseguras' são o comportamento por omissão

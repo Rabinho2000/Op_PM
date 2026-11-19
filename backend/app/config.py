@@ -257,6 +257,28 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _reject_integrations_without_implementation(self) -> Settings:
+        """Recusa as flags de integrações que ainda não têm implementação real.
+
+        `CLICKUP_ENABLED`, `FINANCIAL_ENABLED` e `CLAUDE_ENABLED` não ligam a
+        nada: ligá-las não teria efeito, mas `/health` passaria a anunciar a
+        integração como ativa. Falhar no arranque é mais seguro do que aceitar
+        a flag em silêncio. (A integração ClickUp real está adiada, não
+        cancelada — ver docs/ANALISE_OP_PM.md, "Mock vs. real".)"""
+        pending = {
+            "CLICKUP_ENABLED": self.clickup_enabled,
+            "FINANCIAL_ENABLED": self.financial_enabled,
+            "CLAUDE_ENABLED": self.claude_enabled,
+        }
+        enabled = [name for name, value in pending.items() if value]
+        if enabled:
+            raise ValueError(
+                f"{', '.join(enabled)}: a integração real ainda não está implementada, "
+                "por isso a flag tem de ficar 'false'"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _enforce_hardening_in_non_local_envs(self) -> Settings:
         """Impede o arranque em staging/produção com configuração de
         desenvolvimento ou incompleta. Isto corre sempre que `Settings()` é
