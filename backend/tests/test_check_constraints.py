@@ -315,7 +315,7 @@ def test_dev_header_ignores_case_and_spaces(api_client):
 
 def test_jit_link_matches_email_claim_with_other_case_and_spaces(db_session, api_client_with_mock_entra_auth):
     from app.models.identity import AuthAuditLog
-    from app.security.entra_auth import issue_mock_token
+    from tests.entra_mock import issue_mock_token
 
     user = db_session.query(User).filter(User.email == "financeiro.sintetico@example.invalid").one()
     assert user.entra_object_id is None
