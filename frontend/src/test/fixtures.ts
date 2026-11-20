@@ -99,6 +99,7 @@ export function makeProject(overrides: Partial<Project> = {}): Project {
     photos_pending_warning: false,
     editable_fields: [],
     can_manage_tasks: false,
+    can_view_project_scope: true,
     can_change_status: false,
     can_plan_work: false,
     has_project_photo: false,

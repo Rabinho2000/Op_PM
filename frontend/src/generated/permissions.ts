@@ -70,6 +70,7 @@ export const PERMISSION_CODES = [
   "project.restore",
   "project.safety_sheet.edit",
   "project.view_all",
+  "project.view_all_pm_status",
   "project.view_assigned_installer",
   "project.view_communication_data",
   "project.view_delegated",

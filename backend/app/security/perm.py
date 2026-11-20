@@ -81,6 +81,7 @@ class Perm(StrEnum):
     PROJECT_RESTORE = "project.restore"
     PROJECT_SAFETY_SHEET_EDIT = "project.safety_sheet.edit"
     PROJECT_VIEW_ALL = "project.view_all"
+    PROJECT_VIEW_ALL_PM_STATUS = "project.view_all_pm_status"
     PROJECT_VIEW_ASSIGNED_INSTALLER = "project.view_assigned_installer"
     PROJECT_VIEW_COMMUNICATION_DATA = "project.view_communication_data"
     PROJECT_VIEW_DELEGATED = "project.view_delegated"

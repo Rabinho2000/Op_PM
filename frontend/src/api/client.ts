@@ -330,6 +330,7 @@ export interface Project {
   // Permissões efetivas do utilizador atual sobre este projeto (servidor).
   editable_fields: string[];
   can_manage_tasks: boolean;
+  can_view_project_scope: boolean;
   can_change_status: boolean;
   can_plan_work: boolean;
   has_project_photo: boolean;

@@ -358,9 +358,11 @@ function renderProjectCell(
     case "progress":
       return (
         <>
-          <div style={{ marginBottom: 4 }}>
-            <Badge tone={PROJECT_STATUS_TONES[project.status]}>{PROJECT_STATUS_LABELS[project.status]}</Badge>
-          </div>
+          {project.can_view_project_scope && (
+            <div style={{ marginBottom: 4 }}>
+              <Badge tone={PROJECT_STATUS_TONES[project.status]}>{PROJECT_STATUS_LABELS[project.status]}</Badge>
+            </div>
+          )}
           <ProgressBar value={project.workflow_progress_percent} label={`Progresso de ${project.name}`} />
         </>
       );

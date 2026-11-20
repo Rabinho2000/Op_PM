@@ -253,6 +253,19 @@ describe("ProjectsList (filtros)", () => {
     expect(screen.getAllByRole("progressbar")).toHaveLength(2);
   });
 
+  it("não mostra o badge de estado das tarefas em projetos sem âmbito (só os com âmbito)", async () => {
+    listProjects.mockResolvedValue([
+      makeProject({ name: "Projeto Com Âmbito", status: "em_curso" }),
+      makeProject({ id: "proj-foreign", name: "Projeto Alheio", can_view_project_scope: false, status: "nao_iniciado" }),
+    ]);
+    renderWithProviders(<ProjectsList />, { me: makeMe() });
+
+    expect(await screen.findByText("Projeto Alheio")).toBeInTheDocument();
+    expect(screen.getAllByText("Em curso").length).toBeGreaterThan(0);
+    // a opção "Não iniciado" do filtro de tarefas existe sempre; o badge só nas linhas com âmbito
+    expect(screen.queryAllByText("Não iniciado").filter((el) => el.tagName !== "OPTION")).toHaveLength(0);
+  });
+
   it("identifica a região como lista de projetos sem prometer deslize em cartões", async () => {
     const { container } = renderWithProviders(<ProjectsList />, { me: makeMe() });
 

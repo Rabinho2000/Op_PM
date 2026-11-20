@@ -689,7 +689,7 @@ export default function ProjectDetail() {
   const [inventoryCatalogRefresh, setInventoryCatalogRefresh] = useState<InventoryRefreshState>({ status: "loading", error: null });
   const [reversedMovementIds, setReversedMovementIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<TabKey>("resumo");
+  const [requestedTab, setTab] = useState<TabKey>("resumo");
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
@@ -719,12 +719,13 @@ export default function ProjectDetail() {
     );
   };
 
-  const canViewInstallation = can("project.view_installation_data");
-  const canEditInstallation = can("project.edit_installation_data");
-  const canViewLicensing = can("project.view_licensing_data");
-  const canEditLicensing = can("project.edit_licensing_data");
-  const canViewCommunication = can("project.view_communication_data");
-  const canEditCommunication = can("project.edit_communication_data");
+  const hasProjectScope = project?.can_view_project_scope === true;
+  const canViewInstallation = hasProjectScope && can("project.view_installation_data");
+  const canEditInstallation = project?.can_view_project_scope === true && can("project.edit_installation_data");
+  const canViewLicensing = hasProjectScope && can("project.view_licensing_data");
+  const canEditLicensing = hasProjectScope && can("project.edit_licensing_data");
+  const canViewCommunication = hasProjectScope && can("project.view_communication_data");
+  const canEditCommunication = hasProjectScope && can("project.edit_communication_data");
   // Credenciais, SIM e excedente: só as flags `can_*` do ProjectRead (permissão + âmbito, calculadas
   // no servidor). Não se deduzem de /api/me nem de editable_fields. O servidor valida cada escrita.
   const canEditCredentials = project?.can_edit_credentials === true;
@@ -732,8 +733,8 @@ export default function ProjectDetail() {
   const canEditSimCards = project?.can_edit_sim_cards === true;
   const canRevealSimSecrets = project?.can_reveal_sim_secrets === true;
   const canEditSurplusContracts = project?.can_edit_surplus_contracts === true;
-  const canViewCableDesigns = can("cable_design.view");
-  const canViewInventory = can("inventory.view");
+  const canViewCableDesigns = hasProjectScope && can("cable_design.view");
+  const canViewInventory = hasProjectScope && can("inventory.view");
   const canOperateInventory =
     can("inventory.allocate_project") ||
     can("inventory.consume_project") ||
@@ -784,13 +785,13 @@ export default function ProjectDetail() {
   }, [projectId, canViewInventory, inventoryOwner]);
 
   const loadHistory = useCallback(() => {
-    if (!projectId) return;
+    if (!projectId || !hasProjectScope) return;
     setHistoryError(null);
     setHistory(null);
     getProjectHistory(projectId)
       .then(setHistory)
       .catch((e) => setHistoryError(errorMessage(e)));
-  }, [projectId]);
+  }, [projectId, hasProjectScope]);
 
   const loadTasks = useCallback(() => {
     if (!projectId) return;
@@ -808,31 +809,42 @@ export default function ProjectDetail() {
       .catch((e) => setPeopleError(errorMessage(e)));
   }, []);
 
-  const load = useCallback(async (): Promise<boolean> => {
-    if (!projectId) return true;
+  const loadProject = useCallback(() => {
+    if (!projectId) return;
     setError(null);
     getProject(projectId)
       .then(setProject)
       .catch((e) => setError(errorMessage(e)));
-    // Se uma recarga falhar, os dados antigos saem do ecrã: o erro não pode ficar escondido atrás deles.
-    getProjectHistory(projectId)
-      .then((rows) => {
-        setHistory(rows);
-        setHistoryError(null);
-      })
-      .catch((e) => {
-        setHistory(null);
-        setHistoryError(errorMessage(e));
-      });
-    listTasks({ project_id: projectId })
-      .then((rows) => {
-        setTasks(rows);
-        setTasksError(null);
-      })
-      .catch((e) => {
-        setTasks(null);
-        setTasksError(errorMessage(e));
-      });
+  }, [projectId]);
+
+  // Sub-recursos dependentes do âmbito: não voltam a pedir o projeto quando este chega.
+  const loadScoped = useCallback(async (): Promise<boolean> => {
+    if (!projectId) return true;
+    if (hasProjectScope) {
+      getProjectHistory(projectId)
+        .then((rows) => {
+          setHistory(rows);
+          setHistoryError(null);
+        })
+        .catch((e) => {
+          setHistory(null);
+          setHistoryError(errorMessage(e));
+        });
+      listTasks({ project_id: projectId })
+        .then((rows) => {
+          setTasks(rows);
+          setTasksError(null);
+        })
+        .catch((e) => {
+          setTasks(null);
+          setTasksError(errorMessage(e));
+        });
+    } else {
+      setHistory(null);
+      setTasks(null);
+      setHistoryError(null);
+      setTasksError(null);
+    }
     if (canViewInstallation) {
       getProjectInstallationData(projectId)
         .then(setInstallationData)
@@ -854,6 +866,7 @@ export default function ProjectDetail() {
     return refreshResults.every(Boolean);
   }, [
     projectId,
+    hasProjectScope,
     canViewInstallation,
     canViewLicensing,
     canViewCommunication,
@@ -861,6 +874,11 @@ export default function ProjectDetail() {
     refreshProjectInventory,
     refreshInventoryItems,
   ]);
+
+  const load = useCallback((): Promise<boolean> => {
+    loadProject();
+    return loadScoped();
+  }, [loadProject, loadScoped]);
 
   useEffect(() => {
     try {
@@ -874,8 +892,11 @@ export default function ProjectDetail() {
     setReversedMovementIds(new Set());
   }, [projectId]);
   useEffect(() => {
-    void load();
-  }, [load]);
+    loadProject();
+  }, [loadProject]);
+  useEffect(() => {
+    void loadScoped();
+  }, [loadScoped]);
   useEffect(() => {
     loadPeople();
   }, [loadPeople]);
@@ -955,17 +976,20 @@ export default function ProjectDetail() {
 
   const tabs: { key: TabKey; label: string; count?: number }[] = [
     { key: "resumo", label: "Resumo" },
-    { key: "processo", label: "Processo" },
+    ...(hasProjectScope ? [{ key: "processo" as TabKey, label: "Processo" }] : []),
     ...(canViewCableDesigns ? [{ key: "cabos" as TabKey, label: "Cabos" }] : []),
     ...(canViewInstallation ? [{ key: "instalacao" as TabKey, label: "Dados da instalação" }] : []),
     ...(canViewLicensing || canViewCommunication ? [{ key: "licenciamento" as TabKey, label: "Licenciamento e comunicações" }] : []),
-    { key: "seguranca", label: "Segurança" },
-    { key: "tarefas", label: "Tarefas", count: tasks?.length },
+    ...(hasProjectScope ? [{ key: "seguranca" as TabKey, label: "Segurança" }] : []),
+    ...(hasProjectScope ? [{ key: "tarefas" as TabKey, label: "Tarefas", count: tasks?.length }] : []),
     ...(canViewInventory ? [{ key: "inventario" as TabKey, label: "Inventário", count: inventory?.reservations.length }] : []),
-    { key: "historico", label: "Histórico", count: history?.length },
-    { key: "cliente", label: "Cliente" },
-    { key: "relatorio", label: "Relatório semanal" },
+    ...(hasProjectScope ? [{ key: "historico" as TabKey, label: "Histórico", count: history?.length }] : []),
+    ...(hasProjectScope ? [{ key: "cliente" as TabKey, label: "Cliente" }] : []),
+    ...(hasProjectScope ? [{ key: "relatorio" as TabKey, label: "Relatório semanal" }] : []),
   ];
+  // `?tab=` só vale para separadores que o âmbito atual oferece; fora disso (ex.: PM em projeto
+  // alheio) cai em "resumo" e nenhum componente que peça sub-recursos é montado.
+  const tab: TabKey = tabs.some((t) => t.key === requestedTab) ? requestedTab : "resumo";
 
   return (
     <div className="project-detail-page">
@@ -984,9 +1008,11 @@ export default function ProjectDetail() {
       >
         <div className="hero__main project-detail-page__summary">
           <div className="badges project-detail-page__status">
-            <Badge tone={PROJECT_STATUS_TONES[project.status]} dot>
-              {PROJECT_STATUS_LABELS[project.status]}
-            </Badge>
+            {hasProjectScope && (
+              <Badge tone={PROJECT_STATUS_TONES[project.status]} dot>
+                {PROJECT_STATUS_LABELS[project.status]}
+              </Badge>
+            )}
             {!project.is_active && <Badge>Inativo</Badge>}
             {project.overdue_tasks_count > 0 && (
               <Badge tone="danger">
@@ -1106,8 +1132,12 @@ export default function ProjectDetail() {
                 <dd>
                   <LifecycleStatusControl project={project} statuses={lifecycleStatuses} onChanged={setProject} />
                 </dd>
-                <dt>Tarefas</dt>
-                <dd>{PROJECT_STATUS_LABELS[project.status]}</dd>
+                {hasProjectScope && (
+                  <>
+                    <dt>Tarefas</dt>
+                    <dd>{PROJECT_STATUS_LABELS[project.status]}</dd>
+                  </>
+                )}
                 <dt>PM</dt>
                 <dd>{project.pm_display_name ?? "—"}</dd>
                 <dt>Data de início</dt>
@@ -1135,7 +1165,7 @@ export default function ProjectDetail() {
                   onPaymentsChanged={(payments) => setProject((current) => current ? { ...current, payments } : current)}
                 />
               )}
-              <WorkPlanCard project={project} onChanged={setProject} />
+              {hasProjectScope && <WorkPlanCard project={project} onChanged={setProject} />}
               <Card title="Próximo passo" icon="flag" tone="info">
                 {project.next_task_title ? (
                   <>

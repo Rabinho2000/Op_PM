@@ -150,23 +150,30 @@ def test_invalid_status_is_rejected_and_changes_nothing(db_session, api_client):
     assert project.lifecycle_status == "preparacao"
 
 
-def test_pm_changes_only_own_projects(db_session, api_client):
+def test_pm_changes_lifecycle_status_on_own_and_other_projects(db_session, api_client):
     own = _project(db_session, "Instalação Sintética de Demonstração")
     other = _project(db_session, "Instalação Sintética Incompleta")
     assert other.pm_person_id is None
 
-    ok = api_client.patch(
+    own_result = api_client.patch(
         f"/api/projects/{own.id}/status", json={"lifecycle_status": "construido"}, headers=_headers(PM_UM)
     )
-    assert ok.status_code == 200 and ok.json()["project"]["can_change_status"] is True
+    assert own_result.status_code == 200 and own_result.json()["project"]["can_change_status"] is True
 
-    # Fora do âmbito do PM: 404, nunca 403 (não revela que existe).
-    out = api_client.patch(
+    listing = api_client.get("/api/projects", headers=_headers(PM_UM))
+    assert listing.status_code == 200
+    assert str(other.id) in {project["id"] for project in listing.json()}
+    detail = api_client.get(f"/api/projects/{other.id}", headers=_headers(PM_UM))
+    assert detail.status_code == 200
+    assert detail.json()["can_change_status"] is True
+
+    changed = api_client.patch(
         f"/api/projects/{other.id}/status", json={"lifecycle_status": "construido"}, headers=_headers(PM_UM)
     )
-    assert out.status_code == 404
+    assert changed.status_code == 200 and changed.json()["project"]["lifecycle_status"] == "construido"
+
     db_session.refresh(other)
-    assert other.lifecycle_status == "preparacao"
+    assert other.lifecycle_status == "construido"
 
 
 def test_read_only_role_cannot_change_status(db_session, api_client):
@@ -204,10 +211,11 @@ def test_filter_rejects_unknown_status(api_client):
     assert resp.status_code == 400
 
 
-def test_pm_filter_never_widens_scope(api_client):
+def test_pm_project_channel_filters_include_matching_projects_across_assignments(api_client):
     resp = api_client.get("/api/projects?lifecycle_status=on_hold_cliente", headers=_headers(PM_UM))
     assert resp.status_code == 200
-    assert resp.json() == []  # o único "on hold" não é deste PM: o filtro nunca alarga o âmbito
+    assert {project["name"] for project in resp.json()} == {"Instalação Sintética E — Sem PM Atribuído"}
+    assert all(project["can_change_status"] for project in resp.json())
 
 
 # --- ingestão --------------------------------------------------------------

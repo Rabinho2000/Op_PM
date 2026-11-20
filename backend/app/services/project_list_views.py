@@ -16,7 +16,7 @@ from app.models.people import Person
 from app.models.project import Project
 from app.models.project_list_views import ProjectListView, UserProjectListPreference
 from app.security.permissions import AuthContext, is_installer_readonly_scope
-from app.services.projects import visible_projects_query
+from app.services.projects import project_channel_visible_query
 from app.schemas.project_list_views import (
     PROJECT_LIST_DEFAULT_COLUMNS,
     ProjectListConfig,
@@ -104,7 +104,7 @@ def _parse_config(config: object) -> dict[str, object]:
 
 def _visible_pm_ids(db: Session, ctx: AuthContext) -> set[uuid.UUID]:
     rows = (
-        visible_projects_query(db, ctx)
+        project_channel_visible_query(db, ctx)
         .filter(Project.pm_person_id.is_not(None))
         .with_entities(Project.pm_person_id)
         .distinct()

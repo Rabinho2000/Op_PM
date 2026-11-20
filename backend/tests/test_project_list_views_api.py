@@ -195,6 +195,27 @@ def test_project_list_preferences_reject_invalid_config_without_mutation(api_cli
     assert replay.json() == {"config": before}
 
 
+def test_pm_filter_accepts_pm_with_foreign_projects_on_write_and_read(db_session, api_client):
+    from app.models.people import Person
+
+    legacy = db_session.query(Person).filter(
+        Person.display_name == "PM Sintético Legado Dois"
+    ).one()
+    config = _config(pm=str(legacy.id))
+    put = api_client.put(
+        "/api/me/project-list-preferences", json={"config": config}, headers=_headers(PM_UM)
+    )
+    assert put.status_code == 200, put.text
+    read = api_client.get("/api/me/project-list-preferences", headers=_headers(PM_UM))
+    assert read.json()["config"]["filters"]["pm"] == str(legacy.id)
+    created = api_client.post(
+        "/api/me/project-list-views",
+        json={"name": "Vista PM alheio", "config": config},
+        headers=_headers(PM_UM),
+    )
+    assert created.status_code in (200, 201), created.text
+
+
 def test_pm_filter_is_scope_checked_on_write_and_redacted_on_read_without_orm_mutation(
     db_session, api_client
 ):
@@ -202,9 +223,9 @@ def test_pm_filter_is_scope_checked_on_write_and_redacted_on_read_without_orm_mu
     from app.models.project_list_views import UserProjectListPreference
     from app.models.identity import User
 
-    legacy = db_session.query(Person).filter(
-        Person.display_name == "PM Sintético Legado Dois"
-    ).one()
+    legacy = Person(display_name="PM Sintético Sem Projetos", is_active=True)
+    db_session.add(legacy)
+    db_session.flush()
     foreign_pm_config = _config(pm=str(legacy.id))
     response = api_client.put(
         "/api/me/project-list-preferences",
@@ -442,9 +463,9 @@ def test_project_list_view_pm_filter_is_scoped_and_redacted_in_list_without_muta
     from app.models.people import Person
     from app.models.project_list_views import ProjectListView
 
-    legacy = db_session.query(Person).filter(
-        Person.display_name == "PM Sintético Legado Dois"
-    ).one()
+    legacy = Person(display_name="PM Sintético Sem Projetos", is_active=True)
+    db_session.add(legacy)
+    db_session.flush()
     foreign_config = _config(pm=str(legacy.id))
     invalid = api_client.post(
         "/api/me/project-list-views",

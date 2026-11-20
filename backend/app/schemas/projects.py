@@ -86,6 +86,7 @@ class ProjectRead(BaseModel):
     # cada escrita (app/services/projects.py, app/services/tasks.py).
     editable_fields: list[str] = []
     can_manage_tasks: bool = False
+    can_view_project_scope: bool = False
     can_change_status: bool = False
     can_plan_work: bool = False
     has_project_photo: bool = False

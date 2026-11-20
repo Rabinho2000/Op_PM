@@ -381,10 +381,13 @@ def test_pm_can_read_other_calendar_events_without_project_or_process_access(db_
     assert mine_filtered.status_code == 200
     assert {event["title"] for event in mine_filtered.json()} == {"Evento do PM Um"}
 
-    assert api_client.get(
+    project_detail = api_client.get(
         f"/api/projects/{other_project.id}",
         headers=_headers("pm.um.sintetico@example.invalid"),
-    ).status_code == 404
+    )
+    assert project_detail.status_code == 200
+    assert project_detail.json()["can_view_project_scope"] is False
+    assert project_detail.json()["can_change_status"] is True
     assert api_client.get(
         f"/api/projects/{other_project.id}/process",
         headers=_headers("pm.um.sintetico@example.invalid"),

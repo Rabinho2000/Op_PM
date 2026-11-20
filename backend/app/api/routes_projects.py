@@ -38,6 +38,8 @@ from app.security.permissions import (
     can_change_project_status,
     can_create_task,
     can_edit_project,
+    can_view_project,
+    can_view_project_payments,
     can_plan_project_work,
     can_edit_project_payments,
     is_installer_readonly_scope,
@@ -60,9 +62,12 @@ from app.services.projects import (
     create_project,
     eligible_project_managers,
     delete_project,
+    get_project_channel_project,
     get_visible_project,
+    list_projects_channel,
     list_projects,
     restore_project,
+    visible_projects_query,
 )
 from app.services.projects import update_project as update_project_service
 from app.services.team_assignments import (
@@ -101,6 +106,34 @@ def _require_installer_mutation_scope(ctx: AuthContext) -> None:
 # (o handler de `app.main` produz o `{"detail": ...}`).
 _deny_create = permission_denied_message("Não tem permissão para criar projetos.")
 _deny_plan_work = permission_denied_message("Sem permissão para planear a obra deste projeto.")
+
+# Allowlist mínima para um PM fora do âmbito normal do projeto (`project.view_all_pm_status`):
+# identificação, ciclo de vida (o `status` deriva das tarefas: fica no valor por omissão), PM, potência e as flags `can_*`. Tudo o resto do DTO (contactos,
+# morada/coordenadas, notas, cartão M2M, resumos derivados de tarefas, obra/instalador, fotografia,
+# pagamentos) volta ao valor por omissão do schema.
+_FOREIGN_PM_READABLE_FIELDS = frozenset({
+    "id", "name", "lifecycle_status", "is_active", "created_at", "updated_at",
+    "power_kwp", "pm_person_id", "pm_display_name", "has_pm", "editable_fields",
+    "can_manage_tasks", "can_view_project_scope", "can_change_status", "can_plan_work",
+    "can_edit_project_photo", "can_delete", "can_restore", "can_edit_credentials",
+    "can_reveal_credentials", "can_edit_sim_cards", "can_reveal_sim_secrets",
+    "can_edit_surplus_contracts", "can_edit_payments",
+})
+_REQUIRED_FIELD_BLANKS: dict[str, object] = {"notes": "", "work_dates_estimated": False}
+
+
+def _redact_foreign_pm_project(data: ProjectRead) -> None:
+    """Redige o DTO (já separado do ORM) do PM que só lê o registo base de projeto alheio."""
+    for name, field in ProjectRead.model_fields.items():
+        if name in _FOREIGN_PM_READABLE_FIELDS:
+            continue
+        value = (
+            _REQUIRED_FIELD_BLANKS.get(name)
+            if field.is_required()
+            else field.get_default(call_default_factory=True)
+        )
+        setattr(data, name, value)
+
 
 _COMPUTE = object()  # "calcular só para este projeto" (por oposição a `None` = sem catálogo)
 _PAYMENTS_COMPUTE = object()
@@ -143,6 +176,7 @@ def _to_read(
 
     data.editable_fields = _editable_fields(ctx, project)
     data.can_manage_tasks = can_create_task(ctx, project)
+    data.can_view_project_scope = can_view_project(ctx, project)
     data.can_change_status = can_change_project_status(ctx, project)
     data.can_plan_work = can_plan_project_work(ctx, project)
     data.has_project_photo = project.primary_photo_storage_name is not None
@@ -168,7 +202,7 @@ def _to_read(
                 "fim_obra": False,
                 "certificado_final": False,
             })
-            if summaries is not None
+            if summaries is not None and can_view_project_payments(ctx, project)
             else None
         )
     else:
@@ -176,6 +210,8 @@ def _to_read(
     data.installer_name = project.installer.name if project.installer else None
     data.installer_team_name = project.installer_team.name if project.installer_team else None
     data.installer_team_leader_name = project.installer_team.leader_name if project.installer_team else None
+    if project.deleted_at is None and not data.can_view_project_scope:
+        _redact_foreign_pm_project(data)
     if is_installer_readonly_scope(ctx):
         # External read model contains business context only; never expose
         # contact, admin/audit, integration, or foreign-person fields.
@@ -234,7 +270,7 @@ def list_projects_endpoint(
     invalid = sorted(set(lifecycle_status or []) - LIFECYCLE_STATUS_CODES)
     if invalid:
         raise HTTPException(status_code=400, detail=f"Estado do ciclo de vida inválido: {', '.join(invalid)}")
-    projects = list_projects(
+    projects = list_projects_channel(
         db,
         ctx,
         pm_person_id=pm_person_id,
@@ -244,6 +280,12 @@ def list_projects_endpoint(
         start_to=start_to,
         lifecycle_statuses=lifecycle_status,
     )
+    if status is not None:
+        # `status` deriva das tarefas e fica redigido (valor por omissão) fora do âmbito normal do
+        # utilizador: com este filtro ativo esses projetos ficam sempre excluídos (como nos filtros de
+        # data), sem filtrar sobre o valor redigido nem calcular o resumo das suas tarefas.
+        normal_ids = {pid for (pid,) in visible_projects_query(db, ctx).with_entities(Project.id)}
+        projects = [p for p in projects if p.id in normal_ids]
     percents = progress_percent_by_project(db, [p.id for p in projects])
     payments = (
         payment_summaries_by_project(db, ctx=ctx, projects=projects)
@@ -355,7 +397,9 @@ def get_project_endpoint(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectRead:
-    project = visible_project_or_404(db, ctx, project_id)
+    project = get_project_channel_project(db, ctx, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
     return _to_read(db, project, ctx)
 
 
@@ -434,8 +478,10 @@ def change_project_status_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectStatusChangeResult:
     _require_installer_mutation_scope(ctx)
-    # 404 (não 403) fora do âmbito: nunca revela que o projeto existe.
-    project = visible_project_or_404(db, ctx, project_id)
+    # 404 (não 403) fora do canal Projetos: nunca revela projeto apagado.
+    project = get_project_channel_project(db, ctx, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
     if body.lifecycle_status not in LIFECYCLE_STATUS_CODES:
         raise HTTPException(status_code=422, detail=f"Estado de projeto inválido: {body.lifecycle_status!r}")
     updated, warning = change_lifecycle_status(
