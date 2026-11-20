@@ -346,7 +346,7 @@ O CI corre o pytest em SQLite e em PostgreSQL 16, e no frontend `tsc`, `vitest` 
 - **Backup:** passou a `pg_dump -Fc`; o restauro foi ensaiado num PostgreSQL descartável e as contagens bateram certo.
 - **Pendentes:**
   - `ENTRA_JIT_LINK_BY_EMAIL=true` é temporário; retirar quando os 4 utilizadores ativos sem `entra_object_id` tiverem entrado uma vez.
-  - O script de ensaio de restauro (`op_pm_restore_drill.sh`) ainda é para SQLite e tem de ser adaptado ao `pg_dump`.
+  - ✅ (2026-11-20) O ensaio de restauro passou a PostgreSQL: `pg_restore` num PostgreSQL descartável em rede interna, contagens das 110 tabelas iguais ao manifesto, `alembic current` no head e consulta pelo ORM; testes de falha (byte corrompido, manifesto adulterado) repetidos.
   - Falta o off-site.
   - Alinhar os `server_default` entre modelos e migrações.
 
