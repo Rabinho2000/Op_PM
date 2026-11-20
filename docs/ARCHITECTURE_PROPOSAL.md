@@ -197,12 +197,11 @@ para a confirmação de negócio pendente.
 
 ### Microsoft Graph
 
-Interface: `app/adapters/graph/base.py` —
-`get_availability`/`create_draft_email`/`send_mail`/`create_event`.
-Implementação de Fase 0: `LocalFallbackGraphAdapter` — grava `.eml`/`.ics`
-locais, nunca entrega/publica de verdade, mesmo com `approved_by`
-preenchido (D-010). Ativar `GRAPH_ENABLED=true` sem a implementação real
-levanta `NotImplementedError` de propósito.
+Implementação real só do envio de email: `app/adapters/graph_mail.py`
+(`GraphMailSender`, usado por `app.services.client_reports` com
+`GRAPH_ENABLED=true`; sem a flag grava um `.eml` na pasta `outbox`). O
+adaptador de Fase 0 (`LocalFallbackGraphAdapter`, interface `graph/base.py`,
+D-010) foi removido por estar sem uso. Calendário/eventos: por implementar.
 
 Quando implementado a sério: Microsoft Graph é a via única para Outlook
 clássico e novo (ambos leem o mesmo Exchange Online via Graph — não há
@@ -211,8 +210,8 @@ automação COM, que só funcionaria com Outlook clássico local).
 ### ClickUp
 
 Interface: `app/adapters/clickup/base.py` — `fetch_tasks()`, só leitura.
-Implementação de Fase 0: `MockClickUpAdapter`, lê
-`backend/fixtures/synthetic_clickup_tasks.json`. A correspondência
+Mock mantido como ponto de partida da integração real (adiada):
+`MockClickUpAdapter`, lê `backend/fixtures/synthetic_clickup_tasks.json`. A correspondência
 projeto↔tarefa é sempre por `ProjectExternalId(source_system='clickup')`
 (D-004) — nunca por nome. Nenhuma escrita de volta para o ClickUp está
 prevista nesta arquitetura.
@@ -220,21 +219,20 @@ prevista nesta arquitetura.
 ### Financial
 
 Interface: `app/adapters/financial/base.py` — `fetch_real_costs()`, só
-leitura. Implementações: `MockFinancialAdapter` (sintético) e
-`CsvFinancialAdapter` (real, lê CSV local — D-011). `api`/`excel`
+leitura. Implementação: `CsvFinancialAdapter` (lê CSV local — D-011; o mock
+sintético foi removido). `api`/`excel`
 definidos na interface, não implementados. Sistema real por confirmar —
 ver `OPEN_QUESTIONS.md`.
 
 ### Claude / MCP
 
-Interface: `app/adapters/claude/base.py` — nove ferramentas
-(`propose_visit_dates`, `check_availability`, `analyze_travel`,
-`draft_client_email`, `draft_material_request`, `analyze_budget`,
-`draft_weekly_report`, `search_documentation`, `summarize_project`). Todas
-devolvem `ToolResult` (texto + estrutura opcional) — nenhuma tem
-capacidade de enviar email, criar evento, mudar stock/custo ou adjudicar.
-Implementação de Fase 0: `MockClaudeAdapter`, texto determinístico marcado
-`[MOCK]`, sem rede.
+Sem código: a interface de nove ferramentas (`propose_visit_dates`,
+`check_availability`, `analyze_travel`, `draft_client_email`,
+`draft_material_request`, `analyze_budget`, `draft_weekly_report`,
+`search_documentation`, `summarize_project`) e o `MockClaudeAdapter` foram
+removidos (Fase 2) por estarem sem uso. Qualquer implementação futura mantém a
+regra: nenhuma ferramenta envia email, cria evento, muda stock/custo ou
+adjudica.
 
 **Regras de aprovação (aplicadas pelo modelo `AiAuditLog` e
 `app/audit/log.py`):**

@@ -5,13 +5,13 @@
 import { DragEvent, useCallback, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  ApiError,
   applyNotesImport,
   FieldImportBatch,
   FieldImportConflict,
   getImportBatch,
   previewNotesImport,
   resolveImportConflict,
+  errorMessage,
 } from "../api/client";
 import Icon from "../components/Icon";
 import { useToast } from "../components/Toast";
@@ -137,7 +137,7 @@ export default function ImportNotes() {
       const result = await previewNotesImport(file);
       setBatch(result);
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível processar o ficheiro.");
+      setError(errorMessage(err, "Não foi possível processar o ficheiro."));
     } finally {
       setUploading(false);
     }
@@ -161,7 +161,7 @@ export default function ImportNotes() {
       await resolveImportConflict(conflictId, resolution);
       await refreshBatch();
     } catch (err) {
-      notify(err instanceof ApiError ? err.detail : "Não foi possível resolver o conflito.", "error");
+      notify(errorMessage(err, "Não foi possível resolver o conflito."), "error");
     }
   }
 
@@ -176,7 +176,7 @@ export default function ImportNotes() {
       );
       navigate(`/projects/${result.project_id}`);
     } catch (err) {
-      notify(err instanceof ApiError ? err.detail : "Não foi possível aplicar a importação.", "error");
+      notify(errorMessage(err, "Não foi possível aplicar a importação."), "error");
     } finally {
       setApplying(false);
     }

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../components/Toast";
 import type { CabosEngine, BoardView, Result, State } from "./engine";
@@ -27,7 +27,7 @@ const board = {
   components: null,
 } as unknown as BoardView;
 
-function renderBoards(front: string | null) {
+async function renderBoards(front: string | null) {
   const engine = {
     views: {
       boards: vi.fn(() => ({ boards: [board] })),
@@ -37,13 +37,16 @@ function renderBoards(front: string | null) {
   } as unknown as CabosEngine;
 
   render(<ToastProvider><QuadrosTab state={state} result={result} engine={engine} readOnly apply={vi.fn()} /></ToastProvider>);
+  // As vistas vêm do motor (assíncrono, no worker).
+  await waitFor(() => expect(engine.views.boardFront).toHaveBeenCalled());
+  await screen.findByText("QFV-PRINCIPAL");
   return engine;
 }
 
 describe("frente Hager nos cartões Quadros", () => {
-  it("pede o desenho pelo id do quadro, mostra-o e sanitiza conteúdo SVG ativo", () => {
+  it("pede o desenho pelo id do quadro, mostra-o e sanitiza conteúdo SVG ativo", async () => {
     const front = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80" width="120" height="80" role="img" aria-label="Frente do quadro QFV"><title>Frente Hager</title><g transform="translate(2 2)"><rect width="40" height="20" fill="#fff" onerror="alert(1)"/><text x="4" y="12">Hager QFV</text><script>alert(2)</script><foreignObject><div>perigoso</div></foreignObject></g></svg>`;
-    const engine = renderBoards(front);
+    const engine = await renderBoards(front);
 
     expect(engine.views.boardFront).toHaveBeenCalledOnce();
     expect(engine.views.boardFront).toHaveBeenCalledWith(state, result, "QFV-PRINCIPAL");
@@ -58,8 +61,8 @@ describe("frente Hager nos cartões Quadros", () => {
     expect(JSON.stringify(result)).toBe('{"invC":[],"pC":[]}');
   });
 
-  it("mantém o esboço legado quando boardFront devolve null", () => {
-    const engine = renderBoards(null);
+  it("mantém o esboço legado quando boardFront devolve null", async () => {
+    const engine = await renderBoards(null);
 
     expect(engine.views.boardFront).toHaveBeenCalledWith(state, result, "QFV-PRINCIPAL");
     expect(screen.queryByRole("img", { name: "Frente do quadro QFV" })).not.toBeInTheDocument();

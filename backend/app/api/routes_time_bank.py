@@ -55,6 +55,7 @@ from app.services.time_bank_ledger import (
     list_time_bank_notes,
 )
 from app.services.time_bank_import import MAX_UPLOAD_BYTES, TimeBankImportError
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/time-bank", tags=["time-bank"])
 
@@ -398,7 +399,7 @@ def import_get_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ImportRead:
     try:
-        if not ctx.has_permission("time_bank.manage_all"):
+        if not ctx.has_permission(Perm.TIME_BANK_MANAGE_ALL):
             raise TimeBankForbidden("Sem permissão para consultar lotes de importação.")
         batch = db.get(TimeBankImportBatch, batch_id)
         if batch is None:

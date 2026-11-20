@@ -18,6 +18,7 @@ from app.models.user_requests import (
 )
 from app.schemas.user_requests import RequestCreate, RequestMessageCreate
 from app.security.permissions import AuthContext
+from app.security.perm import Perm
 
 MAX_OPEN_REQUESTS_PER_AUTHOR = 20
 MAX_MESSAGE_BODY_LENGTH = 2000
@@ -52,11 +53,11 @@ def _now_utc() -> dt.datetime:
 
 
 def _is_manager(ctx: AuthContext) -> bool:
-    return ctx.has_permission("requests.manage")
+    return ctx.has_permission(Perm.REQUESTS_MANAGE)
 
 
 def _require_create(ctx: AuthContext) -> None:
-    if not ctx.has_permission("requests.create"):
+    if not ctx.has_permission(Perm.REQUESTS_CREATE):
         raise UserRequestForbidden("Sem permissão para criar pedidos.")
 
 

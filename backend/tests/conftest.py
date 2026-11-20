@@ -36,6 +36,14 @@ if "DATABASE_URL" not in os.environ:
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("GRAPH_FALLBACK_DIR", str(Path(tempfile.gettempdir()) / "op_pm_test_outbox"))
 
+# Chave pública do validador Entra 'mock' (M13): o par de chaves é gerado em
+# `tests/entra_mock.py`, nunca está no código da aplicação.
+from tests.entra_mock import TEST_PUBLIC_KEY_PEM  # noqa: E402
+
+_ENTRA_MOCK_KEY_PATH = Path(tempfile.gettempdir()) / f"op_pm_test_entra_mock_{os.getpid()}.pem"
+_ENTRA_MOCK_KEY_PATH.write_text(TEST_PUBLIC_KEY_PEM, encoding="ascii")
+os.environ["ENTRA_MOCK_PUBLIC_KEY_FILE"] = str(_ENTRA_MOCK_KEY_PATH)
+
 from sqlalchemy import event  # noqa: E402
 
 from app.db import Base, SessionLocal, engine  # noqa: E402

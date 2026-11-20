@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.models.holiday import Holiday
 from app.schemas.holidays import HolidayCreate, HolidayUpdate
-from app.security.permissions import AuthContext, PermissionDenied
+from app.security.permissions import AuthContext
+from app.security.perm import Perm
 
 
 def easter_sunday(year: int) -> dt.date:
@@ -43,7 +44,7 @@ def list_holidays(
 
 
 def create_holiday(db: Session, *, changes: HolidayCreate, ctx: AuthContext) -> Holiday:
-    ctx.require("holiday.manage")
+    ctx.require(Perm.HOLIDAY_MANAGE)
     holiday = Holiday(date=changes.date, name=changes.name, scope=changes.scope, is_active=True)
     db.add(holiday)
     db.commit()
@@ -52,7 +53,7 @@ def create_holiday(db: Session, *, changes: HolidayCreate, ctx: AuthContext) -> 
 
 
 def update_holiday(db: Session, *, holiday: Holiday, changes: HolidayUpdate, ctx: AuthContext) -> Holiday:
-    ctx.require("holiday.manage")
+    ctx.require(Perm.HOLIDAY_MANAGE)
     for field, value in changes.model_dump(exclude_unset=True).items():
         if value is not None:
             setattr(holiday, field, value)
@@ -62,13 +63,8 @@ def update_holiday(db: Session, *, holiday: Holiday, changes: HolidayUpdate, ctx
 
 
 def deactivate_holiday(db: Session, *, holiday: Holiday, ctx: AuthContext) -> Holiday:
-    ctx.require("holiday.manage")
+    ctx.require(Perm.HOLIDAY_MANAGE)
     holiday.is_active = False
     db.commit()
     db.refresh(holiday)
     return holiday
-
-
-def require_holiday_manage(ctx: AuthContext) -> None:
-    if not ctx.has_permission("holiday.manage"):
-        raise PermissionDenied("holiday.manage")

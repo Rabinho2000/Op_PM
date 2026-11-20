@@ -1,7 +1,6 @@
 import { DragEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
-  ApiError,
   DEFAULT_TASK_TYPE_LABELS,
   listPeople,
   listProjects,
@@ -47,6 +46,7 @@ import {
   sortTasks,
 } from "../utils/taskListConfig";
 import "./Tasks.css";
+import { errorDetail } from "../utils/errors";
 
 const ALL_STATUSES: TaskStatus[] = ["todo", "in_progress", "blocked", "done", "cancelled"];
 const PRIORITIES: TaskPriority[] = ["urgent", "high", "medium", "low"];
@@ -71,12 +71,6 @@ type TaskListFilterPatch = Partial<TaskListFilters>;
 
 function taskLabel(t: Task): string {
   return t.task_type === "custom" ? t.title : DEFAULT_TASK_TYPE_LABELS[t.task_type] ?? t.title;
-}
-
-function errorDetail(error: unknown, fallback: string): string {
-  if (error instanceof ApiError) return error.detail;
-  if (error instanceof Error && error.message) return error.message;
-  return fallback;
 }
 
 function parseTaskPriority(value: string | null): TaskPriority | "" {

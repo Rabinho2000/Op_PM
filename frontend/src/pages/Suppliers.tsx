@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, listSupplierMaterialTypes, listSuppliers, Supplier, SupplierCompanyCode, SupplierFilters, SupplierMaterialType } from "../api/client";
+import { listSupplierMaterialTypes, listSuppliers, Supplier, SupplierCompanyCode, SupplierFilters, SupplierMaterialType, errorMessage } from "../api/client";
 import "./Suppliers.css";
 import Icon from "../components/Icon";
 import SupplierFormModal from "../components/SupplierForm";
@@ -65,7 +65,7 @@ export default function Suppliers() {
     setSuppliers(null);
     listSuppliers(toApiFilters({ search: debouncedSearch, materialType, active, company }))
       .then((result) => !cancelled && setSuppliers(result))
-      .catch((e) => !cancelled && setError(e instanceof ApiError ? e.detail : "Não foi possível contactar o servidor."));
+      .catch((e) => !cancelled && setError(errorMessage(e, "Não foi possível contactar o servidor.")));
     return () => {
       cancelled = true;
     };

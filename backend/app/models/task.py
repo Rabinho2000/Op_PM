@@ -28,6 +28,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
+from app.models.constraints import vocabulary_check
 from app.utils.timezones import today_lisbon
 
 if TYPE_CHECKING:
@@ -117,6 +118,11 @@ DEFAULT_TASK_TYPE_CATEGORIES: dict[str, str] = {
 
 class Task(UUIDPk, TimestampMixin, Base):
     __tablename__ = "tasks"
+    __table_args__ = (
+        vocabulary_check("status", TASK_STATUSES, name="ck_tasks_status"),
+        vocabulary_check("priority", TASK_PRIORITIES, name="ck_tasks_priority"),
+        vocabulary_check("category", TASK_CATEGORIES, name="ck_tasks_category"),
+    )
 
     project_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("projects.id"), nullable=False)
     title: Mapped[str] = mapped_column(String(256), nullable=False)

@@ -1,9 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
-  ApiError,
   createTeamAssignment,
   deleteTeamAssignment,
-  formatApiDetail,
   Installer,
   listInstallers,
   listTeamAssignments,
@@ -12,15 +10,11 @@ import {
   TeamAssignmentInput,
   TeamAssignmentUpdate,
   updateTeamAssignment,
+  errorMessage,
 } from "../api/client";
 import { formatDatePt } from "../utils/dates";
 import Icon from "./Icon";
 import { Alert, Badge, EmptyState, Modal } from "./ui";
-
-function errorMessage(error: unknown): string {
-  if (error instanceof ApiError) return formatApiDetail(error.detail) ?? error.message;
-  return "Não foi possível contactar o servidor.";
-}
 
 function emptyForm(project: Project): TeamAssignmentInput {
   return {

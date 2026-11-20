@@ -11,8 +11,9 @@ from app.config import Settings, get_settings
 from app.db import get_db
 from app.models.project import Project, ProjectHistory
 from app.security.current_user import get_auth_context
-from app.security.permissions import AuthContext, can_edit_project, can_view_project
+from app.security.permissions import AuthContext, can_edit_project
 from app.services.file_storage import detect_image_type, safe_stored_file_path, write_private_file
+from app.api.deps import get_visible_project_or_404
 
 router = APIRouter(prefix="/api/projects", tags=["project-photos"])
 MAX_PROJECT_PHOTO_BYTES = 10 * 1024 * 1024
@@ -28,7 +29,11 @@ def _detect_image_type(content: bytes) -> tuple[str, str] | None:
     return detect_image_type(content)
 
 
-def _get_project_or_404(db: Session, project_id: uuid.UUID) -> Project:
+def _get_project_for_edit_or_404(db: Session, project_id: uuid.UUID) -> Project:
+    # Só para escrever (POST/DELETE): 404 "simples" para um projeto inexistente ou
+    # apagado e 403 (em `_require_photo_edit`) a quem não o pode editar — regra
+    # diferente da do resto da API (`get_visible_project_or_404`: 404 sempre que o
+    # projeto não é visível). Ver docs/ANALISE_OP_PM.md, secção 5, item 1.
     project = db.get(Project, project_id)
     if project is None or project.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Projeto não encontrado.")
@@ -74,7 +79,7 @@ async def upload_project_photo(
     ctx: AuthContext = Depends(get_auth_context),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, str | bool]:
-    project = _get_project_or_404(db, project_id)
+    project = _get_project_for_edit_or_404(db, project_id)
     _require_photo_edit(ctx, project)
 
     content = await file.read(MAX_PROJECT_PHOTO_BYTES + 1)
@@ -118,14 +123,9 @@ async def upload_project_photo(
 
 @router.get("/{project_id}/photo")
 def get_project_photo(
-    project_id: uuid.UUID,
-    db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    project: Project = Depends(get_visible_project_or_404),
     settings: Settings = Depends(get_settings),
 ) -> Response:
-    project = _get_project_or_404(db, project_id)
-    if not can_view_project(ctx, project):
-        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
     path = _stored_photo_path(settings, project.primary_photo_storage_name)
     content_type = project.primary_photo_content_type
     if path is None or content_type not in {value[0] for value in _ALLOWED_MIME_TYPES.values()} or not path.is_file():
@@ -148,7 +148,7 @@ def delete_project_photo(
     ctx: AuthContext = Depends(get_auth_context),
     settings: Settings = Depends(get_settings),
 ) -> Response:
-    project = _get_project_or_404(db, project_id)
+    project = _get_project_for_edit_or_404(db, project_id)
     _require_photo_edit(ctx, project)
     old_name = project.primary_photo_storage_name
     if old_name is None:

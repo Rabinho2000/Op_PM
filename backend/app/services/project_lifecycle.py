@@ -12,7 +12,7 @@ duplica.
 """
 from __future__ import annotations
 
-import unicodedata
+from app.utils.text import lower_strip_accents
 
 # (código estável, rótulo). A ordem é a de apresentação.
 LIFECYCLE_STATUSES: tuple[tuple[str, str], ...] = (
@@ -58,8 +58,7 @@ _LEGACY_MAP: dict[str, str] = {
 
 
 def _normalize(raw: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", raw.strip().lower())
-    return "".join(c for c in decomposed if not unicodedata.combining(c))
+    return lower_strip_accents(raw)
 
 
 def lifecycle_status_from_legacy(raw: str | None) -> str | None:

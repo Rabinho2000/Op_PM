@@ -5,6 +5,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { SolcorLogo } from "./SolcorLogo";
 import { getDevUser, getSessionDisplayName, logoutCurrentSession } from "../api/client";
 import { getRequestsSummary } from "../api/requests";
+import type { Perm } from "../generated/permissions";
 import { useSession } from "../session/SessionContext";
 import { isInstallerCollaborator } from "../session/installerAccess";
 import Icon, { IconName } from "./Icon";
@@ -21,7 +22,7 @@ interface NavItem {
   // Só aparece a quem tem pelo menos uma destas permissões (o servidor
   // volta sempre a validar em cada pedido — isto é só para não mostrar um
   // link que levaria a um 403).
-  permission?: string | string[];
+  permission?: Perm | Perm[];
   roles?: string[];
   end?: boolean;
 }
@@ -54,7 +55,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: "/time-bank", label: "Banco de Horas", icon: "clock", permission: ["time_bank.view_own", "time_bank.view_all"] },
   { to: "/requests", label: "Pedidos", icon: "inbox", permission: "requests.manage" },
   { to: "/alerts", label: "Alertas", icon: "bell", permission: "process_alert.use" },
-  { to: "/my-process", label: "As minhas etapas", icon: "listCheck", permission: ["process.view_own", "process.update_own"], roles: ["suporte_operacoes"] },
+  { to: "/my-process", label: "As minhas etapas", icon: "listCheck", roles: ["suporte_operacoes"] },
   // O backend autoriza Administrador e Chefe de Operações por papel, mesmo
   // quando o segundo não tem a permissão administrativa genérica.
   { to: "/support", label: "Suporte de operações", icon: "user", permission: "admin.manage_users", roles: ["admin", "administrador", "chefe_operacoes"] },
@@ -345,7 +346,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   const hasNavPermission = (item: NavItem) => {
     if (isInstallerCollaborator(me) && !INSTALLER_NAV_PATHS.has(item.to)) return false;
     if (item.roles?.some((role) => me?.roles.includes(role))) return true;
-    if (!item.permission) return true;
+    if (!item.permission) return !item.roles;
     const codes = Array.isArray(item.permission) ? item.permission : [item.permission];
     return codes.some(can);
   };

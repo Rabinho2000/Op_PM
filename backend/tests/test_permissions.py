@@ -5,8 +5,10 @@ from __future__ import annotations
 from app.models.identity import User
 from app.models.people import Person
 from app.models.project import Project
-from app.security.permissions import can_edit_project, can_view_project, load_auth_context
-from app.services.projects import visible_projects_query
+
+from app.security.catalog import PERMISSIONS, ROLE_PERMISSIONS
+from app.security.permissions import can_change_project_status, can_edit_project, can_view_project, can_view_project_payments, can_update_process, load_auth_context
+from app.services.projects import project_channel_visible_query, visible_projects_query
 
 
 def test_pm_can_edit_only_own_project(db_session):
@@ -20,6 +22,34 @@ def test_pm_can_edit_only_own_project(db_session):
     unrelated_project = db.query(Project).filter(Project.name == "Instalação Sintética Incompleta").one()
     assert unrelated_project.pm_person_id is None
     assert can_edit_project(ctx, unrelated_project) is False
+
+
+def test_pm_cross_project_read_and_status_do_not_grant_other_writes_or_finance(db_session):
+    pm_user = db_session.query(User).filter(User.email == "pm.um.sintetico@example.invalid").one()
+    ctx = load_auth_context(db_session, pm_user)
+    own_project = db_session.query(Project).filter(Project.pm_person_id == ctx.person_id).first()
+    other_project = db_session.query(Project).filter(Project.pm_person_id != ctx.person_id).first()
+
+    assert own_project is not None and other_project is not None
+    assert "project.view_all_pm_status" in ctx.permission_codes
+    own_ids = {p.id for p in visible_projects_query(db_session, ctx).all()}
+    assert own_ids and all(p.pm_person_id == ctx.person_id for p in db_session.query(Project).filter(Project.id.in_(own_ids)))
+    assert {p.id for p in project_channel_visible_query(db_session, ctx).all()} == {
+        p.id for p in db_session.query(Project).filter(Project.deleted_at.is_(None)).all()
+    }
+    assert can_change_project_status(ctx, other_project) is True
+    assert can_edit_project(ctx, other_project) is False
+    assert can_update_process(ctx, other_project) is False
+    assert can_view_project_payments(ctx, other_project) is False
+    assert can_view_project(ctx, other_project) is False
+
+
+def test_pm_cross_project_capability_is_catalogued_but_not_general_or_financial():
+    assert "project.view_all_pm_status" in PERMISSIONS
+    assert "project.view_all_pm_status" in ROLE_PERMISSIONS["project_manager"]
+    assert "project.view_all_pm_status" not in ROLE_PERMISSIONS["financeiro"]
+    assert "project.view_all" not in ROLE_PERMISSIONS["project_manager"]
+    assert "project.edit_all" not in ROLE_PERMISSIONS["project_manager"]
 
 
 def test_pm_cannot_view_projects_outside_scope_without_view_all(db_session):

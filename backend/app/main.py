@@ -50,6 +50,8 @@ from app.api.routes_task_list_views import views_router as task_list_views_route
 from app.api.routes_time_bank import router as time_bank_router
 from app.config import get_settings
 from app.logging_setup import configure_logging
+from app.security.guards import permission_denied_handler
+from app.security.permissions import PermissionDenied
 
 configure_logging()
 settings = get_settings()
@@ -60,7 +62,7 @@ app = FastAPI(
     description=(
         "API do Op_PM (autenticação Microsoft Entra ID). Integrações: envio do "
         "relatório semanal por Microsoft Graph quando GRAPH_ENABLED=true "
-        "(senão outbox local); ClickUp, Financial e Claude continuam mock. "
+        "(senão outbox local); ClickUp, Financial e Claude ainda não têm integração. "
         "Ver README.md e docs/DECISIONS.md no repositório."
     ),
     # Fechada por omissão em instâncias com dados reais (API_DOCS_ENABLED).
@@ -68,6 +70,10 @@ app = FastAPI(
     redoc_url="/redoc" if _docs_enabled else None,
     openapi_url="/openapi.json" if _docs_enabled else None,
 )
+
+# Qualquer `PermissionDenied` (levantada por `ctx.require`, `require_permission` ou
+# pelos serviços) vira 403 com `{"detail": ...}` — ver app/security/guards.py.
+app.add_exception_handler(PermissionDenied, permission_denied_handler)
 
 app.add_middleware(
     CORSMiddleware,

@@ -49,9 +49,10 @@ afterEach(() => {
 });
 
 describe("separador Esquema unifilar", () => {
-  it("sanitiza o SVG antes de o inserir e fornece controlos de zoom e pan", () => {
+  it("sanitiza o SVG antes de o inserir e fornece controlos de zoom e pan", async () => {
     const engine = engineFor();
     const { container } = render(<ToastProvider><EsquemaUnifilarTab {...props(engine)} /></ToastProvider>);
+    await waitFor(() => expect(container.querySelector('[data-testid="sld-svg"]')).not.toBeNull());
     const drawing = container.querySelector('[data-testid="sld-svg"]');
     expect(drawing?.innerHTML).toContain("Esquema seguro");
     expect(drawing?.innerHTML).not.toMatch(/script|foreignObject|onerror/i);
@@ -88,7 +89,7 @@ describe("separador Esquema unifilar", () => {
 
   it("mostra erro quando uma exportação falha", async () => {
     const engine = engineFor();
-    engine.exports.sldSvg = vi.fn(async () => { throw new Error("falha"); });
+    (engine.exports as { sldSvg: unknown }).sldSvg = vi.fn(async () => { throw new Error("falha"); });
     render(<ToastProvider><EsquemaUnifilarTab {...props(engine)} /></ToastProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Descarregar PDF" }));
     await waitFor(() => expect(engine.exports.sldPdf).toHaveBeenCalledWith(state, result));
@@ -98,7 +99,7 @@ describe("separador Esquema unifilar", () => {
 });
 
 describe("separador Quadros", () => {
-  it("renderiza aparelhagem, envolvente, espaço útil, aviso e total", () => {
+  it("renderiza aparelhagem, envolvente, espaço útil, aviso e total", async () => {
     const engine = engineFor({
       views: {
         sld: vi.fn(),
@@ -125,7 +126,7 @@ describe("separador Quadros", () => {
       },
     });
     render(<ToastProvider><QuadrosTab {...props(engine)} /></ToastProvider>);
-    expect(screen.getByText("QFV")).toBeInTheDocument();
+    expect(await screen.findByText("QFV")).toBeInTheDocument();
     expect(screen.getByText("REF-1")).toBeInTheDocument();
     expect(screen.getByLabelText(/ENV-1/)).toBeInTheDocument();
     expect(screen.getByTestId("board-space-svg")).toBeInTheDocument();
@@ -134,7 +135,7 @@ describe("separador Quadros", () => {
     expect(screen.getByText(/Raio de curvatura/)).toBeInTheDocument();
   });
 
-  it("avisa quando o quadro não cabe numa envolvente de parede", () => {
+  it("avisa quando o quadro não cabe numa envolvente de parede", async () => {
     const engine = engineFor({ views: {
       sld: vi.fn(), circuitRows: vi.fn(), boards: vi.fn(() => ({ boards: [{
         node: "CLI", role: "CLI", isEnd: true, inputs: [], output: null,
@@ -144,7 +145,7 @@ describe("separador Quadros", () => {
       }] })),
     }});
     render(<ToastProvider><QuadrosTab {...props(engine)} /></ToastProvider>);
-    expect(screen.getByText("Não cabe num quadro de parede")).toBeInTheDocument();
+    expect(await screen.findByText("Não cabe num quadro de parede")).toBeInTheDocument();
   });
 });
 

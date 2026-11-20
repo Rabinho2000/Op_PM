@@ -1,9 +1,5 @@
 export {};
 
-declare global {
-  const CabosEngine: CabosEngine;
-}
-
 type Material = 'auto' | 'Cu' | 'Al';
 type Constitution = 'mono' | 'multi' | 'rota';
 type RouteConstitution = 'mono' | 'multi';
@@ -677,7 +673,12 @@ export interface Exports {
 }
 export interface Compare { variants(state: State): Variant[]; apply(state: State, variantId: string): State; }
 
-export interface CabosEngine {
+/**
+ * Superfície que o script privado publica em `globalThis.CabosEngine` DENTRO do
+ * Web Worker (síncrona). A página nunca lhe toca: só o worker (ver
+ * `engineWorker/`) a usa. A UI recebe `CabosEngine`, a fachada assíncrona.
+ */
+export interface RawCabosEngine {
   readonly protocol: 1;
   readonly engine_version: string;
   newState(templateId?: string): State;
@@ -698,4 +699,31 @@ export interface CabosEngine {
   readonly persistedResult: (state: State, result: Result) => PersistedResult;
   readonly exports: Exports;
   readonly compare: Compare;
+}
+
+
+/** `(a) => R` passa a `(a) => Promise<R>`; o que não é função fica como está. */
+type Asyncify<F> = F extends (...args: infer A) => infer R ? (...args: A) => Promise<Awaited<R>> : F;
+type AsyncGroup<T> = { readonly [K in keyof T]: Asyncify<T[K]> };
+
+/**
+ * Fachada que a UI usa: os dados estáticos (modelos, catálogos, versão) são
+ * síncronos e vêm da mensagem `ready` do worker; todos os cálculos são
+ * assíncronos (mensagens para o worker; ver `engineWorker/client.ts`).
+ */
+export interface CabosEngine {
+  readonly protocol: 1;
+  readonly engine_version: string;
+  readonly templates: readonly Template[];
+  readonly catalogs: Catalogs;
+  installModeImage(id: string): readonly string[] | null;
+  newState: Asyncify<RawCabosEngine['newState']>;
+  migrate: Asyncify<RawCabosEngine['migrate']>;
+  solve: Asyncify<RawCabosEngine['solve']>;
+  summarize: Asyncify<RawCabosEngine['summarize']>;
+  persistedResult: Asyncify<RawCabosEngine['persistedResult']>;
+  readonly views: AsyncGroup<RawCabosEngine['views']>;
+  readonly actions: AsyncGroup<Actions>;
+  readonly exports: AsyncGroup<Exports>;
+  readonly compare: AsyncGroup<Compare>;
 }

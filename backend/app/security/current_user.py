@@ -40,6 +40,7 @@ from app.security.entra_auth import (
     get_token_validator,
 )
 from app.security.permissions import AuthContext, load_auth_context
+from app.utils.email import normalize_email
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ def _resolve_user_from_entra_claims(db: Session, claims: EntraClaims, settings: 
         .filter(
             User.entra_object_id.is_(None),
             User.is_active.is_(True),
-            func.lower(User.email) == claims.email.strip().lower(),
+            func.lower(User.email) == normalize_email(claims.email),
         )
         .all()
     )
@@ -160,7 +161,11 @@ def get_current_user(
             detail="Cabeçalho de desenvolvimento X-Dev-User-Email em falta "
             "(AUTH_ENABLED=false — sem Entra ID configurado).",
         )
-    user = db.query(User).filter(User.email == x_dev_user_email, User.is_active.is_(True)).one_or_none()
+    user = (
+        db.query(User)
+        .filter(func.lower(User.email) == normalize_email(x_dev_user_email), User.is_active.is_(True))
+        .one_or_none()
+    )
     if user is None:
         raise HTTPException(status_code=401, detail="Utilizador de desenvolvimento desconhecido ou inativo.")
     return user

@@ -10,7 +10,7 @@ import datetime as dt
 import re
 import uuid
 
-from sqlalchemy import case, func, or_, text
+from sqlalchemy import and_, case, func, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Query, Session
 
@@ -23,6 +23,7 @@ from app.schemas.projects import ProjectCreate, ProjectUpdate
 from app.security.catalog import ROLE_PM
 from app.security.permissions import (
     AuthContext,
+    DENIED_INSTALLER_READ_ONLY,
     PermissionDenied,
     can_change_project_status,
     can_edit_project,
@@ -38,6 +39,7 @@ from app.services.project_lifecycle import (
 from app.services.installers import derive_work_window
 from app.security.project_fields import PM_EDITABLE_PROJECT_FIELDS
 from app.utils.text import normalize_key
+from app.security.perm import Perm
 
 _STANDARD_TASK_TYPES = frozenset(code for code, _ in DEFAULT_TASK_TYPES)
 _NUMERIC_PROJECT_PREFIX = re.compile(r"^\s*(\d+)_")
@@ -84,8 +86,8 @@ def eligible_project_managers(db: Session) -> list[tuple[uuid.UUID, str]]:
 def check_project_name(db: Session, *, name: str, ctx: AuthContext) -> list[Project]:
     """Return active project candidates sharing a normalized name or numeric prefix."""
     if is_installer_readonly_scope(ctx):
-        raise PermissionDenied("installer.read_only")
-    ctx.require("project.edit_all")
+        raise PermissionDenied(DENIED_INSTALLER_READ_ONLY)
+    ctx.require(Perm.PROJECT_EDIT_ALL)
 
     normalized = _normalize_project_name(name)
     prefix = _query_numeric_prefix(name)
@@ -106,8 +108,8 @@ def create_project(db: Session, *, body: ProjectCreate, ctx: AuthContext, commit
     caller's transaction, without refreshing or committing, so a route can
     build its response before deciding to commit."""
     if is_installer_readonly_scope(ctx):
-        raise PermissionDenied("installer.read_only")
-    ctx.require("project.edit_all")
+        raise PermissionDenied(DENIED_INSTALLER_READ_ONLY)
+    ctx.require(Perm.PROJECT_EDIT_ALL)
 
     name = body.name
     normalized_name = _normalize_project_name(name)
@@ -301,23 +303,92 @@ PROJECT_LIST_ORDER = (
 )
 
 
+def _project_list_order(normal_scope_ids: Query | None) -> tuple:
+    """Ordenação da lista. Fora do âmbito normal `entered_at` e a data de ligação estão redigidos:
+    esses projetos ficam depois dos do âmbito normal (dentro de cada estado) e só por nome."""
+    if normal_scope_ids is None:
+        return PROJECT_LIST_ORDER
+    in_scope = Project.id.in_(normal_scope_ids)
+    return (
+        PROJECT_LIST_ORDER[0],
+        case((in_scope, 0), else_=1).asc(),
+        case((in_scope, func.coalesce(Project.entered_at, Project.created_at)), else_=None).asc(),
+        case((in_scope, func.coalesce(Project.upac_connection_date_raw, "9999-99-99")), else_=None).asc(),
+        Project.name.asc(),
+    )
+
+
 def visible_projects_query(db: Session, ctx: AuthContext) -> Query:
-    """Restringe a query à visibilidade do utilizador — nunca devolve tudo
-    e filtra depois em Python (evita esquecer o filtro nalgum sítio)."""
+    """Restringe a query à visibilidade do utilizador. A capability PM
+    `project.view_all_pm_status` alarga apenas a leitura do registo base/lista;
+    as permissões de finanças e de escrita continuam a validar o âmbito próprio.
+    """
     query = db.query(Project).filter(Project.deleted_at.is_(None))
-    if ctx.has_permission("project.view_all"):
+    if ctx.has_permission(Perm.PROJECT_VIEW_ALL):
         return query
 
     conditions = []
-    if ctx.has_permission("project.view_own"):
+    if ctx.has_permission(Perm.PROJECT_VIEW_OWN):
         conditions.append(Project.pm_person_id == ctx.person_id)
-    if ctx.has_permission("project.view_delegated") and ctx.delegating_pm_ids:
+    if ctx.has_permission(Perm.PROJECT_VIEW_DELEGATED) and ctx.delegating_pm_ids:
         conditions.append(Project.pm_person_id.in_(ctx.delegating_pm_ids))
     conditions.extend(installer_project_scope_conditions(ctx))
     if conditions:
         return query.filter(or_(*conditions))
     # Sem nenhuma das permissões, ou sem delegações/associações atribuídas: nada visível.
     return query.filter(False)
+
+
+def project_channel_visible_query(db: Session, ctx: AuthContext) -> Query:
+    """Visibilidade dedicada ao canal Projetos (lista, ficha base e estado).
+
+    Só a capability operacional dos PM torna esta query transversal. Os outros
+    domínios devem continuar a usar ``visible_projects_query``.
+    """
+    query = db.query(Project).filter(Project.deleted_at.is_(None))
+    if ctx.has_permission(Perm.PROJECT_VIEW_ALL_PM_STATUS):
+        return query
+    return visible_projects_query(db, ctx)
+
+
+def _filter_project_list_query(
+    query: Query,
+    *,
+    pm_person_id: uuid.UUID | None,
+    is_active: bool | None,
+    search: str | None,
+    start_from: dt.date | None,
+    start_to: dt.date | None,
+    lifecycle_statuses: list[str] | None,
+    normal_scope_ids: Query | None = None,
+) -> Query:
+    """`normal_scope_ids`: ids do âmbito normal do utilizador, quando a query é mais larga (canal
+    PM). Fora desse âmbito o DTO é redigido, por isso a pesquisa só olha ao nome."""
+    if lifecycle_statuses:
+        query = query.filter(Project.lifecycle_status.in_(lifecycle_statuses))
+    if pm_person_id is not None:
+        query = query.filter(Project.pm_person_id == pm_person_id)
+    if is_active is not None:
+        query = query.filter(Project.is_active == is_active)
+    if search:
+        pattern = f"%{search.strip().lower()}%"
+        name_match = func.lower(Project.name).like(pattern)
+        detail_match = or_(
+            func.lower(Project.client_name).like(pattern),
+            func.lower(Project.client_contact).like(pattern),
+        )
+        if normal_scope_ids is not None:
+            detail_match = and_(Project.id.in_(normal_scope_ids), detail_match)
+        query = query.filter(or_(name_match, detail_match))
+    # `start_date` também é redigido fora do âmbito normal: com filtro de data ativo esses projetos
+    # ficam sempre excluídos (resultado constante, sem inferir a data redigida).
+    if start_from is not None:
+        query = query.filter(Project.start_date >= start_from)
+    if start_to is not None:
+        query = query.filter(Project.start_date <= start_to)
+    if normal_scope_ids is not None and (start_from is not None or start_to is not None):
+        query = query.filter(Project.id.in_(normal_scope_ids))
+    return query.order_by(*_project_list_order(normal_scope_ids))
 
 
 def list_projects(
@@ -331,37 +402,55 @@ def list_projects(
     start_to: dt.date | None = None,
     lifecycle_statuses: list[str] | None = None,
 ) -> list[Project]:
-    query = visible_projects_query(db, ctx)
-    if lifecycle_statuses:
-        query = query.filter(Project.lifecycle_status.in_(lifecycle_statuses))
-    if pm_person_id is not None:
-        query = query.filter(Project.pm_person_id == pm_person_id)
-    if is_active is not None:
-        query = query.filter(Project.is_active == is_active)
-    if search:
-        pattern = f"%{search.strip().lower()}%"
-        query = query.filter(
-            or_(
-                func.lower(Project.name).like(pattern),
-                func.lower(Project.client_name).like(pattern),
-                func.lower(Project.client_contact).like(pattern),
-            )
-        )
-    if start_from is not None:
-        query = query.filter(Project.start_date >= start_from)
-    if start_to is not None:
-        query = query.filter(Project.start_date <= start_to)
-    return query.order_by(*PROJECT_LIST_ORDER).all()
+    query = _filter_project_list_query(
+        visible_projects_query(db, ctx),
+        pm_person_id=pm_person_id,
+        is_active=is_active,
+        search=search,
+        start_from=start_from,
+        start_to=start_to,
+        lifecycle_statuses=lifecycle_statuses,
+    )
+    return query.all()
+
+
+def list_projects_channel(
+    db: Session,
+    ctx: AuthContext,
+    *,
+    pm_person_id: uuid.UUID | None = None,
+    is_active: bool | None = None,
+    search: str | None = None,
+    start_from: dt.date | None = None,
+    start_to: dt.date | None = None,
+    lifecycle_statuses: list[str] | None = None,
+) -> list[Project]:
+    query = _filter_project_list_query(
+        project_channel_visible_query(db, ctx),
+        pm_person_id=pm_person_id,
+        is_active=is_active,
+        search=search,
+        start_from=start_from,
+        start_to=start_to,
+        lifecycle_statuses=lifecycle_statuses,
+        normal_scope_ids=visible_projects_query(db, ctx).with_entities(Project.id),
+    )
+    return query.all()
 
 
 def get_visible_project(db: Session, ctx: AuthContext, project_id: uuid.UUID) -> Project | None:
-    """Read a project through the same SQL scope used by list endpoints."""
+    """Read a project through the canonical scope used by other domains."""
     return visible_projects_query(db, ctx).filter(Project.id == project_id).one_or_none()
+
+
+def get_project_channel_project(db: Session, ctx: AuthContext, project_id: uuid.UUID) -> Project | None:
+    """Read a base project record within the dedicated Projects channel."""
+    return project_channel_visible_query(db, ctx).filter(Project.id == project_id).one_or_none()
 
 
 def delete_project(db: Session, *, project: Project, reason: str, ctx: AuthContext) -> Project:
     """Remove um projeto da operação sem apagar os seus dados nem o histórico."""
-    ctx.require("project.delete")
+    ctx.require(Perm.PROJECT_DELETE)
     note = reason.strip()
     if not note:
         raise ValueError("Indique o motivo da remoção.")
@@ -387,7 +476,7 @@ def delete_project(db: Session, *, project: Project, reason: str, ctx: AuthConte
 
 def restore_project(db: Session, *, project: Project, ctx: AuthContext) -> Project:
     """Restaura um projeto apagado, preservando a auditoria de ambas ações."""
-    ctx.require("project.restore")
+    ctx.require(Perm.PROJECT_RESTORE)
     if project.deleted_at is None:
         raise ValueError("O projeto não está apagado.")
     deleted_at = project.deleted_at
@@ -434,23 +523,23 @@ def update_project(
     inteiro, antes de qualquer escrita — nunca aplica só os campos
     permitidos e ignora os outros em silêncio."""
     if is_installer_readonly_scope(ctx):
-        raise PermissionDenied("installer.read_only")
+        raise PermissionDenied(DENIED_INSTALLER_READ_ONLY)
     if not can_edit_project(ctx, project):
-        raise PermissionDenied("project.edit_all|project.edit_own_progress")
+        raise PermissionDenied(f"{Perm.PROJECT_EDIT_ALL}|{Perm.PROJECT_EDIT_OWN_PROGRESS}")
 
     # exclude_unset: um campo omitido do pedido nunca é tocado; um campo
     # presente com valor `null` limpa-o explicitamente — distinção
     # importante para não apagar dados por omissão de um campo no body.
     changed_fields = changes.model_dump(exclude_unset=True)
 
-    if not ctx.has_permission("project.edit_all"):
+    if not ctx.has_permission(Perm.PROJECT_EDIT_ALL):
         # Chegou aqui só com project.edit_own_progress (can_edit_project já
         # garantiu que é o PM deste projeto) — restringe à allowlist.
         disallowed_fields = sorted(set(changed_fields) - PM_EDITABLE_PROJECT_FIELDS)
         if disallowed_fields:
             raise PermissionDenied(
-                f"project.edit_all (campos administrativos não permitidos a "
-                f"project.edit_own_progress: {', '.join(disallowed_fields)})"
+                f"{Perm.PROJECT_EDIT_ALL} (campos administrativos não permitidos a "
+                f"{Perm.PROJECT_EDIT_OWN_PROGRESS}: {', '.join(disallowed_fields)})"
             )
 
     for field_name, new_value in changed_fields.items():
@@ -488,7 +577,7 @@ def change_lifecycle_status(
     projeto, um aviso opcional quando a mudança salta estados (D6 — livre, só
     avisa). Repetir o estado atual é um no-op: sem histórico, sem aviso."""
     if not can_change_project_status(ctx, project):
-        raise PermissionDenied("project.change_status")
+        raise PermissionDenied(Perm.PROJECT_CHANGE_STATUS)
     if new_status not in LIFECYCLE_STATUS_CODES:
         raise ValueError(f"Estado de projeto inválido: {new_status!r}")
     old_status = project.lifecycle_status

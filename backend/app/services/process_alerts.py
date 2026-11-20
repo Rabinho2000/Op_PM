@@ -29,8 +29,9 @@ from app.security.permissions import (
     is_installer_readonly_scope,
     load_auth_context,
 )
+from app.security.perm import Perm
 
-PERMISSION = "process_alert.use"
+PERMISSION = Perm.PROCESS_ALERT_USE
 KIND_STAGE_COMPLETED = "process_stage_completed"
 ENTITY_PROJECT = "project"
 MAX_PAGE_SIZE = 100

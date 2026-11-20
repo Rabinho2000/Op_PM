@@ -13,7 +13,8 @@ from fastapi import HTTPException
 from app.config import Settings
 from app.models.identity import User
 from app.models.people import Person
-from app.security.entra_auth import TEST_AUDIENCE, TEST_ISSUER, issue_mock_token
+from app.security.entra_auth import TEST_AUDIENCE, TEST_ISSUER
+from tests.entra_mock import issue_mock_token
 from app.security.current_user import get_current_user
 
 

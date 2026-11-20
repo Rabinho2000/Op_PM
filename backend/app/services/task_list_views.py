@@ -24,6 +24,7 @@ from app.security.permissions import (
 )
 from app.services.projects import visible_projects_query
 from app.services.tasks import list_tasks, visible_tasks_query
+from app.security.perm import Perm
 
 TASK_LIST_DEFAULT_CONFIG: dict[str, object] = {
     "columns": list(TASK_LIST_DEFAULT_COLUMNS),
@@ -67,9 +68,9 @@ def require_task_list_permission(ctx: AuthContext) -> None:
     if not any(
         ctx.has_permission(code)
         for code in (
-            "task.view_all",
-            "task.view_own",
-            "task.view_assigned_installer",
+            Perm.TASK_VIEW_ALL,
+            Perm.TASK_VIEW_OWN,
+            Perm.TASK_VIEW_ASSIGNED_INSTALLER,
         )
     ):
         raise TaskListPermissionError("Sem permissão para ver a lista de Tarefas.")
@@ -124,7 +125,7 @@ def _assignee_is_reachable(db: Session, ctx: AuthContext, value: str) -> bool:
     # task happens to be assigned to it, provided the task scope is not only a
     # delegated/external project scope.
     if person_id == ctx.person_id and (
-        ctx.has_permission("task.view_all") or ctx.has_permission("task.view_own")
+        ctx.has_permission(Perm.TASK_VIEW_ALL) or ctx.has_permission(Perm.TASK_VIEW_OWN)
     ):
         return (
             not has_only_delegated_project_scope(ctx)

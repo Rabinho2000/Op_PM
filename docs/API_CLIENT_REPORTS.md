@@ -1,8 +1,9 @@
 # API — Relatório semanal ao cliente
 
 Contrato da primeira fatia backend. Os caminhos são os consumidos pelo frontend
-existente; o scheduler automático e o adaptador Microsoft Graph são trabalho da
-fatia seguinte.
+existente. O envio por Microsoft Graph (`app/adapters/graph_mail.py`, com
+`GRAPH_ENABLED=true`) e o scheduler (`python -m app.cli.client_reports loop`) já
+existem; sem Graph, o serviço grava um `.eml` na pasta `outbox` local.
 
 ## Autorização
 

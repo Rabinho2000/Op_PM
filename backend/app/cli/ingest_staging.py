@@ -36,12 +36,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import SessionLocal
 from app.migration.staging import ImportBatch, ingest_export, summarize_import_batch
 from app.models.identity import User
+from app.utils.email import normalize_email
 
 PRODUCTION_ENV = "production"
 
@@ -122,7 +124,7 @@ def _resolve_actor_person_id(db: Session, actor_email: str | None):
     inventa nem ignora silenciosamente um email desconhecido."""
     if not actor_email:
         return None
-    user = db.query(User).filter(User.email == actor_email, User.is_active.is_(True)).one_or_none()
+    user = db.query(User).filter(func.lower(User.email) == normalize_email(actor_email), User.is_active.is_(True)).one_or_none()
     if user is None:
         raise IngestionError(
             f"nenhum utilizador ATIVO com email {actor_email!r} — usar o email de um utilizador já "

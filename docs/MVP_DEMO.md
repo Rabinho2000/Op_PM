@@ -264,7 +264,7 @@ npm run build     # build de produção
 
 # Docker (a partir da raiz)
 docker compose -f docker-compose.demo.yml config --quiet
-docker build -f frontend/Dockerfile.demo ./frontend
+docker build -f frontend/Dockerfile --build-arg NGINX_CONF=docker/nginx.proxy.conf --build-arg VITE_ENABLE_DEV_LOGIN=true ./frontend
 ```
 
 O CI (`.github/workflows/ci.yml`) corre tudo isto em cada PR, incluindo o
@@ -279,10 +279,10 @@ npm run build          # gera frontend/dist/ (VITE_ENABLE_DEV_LOGIN=false por om
 ```
 
 Imagens de staging/produção: `backend/Dockerfile` e `frontend/Dockerfile`
-(este último fixa `VITE_ENABLE_DEV_LOGIN=false`) — ver
+(este último usa `VITE_ENABLE_DEV_LOGIN=false` por omissão, e o build recusa `true` com Entra definido) — ver
 `docker-compose.staging.example.yml` e `docs/STAGING_RUNBOOK.md`. **Não
-usar** `frontend/Dockerfile.demo` nem `docker-compose.demo.yml` fora da
-demonstração local.
+usar** `docker-compose.demo.yml` (nem `--build-arg VITE_ENABLE_DEV_LOGIN=true`)
+fora da demonstração local.
 
 ## 11. Demo local vs. staging vs. produção
 
@@ -295,7 +295,7 @@ demonstração local.
 | `DEMO_MODE` | `true` | **proibido** (a app não arranca) | **proibido** (a app não arranca) |
 | Seed sintético | `app.cli.demo` | **recusado** | **recusado** |
 | Login de desenvolvimento | Aceite | **recusado** (duas barreiras no backend) | **recusado** |
-| Ficheiros | `docker-compose.demo.yml`, `frontend/Dockerfile.demo`, `scripts/demo_local.py` | `docker-compose.staging.example.yml`, `backend/Dockerfile`, `frontend/Dockerfile` | idem staging |
+| Ficheiros | `docker-compose.demo.yml`, `frontend/Dockerfile` com `NGINX_CONF=docker/nginx.proxy.conf` e `VITE_ENABLE_DEV_LOGIN=true`, `scripts/demo_local.py` | `docker-compose.staging.example.yml`, `backend/Dockerfile`, `frontend/Dockerfile` | idem staging |
 
 Barreiras que impedem o modo demo fora de `local` (independentes entre si):
 

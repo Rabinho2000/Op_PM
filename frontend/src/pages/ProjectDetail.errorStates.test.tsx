@@ -10,6 +10,11 @@ const api = vi.hoisted(() => ({
   getProjectHistory: vi.fn(),
   listTasks: vi.fn(),
   listPeople: vi.fn(),
+  getProjectProcess: vi.fn(),
+  getSafetySheet: vi.fn(),
+  getClientReport: vi.fn(),
+  listInstallers: vi.fn(),
+  listTeamAssignments: vi.fn(),
 }));
 
 vi.mock("../api/client", async () => {
@@ -23,6 +28,8 @@ beforeEach(() => {
   api.getProjectHistory.mockResolvedValue([]);
   api.listTasks.mockResolvedValue([]);
   api.listPeople.mockResolvedValue([]);
+  api.listInstallers.mockResolvedValue([]);
+  api.listTeamAssignments.mockResolvedValue([]);
 });
 
 function renderTab(tab: string) {
@@ -67,6 +74,56 @@ describe("Detalhe do projeto — erros por secção", () => {
     expect(await within(panel).findByText("Sem tarefas neste projeto.")).toBeInTheDocument();
     expect(api.listTasks).toHaveBeenCalledTimes(2);
   });
+
+  it("projeto foreign base-only (sem âmbito) não pede histórico nem tarefas e carrega o projeto uma vez", async () => {
+    api.getProject.mockResolvedValue(makeProject({ can_view_project_scope: false }));
+    renderTab("resumo");
+
+    await screen.findByRole("tabpanel");
+    await waitFor(() => expect(api.getProject).toHaveBeenCalledTimes(1));
+    expect(api.getProjectHistory).not.toHaveBeenCalled();
+    expect(api.listTasks).not.toHaveBeenCalled();
+    expect(screen.queryByRole("tab", { name: /Histórico/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /Tarefas/ })).not.toBeInTheDocument();
+  });
+
+  it("projeto foreign não mostra o badge de estado das tarefas (valor por omissão enganador); com âmbito mostra", async () => {
+    api.getProject.mockResolvedValue(makeProject({ can_view_project_scope: false, status: "nao_iniciado" }));
+    const { unmount } = renderTab("resumo");
+    await screen.findByRole("tabpanel");
+    await waitFor(() => expect(api.getProject).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("Não iniciado")).not.toBeInTheDocument();
+    unmount();
+
+    api.getProject.mockResolvedValue(makeProject({ can_view_project_scope: true, status: "em_curso" }));
+    renderTab("resumo");
+    await screen.findByRole("tabpanel");
+    expect((await screen.findAllByText("Em curso")).length).toBeGreaterThan(0);
+  });
+
+  it.each(["processo", "seguranca", "relatorio", "tarefas", "historico", "cliente"])(
+    "projeto foreign: ?tab=%s cai em resumo e não monta sub-recursos nem o plano de obra",
+    async (requested) => {
+      api.getProject.mockResolvedValue(makeProject({ can_view_project_scope: false }));
+      renderTab(requested);
+
+      const panel = await screen.findByRole("tabpanel");
+      await waitFor(() => expect(api.getProject).toHaveBeenCalledTimes(1));
+      expect(panel).toHaveAttribute("id", "panel-resumo");
+      expect(screen.getByRole("tab", { name: "Resumo" })).toHaveAttribute("aria-selected", "true");
+      for (const fn of [
+        api.getProjectProcess,
+        api.getSafetySheet,
+        api.getClientReport,
+        api.getProjectHistory,
+        api.listTasks,
+        api.listInstallers,
+        api.listTeamAssignments,
+      ]) {
+        expect(fn).not.toHaveBeenCalled();
+      }
+    }
+  );
 
   it("avisa quando a lista de pessoas não carrega e permite voltar a pedi-la", async () => {
     api.listPeople.mockRejectedValueOnce(new ApiError(500, "Erro interno."));

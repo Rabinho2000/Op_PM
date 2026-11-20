@@ -24,7 +24,7 @@ from app.schemas.absences import (
     WorkOverlapRead,
 )
 from app.security.current_user import get_auth_context
-from app.security.permissions import AuthContext, PermissionDenied, can_approve_absence, can_manage_absence
+from app.security.permissions import AuthContext, can_approve_absence, can_manage_absence
 from app.services.absences import (
     approve_absence,
     build_absence_warning_map,
@@ -35,6 +35,7 @@ from app.services.absences import (
     reject_absence,
 )
 from app.services.absences import update_absence as update_absence_service
+from app.security.guards import permission_denied_message
 
 router = APIRouter(prefix="/api/absences", tags=["absences"])
 
@@ -95,10 +96,7 @@ def _get_visible_or_404(db: Session, ctx: AuthContext, absence_id: uuid.UUID) ->
     return absence
 
 
-def _state_error(exc: Exception) -> HTTPException:
-    if isinstance(exc, PermissionDenied):
-        return HTTPException(status_code=403, detail=f"Sem permissão para alterar esta ausência: {exc}")
-    return HTTPException(status_code=400, detail=str(exc))
+_deny_change_state = permission_denied_message("Sem permissão para alterar esta ausência", with_reason=True)
 
 
 @router.get("", response_model=list[AbsenceRead])
@@ -125,7 +123,12 @@ def get_absence_endpoint(
     return _to_read(db, absence, ctx)
 
 
-@router.post("", response_model=AbsenceRead, status_code=201)
+@router.post(
+    "",
+    response_model=AbsenceRead,
+    status_code=201,
+    dependencies=[Depends(permission_denied_message("Sem permissão para registar esta ausência", with_reason=True))],
+)
 def create_absence_endpoint(
     body: AbsenceCreate,
     db: Session = Depends(get_db),
@@ -133,14 +136,12 @@ def create_absence_endpoint(
 ) -> AbsenceRead:
     try:
         absence = create_absence(db, changes=body, ctx=ctx)
-    except PermissionDenied as exc:
-        raise HTTPException(status_code=403, detail=f"Sem permissão para registar esta ausência: {exc}")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _to_read(db, absence, ctx)
 
 
-@router.post("/{absence_id}/approve", response_model=AbsenceRead)
+@router.post("/{absence_id}/approve", response_model=AbsenceRead, dependencies=[Depends(_deny_change_state)])
 def approve_absence_endpoint(
     absence_id: uuid.UUID,
     db: Session = Depends(get_db),
@@ -149,12 +150,12 @@ def approve_absence_endpoint(
     absence = _get_visible_or_404(db, ctx, absence_id)
     try:
         updated = approve_absence(db, absence=absence, ctx=ctx)
-    except (PermissionDenied, ValueError) as exc:
-        raise _state_error(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return _to_read(db, updated, ctx)
 
 
-@router.post("/{absence_id}/reject", response_model=AbsenceRead)
+@router.post("/{absence_id}/reject", response_model=AbsenceRead, dependencies=[Depends(_deny_change_state)])
 def reject_absence_endpoint(
     absence_id: uuid.UUID,
     body: AbsenceDecision,
@@ -164,12 +165,12 @@ def reject_absence_endpoint(
     absence = _get_visible_or_404(db, ctx, absence_id)
     try:
         updated = reject_absence(db, absence=absence, note=body.note, ctx=ctx)
-    except (PermissionDenied, ValueError) as exc:
-        raise _state_error(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return _to_read(db, updated, ctx)
 
 
-@router.post("/{absence_id}/cancel", response_model=AbsenceRead)
+@router.post("/{absence_id}/cancel", response_model=AbsenceRead, dependencies=[Depends(_deny_change_state)])
 def cancel_absence_endpoint(
     absence_id: uuid.UUID,
     db: Session = Depends(get_db),
@@ -178,12 +179,16 @@ def cancel_absence_endpoint(
     absence = _get_visible_or_404(db, ctx, absence_id)
     try:
         updated = cancel_absence(db, absence=absence, ctx=ctx)
-    except (PermissionDenied, ValueError) as exc:
-        raise _state_error(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return _to_read(db, updated, ctx)
 
 
-@router.patch("/{absence_id}", response_model=AbsenceRead)
+@router.patch(
+    "/{absence_id}",
+    response_model=AbsenceRead,
+    dependencies=[Depends(permission_denied_message("Sem permissão para editar esta ausência", with_reason=True))],
+)
 def update_absence_endpoint(
     absence_id: uuid.UUID,
     body: AbsenceUpdate,
@@ -193,8 +198,6 @@ def update_absence_endpoint(
     absence = _get_visible_or_404(db, ctx, absence_id)
     try:
         updated = update_absence_service(db, absence=absence, changes=body, ctx=ctx)
-    except PermissionDenied as exc:
-        raise HTTPException(status_code=403, detail=f"Sem permissão para editar esta ausência: {exc}")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _to_read(db, updated, ctx)

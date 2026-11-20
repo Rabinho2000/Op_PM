@@ -24,6 +24,13 @@ from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
 
 
+def _history_now() -> dt.datetime:
+    """Hora do evento escrita em Python (não `now()` do PostgreSQL, que é a
+    hora de início da transação): a deteção de alterações posteriores no
+    rollback de importações compara-a com marcas escritas em Python."""
+    return dt.datetime.now(dt.timezone.utc)
+
+
 class ProjectInstallationData(UUIDPk, TimestampMixin, Base):
     __tablename__ = "project_installation_data"
 
@@ -182,7 +189,7 @@ class ProjectDataHistory(UUIDPk, Base):
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     note: Mapped[str] = mapped_column(Text, default="")
     changed_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True), default=_history_now, server_default=func.now(), nullable=False
     )
 
 

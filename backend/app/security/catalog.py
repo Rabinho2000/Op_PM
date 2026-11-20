@@ -27,6 +27,7 @@ ROLES: dict[str, str] = {
 # Permissões (código, descrição)
 PERMISSIONS: dict[str, str] = {
     "project.view_all": "Ver todos os projetos",
+    "project.view_all_pm_status": "Consultar todos os projetos e alterar o respetivo estado (Project Manager)",
     "project.view_own": "Ver os projetos próprios (como PM)",
     "project.view_delegated": "Ver os projetos dos PMs que delegam em mim (Suporte de Operações)",
     "project.view_assigned_installer": "Ver projetos atribuídos aos meus instaladores associados",
@@ -209,6 +210,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "workflow.update_progress",
         "project.plan_work",
         "project.view_own",
+        "project.view_all_pm_status",
         "payment.view",
         "project.edit_own_progress",
         "project.change_status",

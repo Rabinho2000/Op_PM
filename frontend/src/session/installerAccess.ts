@@ -1,4 +1,5 @@
 import type { MeResponse } from "../api/client";
+import type { Perm } from "../generated/permissions";
 
 export const INSTALLER_ACCESS_PERMISSIONS = [
   "project.view_assigned_installer",
@@ -7,17 +8,16 @@ export const INSTALLER_ACCESS_PERMISSIONS = [
   "installer_team.view_assigned_installer",
   "inventory.view_assigned_installer",
   "time_bank.view_own",
-] as const;
+] as const satisfies readonly Perm[];
 
 const STAFF_SCOPE_PERMISSIONS = [
   "project.view_all",
   "project.view_own",
   "calendar.view",
   "inventory.view",
-  "inventory.manage",
   "installer.manage",
   "admin.manage_users",
-] as const;
+] as const satisfies readonly Perm[];
 
 export function isInstallerCollaborator(me: MeResponse | null): boolean {
   if (!me) return false;

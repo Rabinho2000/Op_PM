@@ -134,10 +134,22 @@ class Settings(BaseSettings):
     # credentials, claim 'roles' sem 'scp'). Vazio: qualquer 'scp' não
     # vazio serve, mas um token sem 'scp' nenhum continua sempre recusado.
     entra_required_scope: str = Field(default="", alias="ENTRA_REQUIRED_SCOPE")
+    # Chave PÚBLICA (ficheiro PEM) com que o validador 'mock' verifica as
+    # assinaturas. Só em local/test: ver `app/security/entra_auth.py`.
+    entra_mock_public_key_file: str = Field(default="", alias="ENTRA_MOCK_PUBLIC_KEY_FILE")
     # None = "não configurado explicitamente" -> ver
     # resolved_entra_jit_link_by_email(): True em local/test, False em
     # staging/produção, a menos que definido aqui de propósito (D-029).
     entra_jit_link_by_email: bool | None = Field(default=None, alias="ENTRA_JIT_LINK_BY_EMAIL")
+
+    @field_validator("entra_jit_link_by_email", "api_docs_enabled", mode="before")
+    @classmethod
+    def _empty_optional_bool_is_none(cls, value: object) -> object:
+        """`VARIAVEL=` vazia (como nos `.env.example`) significa "não
+        configurado" (None), não um booleano inválido."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("cable_tool_file", mode="before")
     @classmethod
@@ -254,6 +266,28 @@ class Settings(BaseSettings):
             if url.get_backend_name() == "sqlite":
                 raise ValueError("DATABASE_PASSWORD_FILE não se aplica a uma base SQLite")
             self.database_url = url.set(password=password).render_as_string(hide_password=False)
+        return self
+
+    @model_validator(mode="after")
+    def _reject_integrations_without_implementation(self) -> Settings:
+        """Recusa as flags de integrações que ainda não têm implementação real.
+
+        `CLICKUP_ENABLED`, `FINANCIAL_ENABLED` e `CLAUDE_ENABLED` não ligam a
+        nada: ligá-las não teria efeito, mas `/health` passaria a anunciar a
+        integração como ativa. Falhar no arranque é mais seguro do que aceitar
+        a flag em silêncio. (A integração ClickUp real está adiada, não
+        cancelada — ver docs/ANALISE_OP_PM.md, "Mock vs. real".)"""
+        pending = {
+            "CLICKUP_ENABLED": self.clickup_enabled,
+            "FINANCIAL_ENABLED": self.financial_enabled,
+            "CLAUDE_ENABLED": self.claude_enabled,
+        }
+        enabled = [name for name, value in pending.items() if value]
+        if enabled:
+            raise ValueError(
+                f"{', '.join(enabled)}: a integração real ainda não está implementada, "
+                "por isso a flag tem de ficar 'false'"
+            )
         return self
 
     @model_validator(mode="after")

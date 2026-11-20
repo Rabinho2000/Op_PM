@@ -48,23 +48,19 @@ from app.services.project_data import (
     upsert_installation_data,
     upsert_licensing_data,
 )
-from app.services.projects import get_visible_project
+from app.api.deps import get_visible_project_or_404
+from app.models.project import Project
 
 router = APIRouter(prefix="/api/projects", tags=["project-data"])
 
 
-def _get_project_or_404(db: Session, project_id: uuid.UUID, ctx: AuthContext):
-    project = get_visible_project(db, ctx, project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
-    return project
-
-
 @router.get("/{project_id}/installation-data", response_model=ProjectInstallationDataRead)
 def get_installation_data_endpoint(
-    project_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectInstallationDataRead:
-    project = _get_project_or_404(db, project_id, ctx)
     if not can_view_project_installation_data(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para ver dados de instalação.")
     data = get_installation_data(db, project_id)
@@ -78,9 +74,9 @@ def update_installation_data_endpoint(
     project_id: uuid.UUID,
     body: ProjectInstallationDataUpdate,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectInstallationDataRead:
-    project = _get_project_or_404(db, project_id, ctx)
     if not can_edit_project_installation_data(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para editar dados de instalação.")
     changes = body.model_dump(exclude_unset=True)
@@ -98,9 +94,11 @@ def _licensing_read(data) -> ProjectLicensingDataRead:
 
 @router.get("/{project_id}/licensing-data", response_model=ProjectLicensingDataRead)
 def get_licensing_data_endpoint(
-    project_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectLicensingDataRead:
-    project = _get_project_or_404(db, project_id, ctx)
     if not can_view_project_licensing_data(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para ver dados de licenciamento.")
     data = get_licensing_data(db, project_id)
@@ -114,9 +112,9 @@ def update_licensing_data_endpoint(
     project_id: uuid.UUID,
     body: ProjectLicensingDataUpdate,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectLicensingDataRead:
-    project = _get_project_or_404(db, project_id, ctx)
     if not can_edit_project_licensing_data(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para editar dados de licenciamento.")
     changes = body.model_dump(exclude_unset=True)
@@ -126,9 +124,11 @@ def update_licensing_data_endpoint(
 
 @router.get("/{project_id}/communication-data", response_model=ProjectCommunicationDataRead)
 def get_communication_data_endpoint(
-    project_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectCommunicationDataRead:
-    project = _get_project_or_404(db, project_id, ctx)
     if not can_view_project_communication_data(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para ver dados de comunicação.")
     data = get_communication_data(db, project_id)
@@ -142,9 +142,9 @@ def update_communication_data_endpoint(
     project_id: uuid.UUID,
     body: ProjectCommunicationDataUpdate,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectCommunicationDataRead:
-    project = _get_project_or_404(db, project_id, ctx)
     if not can_edit_project_communication_data(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para editar dados de comunicação.")
     changes = body.model_dump(exclude_unset=True)
@@ -161,9 +161,9 @@ def get_data_history_endpoint(
         default=None, description="installation | licensing | communication | credential | surplus"
     ),
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> list[ProjectDataHistoryRead]:
-    project = _get_project_or_404(db, project_id, ctx)
     permissions_by_type = {
         ENTITY_TYPE_INSTALLATION: can_view_project_installation_data(ctx, project),
         ENTITY_TYPE_LICENSING: can_view_project_licensing_data(ctx, project),

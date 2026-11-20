@@ -10,7 +10,8 @@ export interface CableStudyStore {
   dirty: boolean;
 }
 
-export type CableStudyUpdater = (state: State) => State;
+/** O motor corre num worker: as ações devolvem o novo estado de forma assíncrona. */
+export type CableStudyUpdater = (state: State) => State | PromiseLike<State>;
 
 export type CableStudyAction =
   | { type: "replace"; state: State; result: Result; hash?: string; dirty?: boolean }
@@ -75,14 +76,14 @@ function isJsonValue(value: unknown): value is JsonValue {
   return Object.values(value as Record<string, unknown>).every(isJsonValue);
 }
 
-function initialState(engine: CabosEngine, design: CableDesign, project: Project | null): State {
+async function initialState(engine: CabosEngine, design: CableDesign, project: Project | null): Promise<State> {
   const rawState = objectRecord(design.revision.input_json)?.state;
   if (rawState !== undefined) {
     if (!isJsonValue(rawState)) throw new Error("O estado guardado contém valores JSON inválidos.");
     return engine.migrate(rawState);
   }
 
-  const next = engine.newState();
+  const next = await engine.newState();
   const obra = { ...(next.obra ?? ({} as State["obra"])) };
   return {
     ...next,
@@ -109,7 +110,7 @@ export async function initializeCableStudy(
   project: Project | null,
 ): Promise<CableStudyStore | null> {
   if (isApprovedDesign(design)) return null;
-  const solved = engine.solve(initialState(engine, design, project));
+  const solved = await engine.solve(await initialState(engine, design, project));
   const savedHash = await hashCanonical(solved.state);
   return { state: solved.state, result: solved.result, savedHash, dirty: false };
 }
@@ -120,10 +121,10 @@ export interface CableSavePayload {
   engine_version: string;
 }
 
-export function buildCableSavePayload(engine: CabosEngine, store: CableStudyStore): CableSavePayload {
+export async function buildCableSavePayload(engine: CabosEngine, store: CableStudyStore): Promise<CableSavePayload> {
   return {
     input: { format: 1, state: store.state } as unknown as CableJsonObject,
-    result: engine.persistedResult(store.state, store.result) as unknown as CableJsonObject,
+    result: (await engine.persistedResult(store.state, store.result)) as unknown as CableJsonObject,
     engine_version: engine.engine_version,
   };
 }
@@ -133,7 +134,7 @@ export function buildCablePresentationState(
   state: State,
   design: CableDesign,
   peopleById: ReadonlyMap<string, string>,
-): State {
+): Promise<State> {
   const approvedByPersonId = design.revision.approved_by_person_id;
   const approvedAt = design.revision.approved_at;
   const approvedName = approvedByPersonId ? peopleById.get(approvedByPersonId)?.trim() : undefined;
@@ -154,10 +155,20 @@ export interface UseCableStudyResult {
   dirty: boolean;
   loading: boolean;
   error: string | null;
+  /** Falha da última ação sobre o estudo (o motor recusou-a); limpa-se com a ação seguinte. */
+  actionError: string | null;
+  /** `true` enquanto há ações à espera do motor (que corre num worker). */
+  calculating: boolean;
   apply: (updater: CableStudyUpdater, options?: { debounce?: boolean }) => void;
+  /**
+   * Síncrono: lança já a ação pendente (se houver) e devolve o estado conhecido,
+   * com `dirty` verdadeiro se ainda há cálculos em curso. Serve para avisos de
+   * saída; para gravar usa-se `settle`.
+   */
   flush: () => CableStudyStore | null;
+  /** Lança a ação pendente, espera pela fila do motor e devolve o estado final. */
+  settle: () => Promise<CableStudyStore | null>;
   markSaved: (state?: State) => Promise<void>;
-  savePayload: CableSavePayload | null;
 }
 
 export function useCableStudy(
@@ -168,14 +179,24 @@ export function useCableStudy(
   const [store, setStore] = useState<CableStudyStore | null>(null);
   const [loading, setLoading] = useState(Boolean(engine && design));
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [calculating, setCalculating] = useState(false);
   const storeRef = useRef<CableStudyStore | null>(null);
   const savedHashRef = useRef("");
   const pendingUpdaterRef = useRef<CableStudyUpdater | null>(null);
   const debounceRef = useRef<number | null>(null);
+  // Fila: as ações correm uma de cada vez, pela ordem em que foram pedidas.
+  const queueRef = useRef<Promise<void>>(Promise.resolve());
+  const inflightRef = useRef(0);
+  const generationRef = useRef(0);
   const revisionKey = design ? `${design.id}:${design.version}:${design.revision.id}` : "none";
 
   useEffect(() => {
     let active = true;
+    generationRef.current += 1;
+    inflightRef.current = 0;
+    setCalculating(false);
+    setActionError(null);
     if (!engine || !design) {
       storeRef.current = null;
       savedHashRef.current = "";
@@ -208,43 +229,80 @@ export function useCableStudy(
 
     return () => {
       active = false;
+      generationRef.current += 1;
       if (debounceRef.current !== null) window.clearTimeout(debounceRef.current);
       debounceRef.current = null;
       pendingUpdaterRef.current = null;
     };
   }, [engine, project, revisionKey]);
 
-  const commit = useCallback((updater: CableStudyUpdater): CableStudyStore | null => {
-    if (!engine || !storeRef.current) return null;
-    const current = storeRef.current;
-    const solved = engine.solve(updater(current.state));
-    const next: CableStudyStore = { ...current, state: solved.state, result: solved.result, dirty: true };
-    storeRef.current = next;
-    setStore(next);
-    const currentHash = savedHashRef.current;
-    void hashCanonical(solved.state).then((hash) => {
-      if (storeRef.current !== next) return;
-      if (hash === currentHash) {
-        const clean = { ...next, savedHash: hash, dirty: false };
-        storeRef.current = clean;
-        setStore(clean);
+  const commit = useCallback((updater: CableStudyUpdater): Promise<void> => {
+    if (!engine || !storeRef.current) return queueRef.current;
+    const generation = generationRef.current;
+    inflightRef.current += 1;
+    setCalculating(true);
+    storeRef.current = { ...storeRef.current, dirty: true };
+
+    const run = async () => {
+      try {
+        const current = storeRef.current;
+        if (generation !== generationRef.current || !current) return;
+        const nextState = await updater(current.state);
+        const solved = await engine.solve(nextState);
+        if (generation !== generationRef.current || !storeRef.current) return;
+        const next: CableStudyStore = { ...storeRef.current, state: solved.state, result: solved.result, dirty: true };
+        storeRef.current = next;
+        setStore(next);
+        setActionError(null);
+        const hash = await hashCanonical(solved.state);
+        // Voltou ao estado gravado (e nada mais mudou entretanto): deixa de estar por guardar.
+        if (storeRef.current === next && hash === savedHashRef.current) {
+          const clean = { ...next, savedHash: hash, dirty: false };
+          storeRef.current = clean;
+          setStore(clean);
+        }
+      } catch (reason) {
+        if (generation !== generationRef.current) return;
+        setActionError(reason instanceof Error && reason.message ? reason.message : "O motor de cálculo recusou a alteração.");
+      } finally {
+        if (generation === generationRef.current) {
+          inflightRef.current -= 1;
+          if (inflightRef.current <= 0) setCalculating(false);
+        }
       }
-    });
-    return next;
+    };
+    queueRef.current = queueRef.current.then(run, run);
+    return queueRef.current;
   }, [engine]);
 
-  const flush = useCallback((): CableStudyStore | null => {
+  const takePending = useCallback((): CableStudyUpdater | null => {
     if (debounceRef.current !== null) window.clearTimeout(debounceRef.current);
     debounceRef.current = null;
     const updater = pendingUpdaterRef.current;
     pendingUpdaterRef.current = null;
-    return updater ? commit(updater) : storeRef.current;
-  }, [commit]);
+    return updater;
+  }, []);
+
+  const flush = useCallback((): CableStudyStore | null => {
+    const updater = takePending();
+    if (updater) void commit(updater);
+    const current = storeRef.current;
+    if (!current) return null;
+    return inflightRef.current > 0 && !current.dirty ? { ...current, dirty: true } : current;
+  }, [commit, takePending]);
+
+  const settle = useCallback(async (): Promise<CableStudyStore | null> => {
+    const updater = takePending();
+    if (updater) void commit(updater);
+    await queueRef.current;
+    return storeRef.current;
+  }, [commit, takePending]);
 
   const apply = useCallback((updater: CableStudyUpdater, options: { debounce?: boolean } = {}) => {
     if (!options.debounce) {
-      flush();
-      commit(updater);
+      const pending = takePending();
+      if (pending) void commit(pending);
+      void commit(updater);
       return;
     }
     if (storeRef.current) {
@@ -253,29 +311,29 @@ export function useCableStudy(
     }
     const previous = pendingUpdaterRef.current;
     pendingUpdaterRef.current = previous
-      ? (state) => updater(previous(state))
+      ? async (state) => updater(await previous(state))
       : updater;
     if (debounceRef.current !== null) window.clearTimeout(debounceRef.current);
     debounceRef.current = window.setTimeout(() => {
       debounceRef.current = null;
       const pending = pendingUpdaterRef.current;
       pendingUpdaterRef.current = null;
-      if (pending) commit(pending);
+      if (pending) void commit(pending);
     }, 180);
-  }, [commit, flush]);
+  }, [commit, takePending]);
 
   const markSaved = useCallback(async (savedState = storeRef.current?.state) => {
     if (!savedState || !storeRef.current) return;
     const hash = await hashCanonical(savedState);
     savedHashRef.current = hash;
     const current = storeRef.current;
+    if (!current) return;
     const sameState = canonicalJson(current.state) === canonicalJson(savedState);
-    const next = { ...current, savedHash: hash, dirty: !sameState || pendingUpdaterRef.current !== null };
+    const next = { ...current, savedHash: hash, dirty: !sameState || pendingUpdaterRef.current !== null || inflightRef.current > 0 };
     storeRef.current = next;
     setStore(next);
   }, []);
 
-  const savePayload = engine && store ? buildCableSavePayload(engine, store) : null;
   return {
     store,
     state: store?.state ?? null,
@@ -284,9 +342,11 @@ export function useCableStudy(
     dirty: store?.dirty ?? false,
     loading,
     error,
+    actionError,
+    calculating,
     apply,
     flush,
+    settle,
     markSaved,
-    savePayload,
   };
 }

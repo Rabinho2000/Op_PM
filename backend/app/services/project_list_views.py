@@ -16,11 +16,12 @@ from app.models.people import Person
 from app.models.project import Project
 from app.models.project_list_views import ProjectListView, UserProjectListPreference
 from app.security.permissions import AuthContext, is_installer_readonly_scope
-from app.services.projects import visible_projects_query
+from app.services.projects import project_channel_visible_query
 from app.schemas.project_list_views import (
     PROJECT_LIST_DEFAULT_COLUMNS,
     ProjectListConfig,
 )
+from app.security.perm import Perm
 
 PROJECT_LIST_DEFAULT_CONFIG: dict[str, object] = {
     "columns": list(PROJECT_LIST_DEFAULT_COLUMNS),
@@ -80,10 +81,10 @@ def require_project_list_permission(ctx: AuthContext) -> None:
     if not any(
         ctx.has_permission(code)
         for code in (
-            "project.view_all",
-            "project.view_own",
-            "project.view_delegated",
-            "project.view_assigned_installer",
+            Perm.PROJECT_VIEW_ALL,
+            Perm.PROJECT_VIEW_OWN,
+            Perm.PROJECT_VIEW_DELEGATED,
+            Perm.PROJECT_VIEW_ASSIGNED_INSTALLER,
         )
     ):
         raise ProjectListPermissionError("Sem permissão para ver a lista de Projetos.")
@@ -103,7 +104,7 @@ def _parse_config(config: object) -> dict[str, object]:
 
 def _visible_pm_ids(db: Session, ctx: AuthContext) -> set[uuid.UUID]:
     rows = (
-        visible_projects_query(db, ctx)
+        project_channel_visible_query(db, ctx)
         .filter(Project.pm_person_id.is_not(None))
         .with_entities(Project.pm_person_id)
         .distinct()
@@ -125,7 +126,7 @@ def _pm_is_reachable(db: Session, ctx: AuthContext, value: str) -> bool:
         return True
     # A PM can keep a self-filter even while the current visible project set is
     # empty, provided the authenticated person is still an active Person.
-    if pm_id == ctx.person_id and ctx.has_permission("project.view_own"):
+    if pm_id == ctx.person_id and ctx.has_permission(Perm.PROJECT_VIEW_OWN):
         return (
             db.query(Person.id)
             .filter(Person.id == ctx.person_id, Person.is_active.is_(True))

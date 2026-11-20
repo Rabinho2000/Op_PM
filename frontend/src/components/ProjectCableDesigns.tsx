@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   ApiError,
+  errorMessage,
 } from "../api/client";
 import {
   CableDesignListItem,
@@ -39,9 +40,8 @@ function apiErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 403) return "Não tem permissão para ver os estudos de cabos deste projeto.";
     if (error.status === 404) return "O projeto ou os estudos de cabos não estão no seu âmbito.";
-    return error.detail;
   }
-  return "Não foi possível carregar os estudos de cabos.";
+  return errorMessage(error, "Não foi possível carregar os estudos de cabos.");
 }
 
 function NewCableDesignModal({
@@ -73,7 +73,7 @@ function NewCableDesignModal({
       const design = await createCableDesign(projectId, { title: normalizedTitle, engine_version: engineVersion });
       onCreated(design.id);
     } catch (reason) {
-      setError(reason instanceof ApiError ? reason.detail : "Não foi possível criar o estudo de cabos.");
+      setError(errorMessage(reason, "Não foi possível criar o estudo de cabos."));
     } finally {
       setSaving(false);
     }
@@ -149,7 +149,7 @@ export default function ProjectCableDesigns({ projectId }: { projectId: string }
       await deactivateCableDesign(design.id, design.version);
       await load();
     } catch (reason) {
-      setActionError(reason instanceof ApiError ? reason.detail : "Não foi possível desativar o estudo de cabos.");
+      setActionError(errorMessage(reason, "Não foi possível desativar o estudo de cabos."));
     } finally {
       setDeactivatingId(null);
     }

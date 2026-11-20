@@ -334,7 +334,14 @@ def test_flags_false_for_non_owner_with_view_only(db_session, client):
 
 def test_flags_false_for_pm_without_access(db_session, client):
     other = _other_project(db_session)
-    assert client.get(f"/api/projects/{other.id}", headers=_headers(PM)).status_code == 404
+    response = client.get(f"/api/projects/{other.id}", headers=_headers(PM))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["can_view_project_scope"] is False
+    assert body["can_change_status"] is True
+    assert body["payments"] is None
+    for flag in SIM_FLAGS:
+        assert body[flag] is False, flag
 
 
 def test_flags_false_for_installer_read_only_scope(db_session, client):

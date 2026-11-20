@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import CheckConstraint, Column, Float, ForeignKey, String, Table, Text
+from sqlalchemy import Column, Float, ForeignKey, String, Table, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import GUID, Base
 from app.models.base import TimestampMixin, UUIDPk
+from app.models.constraints import vocabulary_check
+
+SUPPLIER_COMPANY_CODES: tuple[str, ...] = ("solcor", "verde_milenar")
 
 # Associação fornecedor <-> tipo de material (D-070): um fornecedor tem vários
 # tipos e um tipo tem vários fornecedores.
@@ -21,7 +24,7 @@ supplier_material_type_links = Table(
 class SupplierCompanyAssociation(Base):
     __tablename__ = "supplier_company_links"
     __table_args__ = (
-        CheckConstraint("company_code IN ('solcor', 'verde_milenar')", name="ck_supplier_company_links_company_code"),
+        vocabulary_check("company_code", SUPPLIER_COMPANY_CODES, name="ck_supplier_company_links_company_code"),
     )
 
     supplier_id: Mapped[uuid.UUID] = mapped_column(

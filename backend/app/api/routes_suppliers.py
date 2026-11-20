@@ -20,21 +20,20 @@ from app.schemas.suppliers import (
     SupplierRead,
     SupplierUpdate,
 )
-from app.security.current_user import get_auth_context
-from app.security.permissions import AuthContext, can_manage_suppliers, can_view_suppliers
+from app.security.permissions import AuthContext
 from app.services import suppliers as service
+from app.security.guards import require_permission
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/suppliers", tags=["suppliers"])
 
 
-def _require_view(ctx: AuthContext) -> None:
-    if not can_view_suppliers(ctx):
-        raise HTTPException(status_code=403, detail="Sem permissão para ver os fornecedores.")
-
-
-def _require_manage(ctx: AuthContext, action: str) -> None:
-    if not can_manage_suppliers(ctx):
-        raise HTTPException(status_code=403, detail=f"Sem permissão para {action} fornecedores.")
+# `can_view_suppliers`: `supplier.view`, ou `map.view` (compatibilidade).
+require_supplier_view = require_permission(
+    Perm.SUPPLIER_VIEW, Perm.MAP_VIEW, detail="Sem permissão para ver os fornecedores."
+)
+require_supplier_create = require_permission(Perm.SUPPLIER_MANAGE, detail="Sem permissão para criar fornecedores.")
+require_supplier_update = require_permission(Perm.SUPPLIER_MANAGE, detail="Sem permissão para editar fornecedores.")
 
 
 @router.get("", response_model=list[SupplierRead])
@@ -44,9 +43,8 @@ def list_suppliers_endpoint(
     company_code: str | None = Query(default=None, description="solcor, verde_milenar ou unclassified"),
     is_active: bool | None = None,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_supplier_view),
 ) -> list[SupplierRead]:
-    _require_view(ctx)
     if company_code is not None and company_code not in ("solcor", "verde_milenar", "unclassified"):
         raise HTTPException(status_code=422, detail="Código de empresa inválido.")
     suppliers = service.list_suppliers(db, q=q, material_type=material_type, is_active=is_active, company_code=company_code)
@@ -55,9 +53,8 @@ def list_suppliers_endpoint(
 
 @router.get("/material-types", response_model=list[SupplierMaterialTypeRead])
 def list_material_types_endpoint(
-    db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    db: Session = Depends(get_db), ctx: AuthContext = Depends(require_supplier_view)
 ) -> list[SupplierMaterialTypeRead]:
-    _require_view(ctx)
     return [
         SupplierMaterialTypeRead(id=t.id, name=t.name, active_suppliers=count)
         for t, count in service.list_material_types_with_counts(db)
@@ -66,9 +63,8 @@ def list_material_types_endpoint(
 
 @router.get("/{supplier_id}", response_model=SupplierRead)
 def get_supplier_endpoint(
-    supplier_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    supplier_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(require_supplier_view)
 ) -> SupplierRead:
-    _require_view(ctx)
     supplier = db.get(Supplier, supplier_id)
     if supplier is None:
         raise HTTPException(status_code=404, detail="Fornecedor não encontrado.")
@@ -77,9 +73,8 @@ def get_supplier_endpoint(
 
 @router.post("", response_model=SupplierRead, status_code=201)
 def create_supplier_endpoint(
-    body: SupplierCreate, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    body: SupplierCreate, db: Session = Depends(get_db), ctx: AuthContext = Depends(require_supplier_create)
 ) -> SupplierRead:
-    _require_manage(ctx, "criar")
     if service.find_supplier_by_name(db, body.name) is not None:
         raise HTTPException(status_code=409, detail="Já existe um fornecedor com este nome.")
     supplier = service.create_supplier(db, body.model_dump())
@@ -91,9 +86,8 @@ def update_supplier_endpoint(
     supplier_id: uuid.UUID,
     body: SupplierUpdate,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_supplier_update),
 ) -> SupplierRead:
-    _require_manage(ctx, "editar")
     supplier = db.get(Supplier, supplier_id)
     if supplier is None:
         raise HTTPException(status_code=404, detail="Fornecedor não encontrado.")

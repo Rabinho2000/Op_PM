@@ -7,6 +7,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# Espelha os `STATUS_*` de app/services/material_requests.py; ver `tests/test_schema_literals.py`.
+MaterialRequestStatus = Literal[
+    "rascunho", "pedido_enviado", "orcamento_recebido", "aprovado", "adjudicado", "cancelado"
+]
+
 
 class MaterialRequestLineCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -77,7 +82,7 @@ class MaterialRequestRead(BaseModel):
     project_name: str | None = None
     supplier_id: uuid.UUID | None
     supplier_name: str | None = None
-    status: str
+    status: MaterialRequestStatus
     notes: str
     created_by_display_name: str | None = None
     approved_by_display_name: str | None = None

@@ -10,6 +10,7 @@ from app.models.people import Person
 from app.models.workflow import SupportDelegation, SupportDelegationHistory
 from app.security.permissions import AuthContext, can_manage_support_delegations, PermissionDenied
 from app.schemas.support_delegations import SupportDelegationRead
+from app.security.perm import Perm
 
 
 class SupportDelegationError(ValueError):
@@ -33,13 +34,13 @@ def _read(db: Session, row: SupportDelegation) -> SupportDelegationRead:
 
 def list_delegations(db: Session, ctx: AuthContext) -> list[SupportDelegationRead]:
     if not can_manage_support_delegations(ctx):
-        raise PermissionDenied("admin.manage_users")
+        raise PermissionDenied(Perm.ADMIN_MANAGE_USERS)
     return [_read(db, row) for row in db.query(SupportDelegation).all()]
 
 
 def upsert_delegation(db: Session, *, pm_person_id: uuid.UUID, support_person_id: uuid.UUID, ctx: AuthContext) -> SupportDelegationRead:
     if not can_manage_support_delegations(ctx):
-        raise PermissionDenied("admin.manage_users")
+        raise PermissionDenied(Perm.ADMIN_MANAGE_USERS)
     if pm_person_id == support_person_id:
         raise SupportDelegationError("O PM não pode delegar em si próprio.")
     if db.get(Person, pm_person_id) is None or db.get(Person, support_person_id) is None:
@@ -75,7 +76,7 @@ def upsert_delegation(db: Session, *, pm_person_id: uuid.UUID, support_person_id
 
 def delete_delegation(db: Session, *, pm_person_id: uuid.UUID, ctx: AuthContext) -> None:
     if not can_manage_support_delegations(ctx):
-        raise PermissionDenied("admin.manage_users")
+        raise PermissionDenied(Perm.ADMIN_MANAGE_USERS)
     row = db.query(SupportDelegation).filter(SupportDelegation.pm_person_id == pm_person_id).one_or_none()
     if row is None:
         raise SupportDelegationNotFound("Delegação não encontrada.")

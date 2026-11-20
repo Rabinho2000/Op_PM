@@ -1,14 +1,15 @@
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import {
-  ApiError,
   deleteInventoryItemDocument,
   getInventoryItemDocumentBlob,
   InventoryItemDocument,
   InventoryItemDocumentKind,
   listInventoryItemDocuments,
   uploadInventoryItemDocument,
+  errorMessage,
 } from "../api/client";
 import { Alert } from "./ui";
+import { formatNumberPt } from "../utils/numbers";
 
 const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 const ACCEPTED_DOCUMENT_TYPES = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
@@ -20,10 +21,6 @@ const DOCUMENT_KIND_LABELS: Record<InventoryItemDocumentKind, string> = {
 };
 const DOCUMENT_KIND_ORDER: InventoryItemDocumentKind[] = ["datasheet", "manual", "guia", "outro"];
 
-function friendlyError(error: unknown, fallback: string): string {
-  return error instanceof ApiError ? error.detail : fallback;
-}
-
 function formatDocumentSize(size: number): string {
   if (size < 1024) return `${size} B`;
   const units = ["KB", "MB", "GB"];
@@ -33,7 +30,7 @@ function formatDocumentSize(size: number): string {
     value /= 1024;
     unitIndex += 1;
   }
-  return `${new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 1 }).format(value)} ${units[unitIndex]}`;
+  return `${formatNumberPt(value, { max: 1 })} ${units[unitIndex]}`;
 }
 
 export default function InventoryItemDocuments({
@@ -81,7 +78,7 @@ export default function InventoryItemDocuments({
         if (active) setDocuments(result);
       })
       .catch((error: unknown) => {
-        if (active) setLoadError(friendlyError(error, "Não foi possível carregar os documentos do artigo."));
+        if (active) setLoadError(errorMessage(error, "Não foi possível carregar os documentos do artigo."));
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -126,7 +123,7 @@ export default function InventoryItemDocuments({
       setRefreshToken((value) => value + 1);
     } catch (error) {
       if (mountedRef.current) {
-        setOperationError(friendlyError(error, "Não foi possível guardar o documento."));
+        setOperationError(errorMessage(error, "Não foi possível guardar o documento."));
       }
     } finally {
       if (mountedRef.current) setBusy(false);
@@ -158,7 +155,7 @@ export default function InventoryItemDocuments({
       downloadUrlsRef.current.set(url, timer);
     } catch (error) {
       if (mountedRef.current) {
-        setOperationError(friendlyError(error, "Não foi possível descarregar o documento."));
+        setOperationError(errorMessage(error, "Não foi possível descarregar o documento."));
       }
     } finally {
       if (mountedRef.current) setDownloadingId(null);
@@ -176,7 +173,7 @@ export default function InventoryItemDocuments({
       setRefreshToken((value) => value + 1);
     } catch (error) {
       if (mountedRef.current) {
-        setOperationError(friendlyError(error, "Não foi possível remover o documento."));
+        setOperationError(errorMessage(error, "Não foi possível remover o documento."));
       }
     } finally {
       if (mountedRef.current) setRemovingId(null);

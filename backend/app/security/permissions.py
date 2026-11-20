@@ -18,12 +18,31 @@ from app.models.installer_access import InstallerAccessMembership
 from app.models.project import Project, ProjectTeamAssignment
 from app.models.task import Task
 from app.models.workflow import SupportDelegation
+from app.security.perm import Perm
+
+
+# Motivos de recusa que não são permissões do catálogo (aparecem na mensagem
+# "Permissão em falta: ..." de algumas respostas 403 e não devem mudar).
+DENIED_INSTALLER_READ_ONLY = "installer.read_only"
+DENIED_PROJECT_VIEW = "project.view"
+DENIED_INSTALLER_VIEW = "installer.view"
 
 
 class PermissionDenied(Exception):
-    def __init__(self, permission_code: str):
+    """Recusa de autorização. O handler registado em `app.main` (ver
+    `app/security/guards.py`) converte-a em 403 com `{"detail": ...}`.
+
+    `permission_code` é um membro de `Perm` (ou, nos poucos casos de recusa
+    por âmbito, um dos `DENIED_*` acima ou várias permissões separadas por
+    `|`). `detail` fixa o texto do 403 quando quem levanta a exceção já sabe
+    qual é; sem ele aplica-se a mensagem da rota (`permission_denied_message`)
+    ou, por omissão, `Permissão em falta: <código>`.
+    """
+
+    def __init__(self, permission_code: str, *, detail: str | None = None):
         super().__init__(f"Permissão em falta: {permission_code}")
         self.permission_code = permission_code
+        self.detail = detail
 
 
 @dataclass(frozen=True)
@@ -35,10 +54,10 @@ class AuthContext:
     delegating_pm_ids: frozenset[UUID] = field(default_factory=frozenset)
     active_installer_ids: frozenset[UUID] = field(default_factory=frozenset)
 
-    def has_permission(self, code: str) -> bool:
+    def has_permission(self, code: Perm) -> bool:
         return code in self.permission_codes
 
-    def require(self, code: str) -> None:
+    def require(self, code: Perm) -> None:
         if not self.has_permission(code):
             raise PermissionDenied(code)
 
@@ -63,7 +82,7 @@ def load_auth_context(db: Session, user: User) -> AuthContext:
     )
     permission_codes = frozenset(rp.permission.code for rp in perm_rows)
     delegating_pm_ids: frozenset[UUID] = frozenset()
-    if "project.view_delegated" in permission_codes:
+    if Perm.PROJECT_VIEW_DELEGATED in permission_codes:
         delegating_pm_ids = frozenset(
             pm_person_id
             for (pm_person_id,) in db.query(SupportDelegation.pm_person_id)
@@ -71,7 +90,7 @@ def load_auth_context(db: Session, user: User) -> AuthContext:
             .all()
         )
     active_installer_ids: frozenset[UUID] = frozenset()
-    if "project.view_assigned_installer" in permission_codes:
+    if Perm.PROJECT_VIEW_ASSIGNED_INSTALLER in permission_codes:
         active_installer_ids = frozenset(
             installer_id
             for (installer_id,) in db.query(InstallerAccessMembership.installer_id)
@@ -97,9 +116,9 @@ def can_edit_project(ctx: AuthContext, project: Project) -> bool:
     nunca por dedução do "papel" selecionado na UI."""
     if project.deleted_at is not None:
         return False
-    if ctx.has_permission("project.edit_all"):
+    if ctx.has_permission(Perm.PROJECT_EDIT_ALL):
         return True
-    if ctx.has_permission("project.edit_own_progress"):
+    if ctx.has_permission(Perm.PROJECT_EDIT_OWN_PROGRESS):
         return project.pm_person_id == ctx.person_id
     return False
 
@@ -108,24 +127,30 @@ def can_change_project_status(ctx: AuthContext, project: Project) -> bool:
     """Alterar o estado do ciclo de vida: exige `project.change_status` e que o
     projeto seja visível para o utilizador — o âmbito (todos, ou só os próprios
     como PM) vem daí, sem uma segunda regra."""
-    return ctx.has_permission("project.change_status") and can_view_project(ctx, project)
+    return ctx.has_permission(Perm.PROJECT_CHANGE_STATUS) and (
+        can_view_project(ctx, project)
+        or (
+            ctx.has_permission(Perm.PROJECT_VIEW_ALL_PM_STATUS)
+            and project.deleted_at is None
+        )
+    )
 
 
 def can_plan_project_work(ctx: AuthContext, project: Project) -> bool:
     """Instalador, equipa e datas da obra: exige `project.plan_work` e que o
     projeto seja visível (todos, ou só os próprios como PM)."""
-    return ctx.has_permission("project.plan_work") and can_view_project(ctx, project)
+    return ctx.has_permission(Perm.PROJECT_PLAN_WORK) and can_view_project(ctx, project)
 
 
 def can_update_process(ctx: AuthContext, project: Project) -> bool:
     """Marcar o progresso do processo: exige `workflow.update_progress` e que o
     projeto seja visível (todos, ou só os próprios como PM)."""
-    return ctx.has_permission("workflow.update_progress") and can_view_project(ctx, project)
+    return ctx.has_permission(Perm.WORKFLOW_UPDATE_PROGRESS) and can_view_project(ctx, project)
 
 
 def is_delegated_project(ctx: AuthContext, project: Project) -> bool:
     return (
-        ctx.has_permission("project.view_delegated")
+        ctx.has_permission(Perm.PROJECT_VIEW_DELEGATED)
         and project.pm_person_id is not None
         and project.pm_person_id in ctx.delegating_pm_ids
     )
@@ -134,9 +159,9 @@ def is_delegated_project(ctx: AuthContext, project: Project) -> bool:
 def has_only_delegated_project_scope(ctx: AuthContext) -> bool:
     """Verdadeiro quando a única visibilidade de projetos é por delegação."""
     return (
-        ctx.has_permission("project.view_delegated")
-        and not ctx.has_permission("project.view_all")
-        and not ctx.has_permission("project.view_own")
+        ctx.has_permission(Perm.PROJECT_VIEW_DELEGATED)
+        and not ctx.has_permission(Perm.PROJECT_VIEW_ALL)
+        and not ctx.has_permission(Perm.PROJECT_VIEW_OWN)
     )
 
 
@@ -147,12 +172,12 @@ def can_update_process_stage(ctx: AuthContext, project: Project, stage) -> bool:
     PM, enquanto num projeto que só alcança pela delegação fica limitado às
     etapas ``support_delegate``.
     """
-    if not ctx.has_permission("workflow.update_progress"):
+    if not ctx.has_permission(Perm.WORKFLOW_UPDATE_PROGRESS):
         return False
     if can_update_process(ctx, project) and (
-        ctx.has_permission("project.view_all")
+        ctx.has_permission(Perm.PROJECT_VIEW_ALL)
         or can_edit_project(ctx, project)
-        or (ctx.has_permission("project.view_own") and project.pm_person_id == ctx.person_id)
+        or (ctx.has_permission(Perm.PROJECT_VIEW_OWN) and project.pm_person_id == ctx.person_id)
     ):
         return True
     return is_delegated_project(ctx, project) and stage.responsible_rule == "support_delegate"
@@ -165,11 +190,11 @@ def can_manage_support_delegations(ctx: AuthContext) -> bool:
 
 def can_view_installers(ctx: AuthContext) -> bool:
     """Catálogo global reservado a quem tem âmbito próprio ou global."""
-    return ctx.has_permission("project.view_all") or ctx.has_permission("project.view_own")
+    return ctx.has_permission(Perm.PROJECT_VIEW_ALL) or ctx.has_permission(Perm.PROJECT_VIEW_OWN)
 
 
 def can_manage_installers(ctx: AuthContext) -> bool:
-    return ctx.has_permission("installer.manage")
+    return ctx.has_permission(Perm.INSTALLER_MANAGE)
 
 
 def has_only_installer_project_scope(ctx: AuthContext) -> bool:
@@ -179,10 +204,10 @@ def has_only_installer_project_scope(ctx: AuthContext) -> bool:
     keeps the additive behaviour of the existing RBAC model.
     """
     return (
-        ctx.has_permission("project.view_assigned_installer")
-        and not ctx.has_permission("project.view_all")
-        and not ctx.has_permission("project.view_own")
-        and not ctx.has_permission("project.view_delegated")
+        ctx.has_permission(Perm.PROJECT_VIEW_ASSIGNED_INSTALLER)
+        and not ctx.has_permission(Perm.PROJECT_VIEW_ALL)
+        and not ctx.has_permission(Perm.PROJECT_VIEW_OWN)
+        and not ctx.has_permission(Perm.PROJECT_VIEW_DELEGATED)
     )
 
 
@@ -192,7 +217,7 @@ def is_installer_readonly_scope(ctx: AuthContext) -> bool:
 
 def installer_project_scope_conditions(ctx: AuthContext) -> list[object]:
     """Return the SQL predicates for the assigned-installer project scope."""
-    if not ctx.has_permission("project.view_assigned_installer"):
+    if not ctx.has_permission(Perm.PROJECT_VIEW_ASSIGNED_INSTALLER):
         return []
     if not ctx.active_installer_ids:
         return [Project.id.is_(None)]
@@ -211,7 +236,7 @@ def installer_project_scope_conditions(ctx: AuthContext) -> list[object]:
 
 
 def project_matches_installer_scope(ctx: AuthContext, project: Project) -> bool:
-    if not ctx.has_permission("project.view_assigned_installer"):
+    if not ctx.has_permission(Perm.PROJECT_VIEW_ASSIGNED_INSTALLER):
         return False
     if project.installer_id in ctx.active_installer_ids:
         return True
@@ -224,9 +249,9 @@ def project_matches_installer_scope(ctx: AuthContext, project: Project) -> bool:
 def can_view_project(ctx: AuthContext, project: Project) -> bool:
     if project.deleted_at is not None:
         return False
-    if ctx.has_permission("project.view_all"):
+    if ctx.has_permission(Perm.PROJECT_VIEW_ALL):
         return True
-    if ctx.has_permission("project.view_own"):
+    if ctx.has_permission(Perm.PROJECT_VIEW_OWN):
         if project.pm_person_id == ctx.person_id:
             return True
     if is_delegated_project(ctx, project):
@@ -236,12 +261,12 @@ def can_view_project(ctx: AuthContext, project: Project) -> bool:
 
 def can_view_project_payments(ctx: AuthContext, project: Project) -> bool:
     """Payment visibility is a separate capability within normal project scope."""
-    return ctx.has_permission("payment.view") and can_view_project(ctx, project)
+    return ctx.has_permission(Perm.PAYMENT_VIEW) and can_view_project(ctx, project)
 
 
 def can_edit_project_payments(ctx: AuthContext, project: Project) -> bool:
     """Only payment editors may change milestones, and only on visible projects."""
-    return ctx.has_permission("payment.edit") and can_view_project(ctx, project)
+    return ctx.has_permission(Perm.PAYMENT_EDIT) and can_view_project(ctx, project)
 
 
 def can_view_task(ctx: AuthContext, task: Task) -> bool:
@@ -252,13 +277,13 @@ def can_view_task(ctx: AuthContext, task: Task) -> bool:
     """
     if task.project.deleted_at is not None:
         return False
-    if ctx.has_permission("task.view_all"):
+    if ctx.has_permission(Perm.TASK_VIEW_ALL):
         return True
     if has_only_delegated_project_scope(ctx) or is_installer_readonly_scope(ctx):
         return can_view_project(ctx, task.project)
     if task.assigned_to_person_id == ctx.person_id:
         return True
-    if ctx.has_permission("task.view_assigned_installer"):
+    if ctx.has_permission(Perm.TASK_VIEW_ASSIGNED_INSTALLER):
         return can_view_project(ctx, task.project)
     return can_view_project(ctx, task.project)
 
@@ -269,9 +294,9 @@ def can_edit_task(ctx: AuthContext, task: Task) -> bool:
     projeto aplicável quando esse âmbito é exclusivamente delegado."""
     if task.project.deleted_at is not None:
         return False
-    if ctx.has_permission("task.edit_all"):
+    if ctx.has_permission(Perm.TASK_EDIT_ALL):
         return True
-    if not ctx.has_permission("task.edit_own"):
+    if not ctx.has_permission(Perm.TASK_EDIT_OWN):
         return False
     if has_only_delegated_project_scope(ctx) and not is_delegated_project(ctx, task.project):
         return False
@@ -281,38 +306,38 @@ def can_edit_task(ctx: AuthContext, task: Task) -> bool:
 def can_create_task(ctx: AuthContext, project: Project) -> bool:
     if project.deleted_at is not None:
         return False
-    if ctx.has_permission("task.edit_all"):
+    if ctx.has_permission(Perm.TASK_EDIT_ALL):
         return True
-    if ctx.has_permission("task.edit_own"):
+    if ctx.has_permission(Perm.TASK_EDIT_OWN):
         return project.pm_person_id == ctx.person_id or is_delegated_project(ctx, project)
     return False
 
 
 def can_view_absence(ctx: AuthContext, absence: Absence) -> bool:
-    if ctx.has_permission("absence.view_all") or ctx.has_permission("absence.approve"):
+    if ctx.has_permission(Perm.ABSENCE_VIEW_ALL) or ctx.has_permission(Perm.ABSENCE_APPROVE):
         return True
-    if ctx.has_permission("absence.view_own"):
+    if ctx.has_permission(Perm.ABSENCE_VIEW_OWN):
         return absence.person_id == ctx.person_id
     return False
 
 
 def can_approve_absence(ctx: AuthContext) -> bool:
     """A aprovação é uma capacidade separada de gerir/cancelar ausências."""
-    return ctx.has_permission("absence.approve")
+    return ctx.has_permission(Perm.ABSENCE_APPROVE)
 
 
 def can_manage_absence(ctx: AuthContext, absence: Absence) -> bool:
-    if ctx.has_permission("absence.manage_all"):
+    if ctx.has_permission(Perm.ABSENCE_MANAGE_ALL):
         return True
-    if ctx.has_permission("absence.manage_own"):
+    if ctx.has_permission(Perm.ABSENCE_MANAGE_OWN):
         return absence.person_id == ctx.person_id
     return False
 
 
 def can_create_absence_for(ctx: AuthContext, person_id: UUID) -> bool:
-    if ctx.has_permission("absence.manage_all"):
+    if ctx.has_permission(Perm.ABSENCE_MANAGE_ALL):
         return True
-    if ctx.has_permission("absence.manage_own"):
+    if ctx.has_permission(Perm.ABSENCE_MANAGE_OWN):
         return person_id == ctx.person_id
     return False
 
@@ -326,58 +351,58 @@ def can_create_absence_for(ctx: AuthContext, person_id: UUID) -> bool:
 
 
 def can_view_project_installation_data(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("project.view_installation_data") and can_view_project(ctx, project)
+    return ctx.has_permission(Perm.PROJECT_VIEW_INSTALLATION_DATA) and can_view_project(ctx, project)
 
 
 def can_edit_project_installation_data(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("project.edit_installation_data") and (
+    return ctx.has_permission(Perm.PROJECT_EDIT_INSTALLATION_DATA) and (
         can_edit_project(ctx, project) or is_delegated_project(ctx, project)
     )
 
 
 def can_view_project_licensing_data(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("project.view_licensing_data") and can_view_project(ctx, project)
+    return ctx.has_permission(Perm.PROJECT_VIEW_LICENSING_DATA) and can_view_project(ctx, project)
 
 
 def can_edit_project_licensing_data(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("project.edit_licensing_data") and (
+    return ctx.has_permission(Perm.PROJECT_EDIT_LICENSING_DATA) and (
         can_edit_project(ctx, project) or is_delegated_project(ctx, project)
     )
 
 
 def can_view_project_communication_data(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("project.view_communication_data") and can_view_project(ctx, project)
+    return ctx.has_permission(Perm.PROJECT_VIEW_COMMUNICATION_DATA) and can_view_project(ctx, project)
 
 
 def can_edit_project_communication_data(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("project.edit_communication_data") and can_edit_project(ctx, project)
+    return ctx.has_permission(Perm.PROJECT_EDIT_COMMUNICATION_DATA) and can_edit_project(ctx, project)
 
 
 def can_view_project_credentials(ctx: AuthContext, project: Project) -> bool:
     """Lista de credenciais de portais (sem passwords): mesmo âmbito de
     comunicação/M2M — exige `project.view_communication_data`."""
-    return ctx.has_permission("project.view_communication_data") and can_view_project(ctx, project)
+    return ctx.has_permission(Perm.PROJECT_VIEW_COMMUNICATION_DATA) and can_view_project(ctx, project)
 
 
 def can_edit_project_credentials(ctx: AuthContext, project: Project) -> bool:
     """Criar/editar/remover credenciais: `project.credentials.edit` e o âmbito
     de `can_edit_project` (administrador, chefe, PM do projeto)."""
-    return ctx.has_permission("project.credentials.edit") and can_edit_project(ctx, project)
+    return ctx.has_permission(Perm.PROJECT_CREDENTIALS_EDIT) and can_edit_project(ctx, project)
 
 
 def can_reveal_project_credential(ctx: AuthContext, project: Project) -> bool:
     """Revelar a password: `project.credentials.reveal` e o mesmo âmbito."""
-    return ctx.has_permission("project.credentials.reveal") and can_edit_project(ctx, project)
+    return ctx.has_permission(Perm.PROJECT_CREDENTIALS_REVEAL) and can_edit_project(ctx, project)
 
 
 def can_view_project_sim_cards(ctx: AuthContext, project: Project) -> bool:
     """Lista de SIMs (sem PIN/PUK): mesmo âmbito da comunicação/M2M."""
-    return ctx.has_permission("project.view_communication_data") and can_view_project(ctx, project)
+    return ctx.has_permission(Perm.PROJECT_VIEW_COMMUNICATION_DATA) and can_view_project(ctx, project)
 
 
 def can_edit_project_sim_cards(ctx: AuthContext, project: Project) -> bool:
     """Criar/editar/remover SIMs: `project.edit_communication_data` e `can_edit_project`."""
-    return ctx.has_permission("project.edit_communication_data") and can_edit_project(ctx, project)
+    return ctx.has_permission(Perm.PROJECT_EDIT_COMMUNICATION_DATA) and can_edit_project(ctx, project)
 
 
 def can_write_project_sim_secrets(ctx: AuthContext, project: Project) -> bool:
@@ -391,11 +416,11 @@ def can_reveal_project_sim_secrets(ctx: AuthContext, project: Project) -> bool:
 
 
 def can_view_project_surplus_contracts(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("project.view_licensing_data") and can_view_project(ctx, project)
+    return ctx.has_permission(Perm.PROJECT_VIEW_LICENSING_DATA) and can_view_project(ctx, project)
 
 
 def can_edit_project_surplus_contracts(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("project.edit_licensing_data") and (
+    return ctx.has_permission(Perm.PROJECT_EDIT_LICENSING_DATA) and (
         can_edit_project(ctx, project) or is_delegated_project(ctx, project)
     )
 
@@ -406,61 +431,61 @@ def can_manage_central_inventory(ctx: AuthContext) -> bool:
     projeto). Administrador, Chefe de Operações e PM têm todos esta
     permissão (decisão de negócio confirmada — ver
     docs/PLAN_OPERATIONS_MVP.md secção 4)."""
-    return ctx.has_permission("inventory.manage_central")
+    return ctx.has_permission(Perm.INVENTORY_MANAGE_CENTRAL)
 
 
 def can_allocate_inventory_for_project(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("inventory.allocate_project") and can_edit_project(ctx, project)
+    return ctx.has_permission(Perm.INVENTORY_ALLOCATE_PROJECT) and can_edit_project(ctx, project)
 
 
 def can_consume_inventory_for_project(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("inventory.consume_project") and can_edit_project(ctx, project)
+    return ctx.has_permission(Perm.INVENTORY_CONSUME_PROJECT) and can_edit_project(ctx, project)
 
 
 def can_release_inventory_for_project(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("inventory.release_project") and can_edit_project(ctx, project)
+    return ctx.has_permission(Perm.INVENTORY_RELEASE_PROJECT) and can_edit_project(ctx, project)
 
 
 def can_deliver_inventory_for_project(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("inventory.deliver_project") and can_edit_project(ctx, project)
+    return ctx.has_permission(Perm.INVENTORY_DELIVER_PROJECT) and can_edit_project(ctx, project)
 
 
 def can_collect_inventory_for_project(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("inventory.collect_project") and can_edit_project(ctx, project)
+    return ctx.has_permission(Perm.INVENTORY_COLLECT_PROJECT) and can_edit_project(ctx, project)
 
 
 def can_reverse_inventory_movement_for_project(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("inventory.reverse_project") and can_edit_project(ctx, project)
+    return ctx.has_permission(Perm.INVENTORY_REVERSE_PROJECT) and can_edit_project(ctx, project)
 
 
 def can_manage_material_requirements(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("inventory.manage_requirements") and can_edit_project(ctx, project)
+    return ctx.has_permission(Perm.INVENTORY_MANAGE_REQUIREMENTS) and can_edit_project(ctx, project)
 
 
 def can_view_map(ctx: AuthContext) -> bool:
-    return ctx.has_permission("map.view")
+    return ctx.has_permission(Perm.MAP_VIEW)
 
 
 def can_manage_suppliers(ctx: AuthContext) -> bool:
-    return ctx.has_permission("supplier.manage")
+    return ctx.has_permission(Perm.SUPPLIER_MANAGE)
 
 
 def can_view_suppliers(ctx: AuthContext) -> bool:
     """`supplier.view`, ou `map.view` (compatibilidade: a lista já era visível
     a quem via o mapa)."""
-    return ctx.has_permission("supplier.view") or ctx.has_permission("map.view")
+    return ctx.has_permission(Perm.SUPPLIER_VIEW) or ctx.has_permission(Perm.MAP_VIEW)
 
 
 def can_manage_pickup_points(ctx: AuthContext) -> bool:
-    return ctx.has_permission("pickup_point.manage")
+    return ctx.has_permission(Perm.PICKUP_POINT_MANAGE)
 
 
 def can_view_project_issue(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("project_issue.view") and can_view_project(ctx, project)
+    return ctx.has_permission(Perm.PROJECT_ISSUE_VIEW) and can_view_project(ctx, project)
 
 
 def can_manage_project_issue(ctx: AuthContext, project: Project) -> bool:
-    return ctx.has_permission("project_issue.manage") and can_edit_project(ctx, project)
+    return ctx.has_permission(Perm.PROJECT_ISSUE_MANAGE) and can_edit_project(ctx, project)
 
 
 def can_view_calendar_event(
@@ -471,12 +496,12 @@ def can_view_calendar_event(
     assigned_to_person_ids: tuple[UUID, ...] | list[UUID] | None = None,
 ) -> bool:
     if not (
-        ctx.has_permission("calendar.view")
-        or ctx.has_permission("calendar.view_all_pm")
-        or ctx.has_permission("works_calendar.view_assigned_installer")
+        ctx.has_permission(Perm.CALENDAR_VIEW)
+        or ctx.has_permission(Perm.CALENDAR_VIEW_ALL_PM)
+        or ctx.has_permission(Perm.WORKS_CALENDAR_VIEW_ASSIGNED_INSTALLER)
     ):
         return False
-    if ctx.has_permission("calendar.view_all_pm") and not ctx.has_permission("project.view_all"):
+    if ctx.has_permission(Perm.CALENDAR_VIEW_ALL_PM) and not ctx.has_permission(Perm.PROJECT_VIEW_ALL):
         return project is None or project.deleted_at is None
     if project is None:
         if has_only_delegated_project_scope(ctx) or is_installer_readonly_scope(ctx):
@@ -491,44 +516,44 @@ def can_view_calendar_event(
 
 
 def can_manage_calendar_event(ctx: AuthContext, project: Project | None) -> bool:
-    if not ctx.has_permission("calendar.manage"):
+    if not ctx.has_permission(Perm.CALENDAR_MANAGE):
         return False
     if project is None:
-        if ctx.has_permission("calendar.view_all_pm") and not ctx.has_permission("project.view_all"):
+        if ctx.has_permission(Perm.CALENDAR_VIEW_ALL_PM) and not ctx.has_permission(Perm.PROJECT_VIEW_ALL):
             return False
         return True
     return can_edit_project(ctx, project)
 
 
 def can_view_performance(ctx: AuthContext) -> bool:
-    return ctx.has_permission("performance.view_all") or ctx.has_permission("performance.view_own")
+    return ctx.has_permission(Perm.PERFORMANCE_VIEW_ALL) or ctx.has_permission(Perm.PERFORMANCE_VIEW_OWN)
 
 
 def can_manage_goals(ctx: AuthContext) -> bool:
-    return ctx.has_permission("performance.manage_goals")
+    return ctx.has_permission(Perm.PERFORMANCE_MANAGE_GOALS)
 
 
 def can_import_notes(ctx: AuthContext) -> bool:
-    return ctx.has_permission("import.notes")
+    return ctx.has_permission(Perm.IMPORT_NOTES)
 
 
 def can_import_licensing(ctx: AuthContext) -> bool:
-    return ctx.has_permission("import.licensing")
+    return ctx.has_permission(Perm.IMPORT_LICENSING)
 
 
 def can_view_time_bank(ctx: AuthContext) -> bool:
-    return ctx.has_permission("time_bank.view_all") or ctx.has_permission("time_bank.view_own")
+    return ctx.has_permission(Perm.TIME_BANK_VIEW_ALL) or ctx.has_permission(Perm.TIME_BANK_VIEW_OWN)
 
 
 def can_view_time_bank_person(ctx: AuthContext, person_id: UUID) -> bool:
-    if ctx.has_permission("time_bank.view_all"):
+    if ctx.has_permission(Perm.TIME_BANK_VIEW_ALL):
         return True
-    return ctx.has_permission("time_bank.view_own") and person_id == ctx.person_id
+    return ctx.has_permission(Perm.TIME_BANK_VIEW_OWN) and person_id == ctx.person_id
 
 
 def can_manage_time_bank(ctx: AuthContext) -> bool:
-    return ctx.has_permission("time_bank.manage_all")
+    return ctx.has_permission(Perm.TIME_BANK_MANAGE_ALL)
 
 
 def can_log_time_bank_own(ctx: AuthContext) -> bool:
-    return ctx.has_permission("time_bank.log_own")
+    return ctx.has_permission(Perm.TIME_BANK_LOG_OWN)

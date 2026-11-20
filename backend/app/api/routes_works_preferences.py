@@ -7,14 +7,15 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.schemas.works_preferences import WorksPreferencePatch, WorksPreferenceRead
-from app.security.current_user import get_auth_context
-from app.security.permissions import AuthContext, can_view_installers, is_installer_readonly_scope
+from app.security.permissions import AuthContext, is_installer_readonly_scope
 from app.services.works_preferences import (
     WorksPreferenceStorageError,
     WorksPreferenceValidationError,
     get_works_preferences,
     update_works_preferences,
 )
+from app.security.perm import Perm
+from app.security.guards import require_permission
 
 router = APIRouter(prefix="/api/me", tags=["works-preferences"])
 
@@ -23,22 +24,25 @@ _DETAIL_READ_FAILURE = "Não foi possível carregar as preferências do calendá
 _DETAIL_WRITE_FAILURE = "Não foi possível guardar as preferências do calendário de obras."
 
 
-def _require_view(ctx: AuthContext) -> None:
-    # Mantém o catálogo global e aceita o canal explicitamente scoped.
-    if not (can_view_installers(ctx) or ctx.has_permission("works_calendar.view_assigned_installer")):
-        raise HTTPException(status_code=403, detail="Sem permissão para ver o calendário de obras.")
+# Mantém o catálogo global (âmbito próprio ou global de projetos) e aceita o
+# canal explicitamente scoped.
+require_works_view = require_permission(
+    Perm.PROJECT_VIEW_ALL,
+    Perm.PROJECT_VIEW_OWN,
+    Perm.WORKS_CALENDAR_VIEW_ASSIGNED_INSTALLER,
+    detail="Sem permissão para ver o calendário de obras.",
+)
 
 
 def _require_write(ctx: AuthContext) -> None:
-    if is_installer_readonly_scope(ctx) or not ctx.has_permission("calendar.view"):
+    if is_installer_readonly_scope(ctx) or not ctx.has_permission(Perm.CALENDAR_VIEW):
         raise HTTPException(status_code=403, detail="O papel externo tem acesso somente de leitura.")
 
 
 @router.get("/works-preferences", response_model=WorksPreferenceRead)
 def get_works_preferences_endpoint(
-    db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    db: Session = Depends(get_db), ctx: AuthContext = Depends(require_works_view)
 ) -> dict[str, object]:
-    _require_view(ctx)
     try:
         return get_works_preferences(db, ctx)
     except SQLAlchemyError as exc:
@@ -49,9 +53,8 @@ def get_works_preferences_endpoint(
 def patch_works_preferences_endpoint(
     body: WorksPreferencePatch,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_works_view),
 ) -> dict[str, object]:
-    _require_view(ctx)
     _require_write(ctx)
     try:
         return update_works_preferences(db, ctx, body.model_dump(exclude_unset=True))

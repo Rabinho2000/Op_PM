@@ -1,7 +1,6 @@
 """Schemas do catálogo de inventário e da entrada de stock inicial."""
 from __future__ import annotations
 
-import unicodedata
 import uuid
 from decimal import Decimal
 from typing import Any, Literal
@@ -9,6 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.inventory import INVENTORY_CATEGORIES, LOCATION_TYPES
+from app.utils.text import alnum_casefold_key
 
 
 def _clean_required_text(value: str, field_name: str) -> str:
@@ -21,8 +21,7 @@ def _clean_required_text(value: str, field_name: str) -> str:
 
 
 def _category_key(value: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", value).casefold()
-    return "".join(char for char in decomposed if char.isalnum())
+    return alnum_casefold_key(value)
 
 
 _CATEGORY_BY_KEY = {_category_key(category): category for category in INVENTORY_CATEGORIES}

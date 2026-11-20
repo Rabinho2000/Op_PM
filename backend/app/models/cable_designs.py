@@ -6,7 +6,6 @@ import uuid
 
 from sqlalchemy import (
     Boolean,
-    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -20,6 +19,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import GUID, Base
 from app.models.base import TimestampMixin, UUIDPk
+from app.models.constraints import vocabulary_check
 
 
 CABLE_DESIGN_STATUS_DRAFT = "rascunho"
@@ -45,10 +45,7 @@ class CableDesign(UUIDPk, TimestampMixin, Base):
 
     __tablename__ = "cable_designs"
     __table_args__ = (
-        CheckConstraint(
-            "status IN ('rascunho', 'em_analise', 'aprovado')",
-            name="ck_cable_designs_status",
-        ),
+        vocabulary_check("status", CABLE_DESIGN_STATUSES, name="ck_cable_designs_status"),
         Index("ix_cable_designs_project_id", "project_id"),
     )
 
@@ -96,10 +93,7 @@ class CableDesignRevision(UUIDPk, TimestampMixin, Base):
     __tablename__ = "cable_design_revisions"
     __table_args__ = (
         UniqueConstraint("design_id", "rev", name="uq_cable_design_revision"),
-        CheckConstraint(
-            "status IN ('rascunho', 'aprovada')",
-            name="ck_cable_design_revisions_status",
-        ),
+        vocabulary_check("status", CABLE_REVISION_STATUSES, name="ck_cable_design_revisions_status"),
     )
 
     design_id: Mapped[uuid.UUID] = mapped_column(

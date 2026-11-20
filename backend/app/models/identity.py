@@ -17,11 +17,12 @@ import datetime as dt
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func, text
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
+from app.utils.email import normalize_email
 
 if TYPE_CHECKING:
     from app.models.people import Person
@@ -62,6 +63,13 @@ class User(UUIDPk, TimestampMixin, Base):
     "humana" e o "acesso ao sistema" são conceitos distintos de propósito."""
 
     __tablename__ = "users"
+    __table_args__ = (
+        # O email é identificador de login e a autenticação compara com
+        # `lower(email)`: sem este índice, `A@x` e `a@x` coexistiriam e
+        # bloqueavam a ligação JIT sem erro (M8). Índice funcional, suportado
+        # tanto em PostgreSQL como em SQLite.
+        Index("uq_users_email_lower", text("lower(email)"), unique=True),
+    )
 
     person_id: Mapped[uuid.UUID] = mapped_column(
         GUID(), ForeignKey("people.id"), unique=True, nullable=False
@@ -72,6 +80,12 @@ class User(UUIDPk, TimestampMixin, Base):
 
     person: Mapped[Person] = relationship(back_populates="user")
     roles: Mapped[list[UserRole]] = relationship(back_populates="user")
+
+    @validates("email")
+    def _normalize_email(self, _key: str, value: str) -> str:
+        # Guardado sempre normalizado (strip + minúsculas), em qualquer ponto
+        # de criação ou edição.
+        return normalize_email(value)
 
 
 class UserRole(UUIDPk, TimestampMixin, Base):

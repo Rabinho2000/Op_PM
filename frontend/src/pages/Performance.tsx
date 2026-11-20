@@ -4,7 +4,6 @@
 // apresenta.
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
-  ApiError,
   createGoal,
   GOAL_METRIC_LABELS,
   GoalMetric,
@@ -16,6 +15,7 @@ import {
   PerformanceSummary,
   CompletedTasksWeekly,
   updateGoal,
+  errorMessage,
 } from "../api/client";
 import Icon from "../components/Icon";
 import { useToast } from "../components/Toast";
@@ -100,7 +100,7 @@ function CreateGoalModal({
       });
       onDone();
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível criar a meta.");
+      setError(errorMessage(err, "Não foi possível criar a meta."));
     } finally {
       setSaving(false);
     }
@@ -247,7 +247,7 @@ function EditGoalModal({ goal, onClose, onDone }: { goal: GoalPeriod; onClose: (
       await updateGoal(goal.id, { target_value: targetValue, notes });
       onDone();
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível guardar a meta.");
+      setError(errorMessage(err, "Não foi possível guardar a meta."));
     } finally {
       setSaving(false);
     }
@@ -329,7 +329,7 @@ export default function Performance() {
       month: periodType === "month" ? month : undefined,
     })
       .then(setSummary)
-      .catch((e) => setError(e instanceof ApiError ? e.detail : "Não foi possível contactar o servidor."));
+      .catch((e) => setError(errorMessage(e, "Não foi possível contactar o servidor.")));
   }, [year, periodType, quarter, semester, month, pmFilter]);
 
   const loadWeekly = useCallback(() => {
@@ -337,7 +337,7 @@ export default function Performance() {
     setWeeklyError(null);
     getCompletedTasksWeekly({ from: weeklyFrom, to: weeklyTo })
       .then(setWeekly)
-      .catch((e) => setWeeklyError(e instanceof ApiError ? e.detail : "Não foi possível carregar as tarefas concluídas."))
+      .catch((e) => setWeeklyError(errorMessage(e, "Não foi possível carregar as tarefas concluídas.")))
       .finally(() => setWeeklyLoading(false));
   }, [weeklyFrom, weeklyTo]);
 

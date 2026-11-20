@@ -1,6 +1,7 @@
 import { Badge, Card, EmptyState } from "../../../components/ui";
 import type { CabosEngine, CircuitRow, Result, State } from "../engine";
 import type { CableStudyUpdater } from "../useCableStudy";
+import { useEngineValue } from "../useEngineValue";
 import { moneyPt, numberPt, resultCircuitForRow } from "./utils";
 
 interface ResultsTableProps {
@@ -38,7 +39,11 @@ function breakerCell(row: CircuitRow) {
 
 export default function ResultsTable({ state, result, rows, engine, readOnly, apply }: ResultsTableProps) {
   const resultRows = rows.filter((row) => row.kind === "inv" || row.kind === "perc");
-  const manualCableCircuits = engine.views.manualCableOptions?.(state, result).circuits ?? [];
+  const manualOptions = useEngineValue(
+    async () => (await engine.views.manualCableOptions?.(state, result))?.circuits ?? [],
+    [engine, state, result],
+  );
+  const manualCableCircuits = manualOptions.value ?? [];
   const reviewCount = resultRows.filter((row) => row.verdict === "a rever").length;
 
   return (

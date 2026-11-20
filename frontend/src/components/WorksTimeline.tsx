@@ -8,7 +8,6 @@ import {
   buildRows,
   dayPosition,
   dayTicks,
-  formatIsoPt,
   DragMode,
   monthTicks,
   pixelsToDays,
@@ -24,6 +23,7 @@ import {
   Window,
   Zoom,
 } from "../utils/worksTimeline";
+import { formatDatePt } from "../utils/dates";
 import Icon from "./Icon";
 
 const DENSITY_SIZES: Record<WorksDensity, {
@@ -88,7 +88,7 @@ function describe(work: WorkItem, statusLabel: string): string {
   const where = [work.installer_name, work.installer_team_name ?? work.team_name].filter(Boolean).join(" / ") || "sem instalador";
   return [
     work.name,
-    `${formatIsoPt(workStartDate(work))} a ${formatIsoPt(workEndDate(work))}${work.work_dates_estimated ? " (datas estimadas)" : ""}`,
+    `${formatDatePt(workStartDate(work))} a ${formatDatePt(workEndDate(work))}${work.work_dates_estimated ? " (datas estimadas)" : ""}`,
     where,
     work.pm_display_name ? `PM ${work.pm_display_name}` : "sem PM",
     statusLabel,
@@ -235,7 +235,7 @@ export default function WorksTimeline({
                 key={day.iso}
                 className={`works__day ${day.weekend ? "works__day--weekend" : ""} ${day.iso === today ? "works__day--today" : ""}`}
                 style={{ left: day.left, width: day.width }}
-                title={formatIsoPt(day.iso)}
+                title={formatDatePt(day.iso)}
               >
                 <span className="works__day-number">{day.day}</span>
                 <span className="works__day-weekday">{day.weekday}</span>
@@ -303,7 +303,7 @@ export default function WorksTimeline({
                       className={classes}
                       data-entry-key={workEntryKey(work)}
                       style={{ left: g.left, width: g.width, top, height: dimensions.laneHeight }}
-                      title={dragging ? `${formatIsoPt(dates.start)} a ${formatIsoPt(dates.end)}` : text}
+                      title={dragging ? `${formatDatePt(dates.start)} a ${formatDatePt(dates.end)}` : text}
                       aria-label={text}
                       draggable={false}
                       onPointerDown={canDrag ? (e) => onPointerDown(e, work, row) : undefined}

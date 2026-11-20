@@ -126,9 +126,10 @@ from app.migration.seed_dev import seed_catalog
 from app.models.identity import AuthAuditLog, Permission, Role, RolePermission, User, UserRole
 from app.models.people import Person
 from app.security.catalog import ROLES
+from app.security.perm import Perm
 
 STAGING_ENVIRONMENT = "staging"
-ADMIN_PERMISSION_CODE = "admin.manage_users"
+ADMIN_PERMISSION_CODE = Perm.ADMIN_MANAGE_USERS.value
 
 
 class BootstrapError(ValueError):

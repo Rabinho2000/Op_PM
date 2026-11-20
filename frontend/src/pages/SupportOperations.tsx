@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { ApiError, listPeople, listSupportDelegations, Person, saveSupportDelegation, deleteSupportDelegation, SupportDelegation } from "../api/client";
+import { listPeople, listSupportDelegations, Person, saveSupportDelegation, deleteSupportDelegation, SupportDelegation, errorMessage } from "../api/client";
 import { Alert, Card, EmptyState, ErrorState, LoadingState, PageHeader } from "../components/ui";
 import { useSession } from "../session/SessionContext";
 
@@ -19,7 +19,7 @@ export default function SupportOperations() {
   async function load() {
     setError(null);
     try { setRows(await listSupportDelegations()); setPeople(await listPeople()); }
-    catch (e) { setError(e instanceof ApiError ? e.detail : "Não foi possível carregar as delegações."); }
+    catch (e) { setError(errorMessage(e, "Não foi possível carregar as delegações.")); }
   }
   useEffect(() => { if (canManageSupport) void load(); }, [canManageSupport]);
 
@@ -32,7 +32,7 @@ export default function SupportOperations() {
     if (!pm || !support) return;
     setSaving(true); setError(null);
     try { await saveSupportDelegation({ pm_person_id: pm, support_person_id: support }); setPm(""); setSupport(""); setEditingPm(null); await load(); }
-    catch (e) { setError(e instanceof ApiError ? e.detail : "Não foi possível guardar a delegação."); }
+    catch (e) { setError(errorMessage(e, "Não foi possível guardar a delegação.")); }
     finally { setSaving(false); }
   }
   function edit(row: SupportDelegation) {
@@ -48,7 +48,7 @@ export default function SupportOperations() {
   async function remove(id: string) {
     setError(null);
     try { await deleteSupportDelegation(id); await load(); }
-    catch (e) { setError(e instanceof ApiError ? e.detail : "Não foi possível remover a delegação."); }
+    catch (e) { setError(errorMessage(e, "Não foi possível remover a delegação.")); }
   }
 
   return <>

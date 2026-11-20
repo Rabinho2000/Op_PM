@@ -18,6 +18,7 @@ import {
   MaterialRequestAction,
   MaterialRequestEmailDraft,
   MaterialRequestStatus,
+  errorMessage,
 } from "../api/client";
 import { formatDateTimePt } from "../utils/dates";
 import { formatQuantity } from "../utils/quantities";
@@ -130,7 +131,7 @@ export function CreateMaterialRequestModal({
       });
       onDone(created);
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível criar o pedido.");
+      setError(errorMessage(err, "Não foi possível criar o pedido."));
     } finally {
       setSaving(false);
     }
@@ -253,7 +254,7 @@ export function MaterialRequestDetailModal({
   const load = useCallback(() => {
     getMaterialRequest(requestId)
       .then(setRequest)
-      .catch((e) => setError(e instanceof ApiError ? e.detail : "Não foi possível carregar o pedido."));
+      .catch((e) => setError(errorMessage(e, "Não foi possível carregar o pedido.")));
   }, [requestId]);
 
   useEffect(load, [load]);
@@ -286,7 +287,7 @@ export function MaterialRequestDetailModal({
       onChanged();
     } catch (err) {
       // A mensagem do servidor (transição inválida, sem permissão, orçamento incompleto…) é a verdade.
-      setError(err instanceof ApiError ? err.detail : "Não foi possível aplicar a ação.");
+      setError(errorMessage(err, "Não foi possível aplicar a ação."));
     } finally {
       setBusy(false);
     }
@@ -297,7 +298,7 @@ export function MaterialRequestDetailModal({
     try {
       setDraft(await getMaterialRequestEmailDraft(request.id));
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível preparar o email.");
+      setError(errorMessage(err, "Não foi possível preparar o email."));
     }
   }
 
@@ -495,7 +496,7 @@ export function SupplierRequestsSection({
     setError(null);
     listMaterialRequests({ supplier_id: supplierId })
       .then(setRequests)
-      .catch((e) => setError(e instanceof ApiError ? e.detail : "Não foi possível carregar os pedidos."));
+      .catch((e) => setError(errorMessage(e, "Não foi possível carregar os pedidos.")));
   }, [supplierId, refreshKey]);
 
   return (

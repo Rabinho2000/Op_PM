@@ -145,7 +145,7 @@ describe("store do estudo de cabos", () => {
       rtV: 2 as const,
       invs: [{ ...legacy.invs[0], rtId: 7 }],
     };
-    vi.spyOn(fakeEngine, "migrate").mockReturnValueOnce(migrated as unknown as State);
+    vi.spyOn(fakeEngine, "migrate").mockReturnValueOnce(migrated as never);
 
     const store = requireDraftStore(await initializeCableStudy(fakeEngine, design({ state: legacy }), null));
 
@@ -168,7 +168,7 @@ describe("store do estudo de cabos", () => {
       },
     };
 
-    const presented = buildCablePresentationState(fakeEngine, store.state, approvedDesign, new Map([["person-2", "Pessoa Dois"]]));
+    const presented = await buildCablePresentationState(fakeEngine, store.state, approvedDesign, new Map([["person-2", "Pessoa Dois"]]));
 
     expect(presented).not.toBe(store.state);
     expect(presented.obra.rev).toBe("B");
@@ -186,12 +186,12 @@ describe("store do estudo de cabos", () => {
       revision: { ...design().revision, approved_by_person_id: "person-2", approved_at: "2026-10-19T10:00:00Z" },
     };
 
-    expect(buildCablePresentationState(fakeEngine, store.state, approvedDesign, new Map()).obra.aprov).toBeNull();
+    expect((await buildCablePresentationState(fakeEngine, store.state, approvedDesign, new Map())).obra.aprov).toBeNull();
   });
 
   it("produz o corpo de gravação sem guardar o resultado integral", async () => {
     const store = requireDraftStore(await initializeCableStudy(fakeEngine, design(), null));
-    const payload = buildCableSavePayload(fakeEngine, store);
+    const payload = await buildCableSavePayload(fakeEngine, store);
     expect(payload.input).toEqual({ format: 1, state: store.state });
     expect(payload.result).toMatchObject({ format: 1, engine_version: "cabos-fake@7" });
     expect(payload.engine_version).toBe("cabos-fake@7");
@@ -215,7 +215,7 @@ describe("store do estudo de cabos", () => {
     await view.result.current.markSaved();
     await waitFor(() => expect(view.result.current.dirty).toBe(false));
   });
-  it("marks pending intent dirty immediately and flush retains edits before the debounce", async () => {
+  it("marca a intenção pendente como por guardar e o settle aplica as edições antes do debounce", async () => {
     const draft = design();
     const view = renderHook(() => useCableStudy(fakeEngine, draft, null));
     await waitFor(() => expect(view.result.current.store).not.toBeNull());
@@ -224,13 +224,52 @@ describe("store do estudo de cabos", () => {
       act(() => view.result.current.apply(s => ({ ...s, proj: "Pending" }), { debounce: true }));
       expect(view.result.current.dirty).toBe(true);
       expect(view.result.current.state?.proj).not.toBe("Pending");
-      act(() => { expect(view.result.current.flush()?.state.proj).toBe("Pending"); });
-      expect(view.result.current.state?.proj).toBe("Pending");
-      await act(async () => { await view.result.current.markSaved(); });
-      expect(view.result.current.dirty).toBe(false);
-      act(() => vi.advanceTimersByTime(180));
-      expect(view.result.current.state?.proj).toBe("Pending");
+      // flush é síncrono: já lança a ação, e devolve "por guardar" enquanto o motor calcula.
+      act(() => { expect(view.result.current.flush()?.dirty).toBe(true); });
     } finally { vi.useRealTimers(); }
+    let settled: Awaited<ReturnType<typeof view.result.current.settle>> = null;
+    await act(async () => { settled = await view.result.current.settle(); });
+    expect(settled).not.toBeNull();
+    expect((settled as unknown as { state: State }).state.proj).toBe("Pending");
+    expect(view.result.current.state?.proj).toBe("Pending");
+    await act(async () => { await view.result.current.markSaved(); });
+    expect(view.result.current.dirty).toBe(false);
   });
 
+  it("executa as ações assíncronas do motor pela ordem em que foram pedidas", async () => {
+    const view = renderHook(() => useCableStudy(fakeEngine, design(), null));
+    await waitFor(() => expect(view.result.current.store).not.toBeNull());
+    const order: string[] = [];
+    await act(async () => {
+      view.result.current.apply(async (s) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        order.push("lenta");
+        return { ...s, proj: "lenta" };
+      });
+      view.result.current.apply((s) => { order.push("rápida"); return { ...s, proj: `${s.proj}+rápida` }; });
+      await view.result.current.settle();
+    });
+    expect(order).toEqual(["lenta", "rápida"]);
+    expect(view.result.current.state?.proj).toBe("lenta+rápida");
+    expect(view.result.current.calculating).toBe(false);
+  });
+
+  it("mostra a recusa do motor sem perder o estado atual", async () => {
+    const view = renderHook(() => useCableStudy(fakeEngine, design(), null));
+    await waitFor(() => expect(view.result.current.store).not.toBeNull());
+    const before = view.result.current.state;
+    await act(async () => {
+      view.result.current.apply(() => { throw new Error("Ação inválida no motor"); });
+      await view.result.current.settle();
+    });
+    expect(view.result.current.actionError).toBe("Ação inválida no motor");
+    expect(view.result.current.state).toBe(before);
+    expect(view.result.current.calculating).toBe(false);
+    await act(async () => {
+      view.result.current.apply((s) => ({ ...s, proj: "Recuperado" }));
+      await view.result.current.settle();
+    });
+    expect(view.result.current.actionError).toBeNull();
+    expect(view.result.current.state?.proj).toBe("Recuperado");
+  });
 });

@@ -40,18 +40,10 @@ from app.services.project_data import (
     record_sim_secrets_reveal,
     update_sim_card,
 )
-from app.services.projects import get_visible_project
+from app.api.deps import get_visible_project_or_404
+from app.models.project import Project
 
 router = APIRouter(prefix="/api/projects", tags=["project-sim-cards"], route_class=NoEchoRoute)
-
-_NOT_FOUND = "Projeto não encontrado ou sem permissão para o ver."
-
-
-def _project_or_404(db: Session, project_id: uuid.UUID, ctx: AuthContext):
-    project = get_visible_project(db, ctx, project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail=_NOT_FOUND)
-    return project
 
 
 def _to_read(sim: ProjectSimCard) -> SimCardRead:
@@ -99,9 +91,11 @@ def _require_secret_write(ctx: AuthContext, project, body_fields: set[str]) -> N
 
 @router.get("/{project_id}/sim-cards", response_model=list[SimCardRead])
 def list_sim_cards_endpoint(
-    project_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> list[SimCardRead]:
-    project = _project_or_404(db, project_id, ctx)
     if not can_view_project_sim_cards(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para ver cartões SIM.")
     return [_to_read(s) for s in list_sim_cards(db, project_id)]
@@ -112,10 +106,10 @@ def create_sim_card_endpoint(
     project_id: uuid.UUID,
     body: SimCardCreate,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
     settings: Settings = Depends(get_settings),
 ) -> SimCardRead:
-    project = _project_or_404(db, project_id, ctx)
     if not can_edit_project_sim_cards(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para editar cartões SIM.")
     sent = body.model_dump(exclude_unset=True)
@@ -140,10 +134,10 @@ def update_sim_card_endpoint(
     sim_id: uuid.UUID,
     body: SimCardUpdate,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
     settings: Settings = Depends(get_settings),
 ) -> SimCardRead:
-    project = _project_or_404(db, project_id, ctx)
     if not can_edit_project_sim_cards(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para editar cartões SIM.")
     sim = _sim_or_404(db, project_id, sim_id)
@@ -168,9 +162,9 @@ def delete_sim_card_endpoint(
     project_id: uuid.UUID,
     sim_id: uuid.UUID,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> None:
-    project = _project_or_404(db, project_id, ctx)
     if not can_edit_project_sim_cards(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para editar cartões SIM.")
     sim = _sim_or_404(db, project_id, sim_id)
@@ -183,12 +177,12 @@ def reveal_sim_secrets_endpoint(
     sim_id: uuid.UUID,
     response: Response,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
     settings: Settings = Depends(get_settings),
 ) -> SimCardReveal:
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
-    project = _project_or_404(db, project_id, ctx)
     if not can_reveal_project_sim_secrets(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para revelar PIN/PUK.")
     sim = _sim_or_404(db, project_id, sim_id)

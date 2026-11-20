@@ -19,6 +19,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
+from app.models.constraints import vocabulary_check
 
 SOURCE_TYPE_NOTES_HTML = "notes_html"
 SOURCE_TYPE_NOTES_JSON = "notes_json"
@@ -51,7 +52,11 @@ class FieldImportBatch(UUIDPk, TimestampMixin, Base):
     mesmo ficheiro (dedução de duplicados)."""
 
     __tablename__ = "field_import_batches"
-    __table_args__ = (UniqueConstraint("source_file_hash", name="uq_field_import_source_hash"),)
+    __table_args__ = (
+        UniqueConstraint("source_file_hash", name="uq_field_import_source_hash"),
+        vocabulary_check("source_type", SOURCE_TYPES, name="ck_field_import_batches_source_type"),
+        vocabulary_check("status", BATCH_STATUSES, name="ck_field_import_batches_status"),
+    )
 
     source_type: Mapped[str] = mapped_column(String(32), nullable=False)
     source_filename: Mapped[str] = mapped_column(String(512), nullable=False)
@@ -106,6 +111,9 @@ class FieldImportConflict(UUIDPk, TimestampMixin, Base):
     em silêncio (D-005 aplicado a nível de campo, não de projeto)."""
 
     __tablename__ = "field_import_conflicts"
+    __table_args__ = (
+        vocabulary_check("resolution", CONFLICT_RESOLUTIONS, name="ck_field_import_conflicts_resolution"),
+    )
 
     record_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("field_import_records.id"), nullable=False)
     # project | installation | licensing | communication | surplus_contract

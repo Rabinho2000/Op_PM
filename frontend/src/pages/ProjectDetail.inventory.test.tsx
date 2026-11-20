@@ -7,6 +7,7 @@ import type { InventoryItem, InventoryMovement, ProjectInventorySummary } from "
 import { makeMe, makeProject, makeTask } from "../test/fixtures";
 import { renderWithProviders } from "../test/render";
 import ProjectDetail from "./ProjectDetail";
+import type { Perm } from "../generated/permissions";
 
 const api = vi.hoisted(() => ({
   getProject: vi.fn(),
@@ -84,7 +85,7 @@ function movement(
   } as InventoryMovement;
 }
 
-const PERMISSIONS = [
+const PERMISSIONS: Perm[] = [
   "project.view_all",
   "inventory.view",
   "inventory.deliver_project",

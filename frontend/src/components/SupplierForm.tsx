@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { ApiError, createSupplier, Supplier, SupplierCompanyCode, SupplierContact, SupplierInput, updateSupplier } from "../api/client";
+import { createSupplier, Supplier, SupplierCompanyCode, SupplierContact, SupplierInput, updateSupplier, errorMessage } from "../api/client";
 import { Alert, Modal } from "./ui";
 
 // Mesmas regras do servidor (app/schemas/suppliers.py) — só para dar resposta
@@ -116,7 +116,7 @@ export default function SupplierFormModal({
         : await createSupplier({ ...payload, name: payload.name as string });
       onSaved(saved);
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : "Não foi possível guardar o fornecedor.");
+      setError(errorMessage(err, "Não foi possível guardar o fornecedor."));
     } finally {
       setSaving(false);
     }

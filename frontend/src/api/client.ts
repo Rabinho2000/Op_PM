@@ -7,6 +7,7 @@
 // tempo que um Bearer token — os dois caminhos são mutuamente exclusivos,
 // tal como no backend. Nenhuma chave/segredo de integração (Claude, Graph,
 // ClickUp, Financial, Entra) é colocada aqui: essas só existem no backend.
+import type { Perm } from "../generated/permissions";
 import { SessionExpiredError, devLoginEnabled, getActiveMsalAccount, getApiAccessToken, logoutFromMicrosoft } from "../auth/msal";
 
 // "/" (ou vazio) = mesma origem do frontend — usado pela demonstração em
@@ -216,7 +217,9 @@ export interface MeResponse {
   display_name?: string;
   roles: string[];
   role_labels?: string[];
-  permissions: string[];
+  // Códigos do catálogo do backend (src/generated/permissions.ts); um código novo
+  // do servidor que o cliente ainda não conhece só falha a comparação, nunca a execução.
+  permissions: Perm[];
 }
 
 export const getHealth = () => apiGet<HealthResponse>("/health");
@@ -327,6 +330,7 @@ export interface Project {
   // Permissões efetivas do utilizador atual sobre este projeto (servidor).
   editable_fields: string[];
   can_manage_tasks: boolean;
+  can_view_project_scope: boolean;
   can_change_status: boolean;
   can_plan_work: boolean;
   has_project_photo: boolean;

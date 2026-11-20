@@ -53,11 +53,13 @@ trabalhos urgentes), entidade `Task` genérica (checklist padrão de 5 tarefas p
 projeto + tarefas ad-hoc, máquina de estados, histórico), férias/ausências
 (`Absence`), e o aviso persistente de fotos por colocar na Drive quando visita
 técnica/comissionamento é concluído — ver `docs/DECISIONS.md` D-039 a D-047.
-719 testes automatizados de backend a passar (+3 skipped) em SQLite (e em
-PostgreSQL, ver abaixo) + 238 testes Vitest no frontend. Sem integrações
-externas reais ligadas (Claude, Microsoft
-Graph, ClickUp, Financial); sem migração de dados reais (os 295 projetos reais
-continuam por migrar); sem envio de email ou criação de eventos reais; sem
+1 674 testes automatizados de backend a passar (+23 skipped) em SQLite (e em
+PostgreSQL, ver abaixo) + cerca de 760 testes Vitest no frontend (contagem à
+data da Fase 2; ver o CI para o número atual). Só o envio do
+relatório semanal por Microsoft Graph é uma integração real (opcional,
+`GRAPH_ENABLED`); ClickUp, Financial e Claude ainda não têm integração; sem
+migração de dados reais (os 295 projetos reais continuam por migrar); sem
+criação de eventos reais; sem
 biblioteca documental (os pedidos de material a fornecedores existem, mas
 nunca enviam email — D-067). Ver
 `docs/PLAN.md` para o roadmap completo, `docs/STAGING_CHECKLIST.md`/
@@ -135,8 +137,8 @@ de notas iniciais (arrastar HTML/JSON, preview, conflitos por campo,
 confirmação, auditoria — `/projects/import`) e importador de
 licenciamento via Excel (`python -m app.cli.import_licensing`,
 `--dry-run`/`--apply`/`--rollback`, nunca via UI), ver
-[`docs/DATA_IMPORTS.md`](docs/DATA_IMPORTS.md). 719 testes de backend
-(+3 skipped) e 238 testes Vitest no frontend.
+[`docs/DATA_IMPORTS.md`](docs/DATA_IMPORTS.md). 1 674 testes de backend
+(+23 skipped) e cerca de 760 testes Vitest no frontend.
 
 Documentação:
 
@@ -219,9 +221,15 @@ por exemplo `chefe.sintetico@example.invalid`, criado pelo seed. Isto é um meca
 desenvolvimento explícito, só disponível em `local`/`test`, nunca autenticação real.
 
 Para testar a validação real de token Microsoft Entra ID sem um tenant de verdade,
-defina `AUTH_ENABLED=true` e `ENTRA_VALIDATION_MODE=mock` (só válido em `local`/`test` —
-ver `docs/DECISIONS.md` D-024) e envie `Authorization: Bearer <token>`, assinado com
-`app.security.entra_auth.issue_mock_token(...)`. Com um tenant real disponível, deixe
+defina `AUTH_ENABLED=true`, `ENTRA_VALIDATION_MODE=mock` (só válido em `local`/`test` —
+ver `docs/DECISIONS.md` D-024) e `ENTRA_MOCK_PUBLIC_KEY_FILE` (ficheiro PEM com a chave
+**pública**; o código não traz nenhuma chave, e sem ficheiro o modo mock rejeita todos os
+tokens), e envie `Authorization: Bearer <token>` assinado com a chave privada
+correspondente, gerada por si e guardada fora do repositório (issuer
+`https://mock-entra.test/tenant-sintetico/v2.0`, audience `mock-client-id-sintetico`,
+claims `oid`, `sub`, `exp`, `iat` e `scp=access_as_user`). A suite de testes faz isto
+sozinha: `backend/tests/entra_mock.py` gera um par efémero em cada execução. Com um tenant
+real disponível, deixe
 `ENTRA_VALIDATION_MODE=real` (omissão) e defina `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID`.
 
 > **Dependências do backend.** `requirements.in` e `requirements-postgres.in`
@@ -314,21 +322,38 @@ Login Microsoft real requer uma app registration SPA (Authorization Code + PKCE,
 client secret) e uma app registration de API expondo o âmbito `access_as_user` — ver
 `frontend/.env.example` e `docs/OPEN_QUESTIONS.md`, pergunta 1.
 
-## Integrações — todas em modo mock/fallback nesta fase
+## Integrações
 
-Nenhuma integração externa real está ligada. Cada uma tem uma flag explícita
-(`*_ENABLED`, omissão `false`) e uma implementação mock ou de fallback local:
+Só o **Microsoft Graph** (envio do relatório semanal por email) tem implementação
+real, em `backend/app/adapters/graph_mail.py`. As restantes estão por implementar:
+as flags `CLICKUP_ENABLED`, `FINANCIAL_ENABLED` e `CLAUDE_ENABLED` **não ligam a
+nada** e a configuração recusa-se a arrancar se alguma for `true`.
 
-| Integração | Flag | Comportamento em Fase 0 |
+| Integração | Flag | Estado |
 |---|---|---|
-| Microsoft Graph (email/calendário) | `GRAPH_ENABLED` | Escreve rascunhos `.eml`/`.ics` localmente (`GRAPH_FALLBACK_DIR`); nunca envia nem publica nada real, mesmo com "aprovação". |
-| ClickUp | `CLICKUP_ENABLED` | Lê tarefas de uma fixture sintética (`backend/fixtures/synthetic_clickup_tasks.json`). |
-| Financial | `FINANCIAL_ENABLED` / `FINANCIAL_MODE` | `mock` (registo sintético) ou `csv` (lê um CSV local real — ver `backend/fixtures/synthetic_financial_costs.csv`); `api`/`excel` ainda não implementados. |
-| Claude | `CLAUDE_ENABLED` | Devolve texto determinístico marcado `[MOCK]`, sem qualquer chamada de rede. |
+| Microsoft Graph (email) | `GRAPH_ENABLED` | **Real**: com `true`, o relatório semanal é enviado por Graph (client credentials, segredo ou certificado lidos de ficheiro — `GRAPH_CLIENT_SECRET_FILE`). Com `false`, grava um `.eml` na pasta `GRAPH_FALLBACK_DIR` (outbox local) e não envia nada. Calendário/eventos: não implementado. |
+| ClickUp | `CLICKUP_ENABLED` | Adiada. Só existe a interface de leitura e um mock com fixture sintética (`backend/app/adapters/clickup/`, `backend/fixtures/synthetic_clickup_tasks.json`), ainda não chamados pela aplicação. |
+| Financial | `FINANCIAL_ENABLED` / `FINANCIAL_MODE` | Por implementar. Existe um leitor de CSV (`CsvFinancialAdapter`, ver `backend/fixtures/synthetic_financial_costs.csv`), ainda não ligado à aplicação. |
+| Claude | `CLAUDE_ENABLED` | Fora do âmbito atual; sem código. |
 
-Ativar qualquer uma destas para chamadas reais é trabalho de uma fase futura — ver
-`docs/PLAN.md`. Tentar ativar a flag sem a implementação correspondente levanta
-`NotImplementedError` de propósito, em vez de falhar silenciosamente para mock.
+O plano das integrações por implementar está em `docs/ANALISE_OP_PM.md` ("Mock vs.
+real") e `docs/PLAN.md`.
+
+## Implantação, scheduler e instâncias privadas
+
+- **Produção:** `docker-compose.production.example.yml` (PostgreSQL, serviço
+  `migrate` à parte e sem seed, backend, scheduler e frontend); procedimento de
+  passagem de SQLite para PostgreSQL em `docs/RUNBOOK_CUTOVER_POSTGRES.md`.
+  Segredos por ficheiro (`SECRET_KEY_FILE`, `DATABASE_PASSWORD_FILE`, …).
+- **Scheduler do relatório semanal:** serviço próprio que corre
+  `python -m app.cli.client_reports loop` (`run-due` para uma execução única,
+  `health` para o healthcheck do container). Precisa de um utilizador de serviço
+  (`CLIENT_REPORT_SCHEDULER_EMAIL`) e de `GRAPH_ENABLED=true` para enviar de
+  verdade; sem Graph, grava `.eml` na pasta `outbox`.
+- **Instâncias numa rede privada** (por exemplo, atrás de uma VPN de malha):
+  usam um compose próprio, não versionado, que não faz parte deste repositório.
+  Antes de qualquer `up`, fazer backup da base de dados: alguns arranques correm
+  migrações e o seed.
 
 ## Segurança
 

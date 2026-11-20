@@ -8,21 +8,27 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.schemas.installer_access import InstallerInventoryPage, InstallerInventoryRow
 from app.schemas.installers import InstallerAccessInstallerRead, InstallerAccessTeamRead
-from app.security.current_user import get_auth_context
 from app.security.permissions import AuthContext
 from app.services.installer_access import list_assigned_installers
 from app.services.installer_inventory import list_installer_inventory
+from app.security.perm import Perm
+from app.security.guards import require_permission
 
 router = APIRouter(prefix="/api/installer-access", tags=["installer-access"])
+
+require_assigned_teams_view = require_permission(
+    Perm.INSTALLER_TEAM_VIEW_ASSIGNED_INSTALLER, detail="Sem permissão para ver as equipas associadas."
+)
+require_assigned_inventory_view = require_permission(
+    Perm.INVENTORY_VIEW_ASSIGNED_INSTALLER, detail="Sem permissão para ver o inventário associado."
+)
 
 
 @router.get("/teams", response_model=list[InstallerAccessInstallerRead])
 def assigned_teams_endpoint(
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_assigned_teams_view),
 ):
-    if not ctx.has_permission("installer_team.view_assigned_installer"):
-        raise HTTPException(status_code=403, detail="Sem permissão para ver as equipas associadas.")
     return [
         InstallerAccessInstallerRead(
             id=installer.id,
@@ -48,10 +54,8 @@ def assigned_inventory_endpoint(
     limit: int = Query(default=100, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_assigned_inventory_view),
 ):
-    if not ctx.has_permission("inventory.view_assigned_installer"):
-        raise HTTPException(status_code=403, detail="Sem permissão para ver o inventário associado.")
     try:
         items, total = list_installer_inventory(db, ctx, project_id=project_id, limit=limit, offset=offset)
     except LookupError as exc:

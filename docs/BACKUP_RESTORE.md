@@ -1,6 +1,6 @@
 # Backup e restauro
 
-Runbook do backup local da instância Op_PM (Docker Compose, SQLite) e do respetivo ensaio de restauro. Resolve a parte local do achado A9 de [`ANALISE_OP_PM.md`](ANALISE_OP_PM.md); o que falta está na secção 7.
+Runbook do backup local da instância Op_PM (Docker Compose, PostgreSQL desde 2026-11-18) e do respetivo ensaio de restauro. Resolve a parte local do achado A9 de [`ANALISE_OP_PM.md`](ANALISE_OP_PM.md); o que falta está na secção 7.
 
 > Os scripts de backup e de ensaio vivem no servidor, fora deste repositório (têm caminhos e nomes de volume específicos da instância). Este documento descreve o comportamento e os passos genéricos. Marcadores como `<backup-dir>` e `<volume-de-dados>` substituem-se pelos valores da instância.
 
@@ -61,15 +61,17 @@ Pressupostos: Docker Compose, volume `<volume-de-dados>` montado em `/app/data`,
 
 3. **Guardar o estado atual** do volume, se ainda existir, antes de o substituir (por exemplo `docker run --rm -v <volume-de-dados>:/data:ro ... tar czf - /data > pre-restauro.tar.gz`).
 
-4. **Restaurar a BD.** Copiar o `.db` para o volume com o nome original da BD e **apagar os `-wal` e `-shm` antigos**, que pertencem à BD anterior:
+4. **Restaurar a BD** (PostgreSQL). Com o backend, o scheduler e o frontend parados e só o serviço `postgres` a correr, restaurar o dump em formato custom por cima da BD atual (`--clean --if-exists` apaga e recria os objetos):
 
    ```bash
-   docker run --rm -v <volume-de-dados>:/data -v <backup-dir>:/bk:ro <imagem-alpine> sh -c '
-     rm -f /data/op_pm_demo.db-wal /data/op_pm_demo.db-shm &&
-     cp /bk/op_pm_auto_<carimbo>.db /data/op_pm_demo.db'
+   docker exec -i <container-postgres> sh -c \
+     'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --exit-on-error' \
+     < <backup-dir>/op_pm_pg_auto_<carimbo>.dump
    ```
 
-   Se existir `material_prices_auto_<carimbo>.db`, fazer o mesmo para `material_prices.db`.
+   Se o restauro falhar a meio, a alternativa é parar o `postgres`, recriar o volume da BD vazio, arrancar e repetir sem `--clean`.
+
+   Se existir `material_prices_auto_<carimbo>.db` (SQLite), copiá-lo para o volume de dados como `material_prices.db`. Backups anteriores a 2026-11-18 são SQLite (`op_pm_auto_<carimbo>.db`); para esses, ver o histórico deste ficheiro.
 
 5. **Restaurar os ficheiros** (substitui o conteúdo atual de `project_photos/`, `inventory/`, `outbox/`, etc.):
 
@@ -79,7 +81,7 @@ Pressupostos: Docker Compose, volume `<volume-de-dados>` montado em `/app/data`,
      chown -R <uid-app>:<uid-app> /data'
    ```
 
-6. **Verificar o esquema.** Com a imagem do backend e sem rede, `python -m alembic current` deve indicar a revisão esperada. Se o backup for anterior a migrações já aplicadas, correr `alembic upgrade head` (de preferência depois de um novo backup).
+6. **Verificar o esquema.** Com a imagem do backend ligada à BD restaurada, `python -m alembic current` deve indicar a revisão esperada. Se o backup for anterior a migrações já aplicadas, correr `alembic upgrade head` (de preferência depois de um novo backup).
 
 7. **Arrancar** o backend e o scheduler e confirmar `/health`, o login e a abertura de um projeto com fotos.
 
@@ -90,16 +92,19 @@ Pressupostos: Docker Compose, volume `<volume-de-dados>` montado em `/app/data`,
 O script de ensaio faz tudo isto sem tocar na instância em execução:
 
 1. escolhe o backup mais recente (ou o carimbo indicado) e verifica os `sha256`;
-2. restaura a BD e os ficheiros para um diretório temporário e para um volume Docker descartável;
-3. arranca a imagem do backend sem rede, com `APP_ENV=local`, `AUTH_ENABLED=false` e `DATABASE_URL` a apontar para a cópia;
-4. corre `alembic current` e um verificador Python que compara as contagens por tabela com o manifesto, corre `integrity_check` e compara o número de ficheiros e bytes por diretório com o manifesto;
-5. apaga o volume e o diretório temporário, mesmo em caso de erro.
+2. extrai os ficheiros para um diretório temporário e compara o número de ficheiros e bytes por diretório com o manifesto;
+3. arranca um PostgreSQL descartável (a mesma imagem da produção, fixada por digest) numa rede Docker interna, sem portas publicadas e com os dados em `tmpfs`, e faz `pg_restore --exit-on-error` do dump;
+4. compara as contagens por tabela com o manifesto (e, se existir, verifica a BD SQLite de preços com `integrity_check`);
+5. arranca a imagem do backend nessa rede, com `APP_ENV=local`, `AUTH_ENABLED=false` e `DATABASE_URL` a apontar para a cópia, e corre `alembic current` (tem de estar no head) e uma consulta pelo ORM;
+6. apaga o container, a rede e o diretório temporário, mesmo em caso de erro.
 
 Sai com código 0 só se tudo coincidir. Não imprime dados, apenas contagens.
 
-Cadência recomendada: um ensaio trimestral, e sempre depois de alterar o script de backup, o esquema do volume ou a versão do SQLite/Python da imagem. Registar a data e o resultado.
+Cadência recomendada: um ensaio trimestral, e sempre depois de alterar o script de backup, o esquema do volume ou a versão do PostgreSQL/Python da imagem. Registar a data e o resultado.
 
 ## 6. Testes de falha já feitos
+
+Repetidos com a versão PostgreSQL do ensaio em 2026-11-20:
 
 - Artefacto corrompido (um byte alterado no tar.gz): o ensaio falha na verificação de `sha256`.
 - Manifesto adulterado com `sha256` recalculado: o ensaio falha na comparação de contagens.
@@ -109,5 +114,4 @@ Cadência recomendada: um ensaio trimestral, e sempre depois de alterar o script
 
 - **Cópia off-site cifrada.** Por decisão atual os backups são só locais, no mesmo anfitrião da instância: perder o disco ou o servidor perde os dados e os backups. É o maior risco em aberto de A9.
 - **Alerta ativo** quando o serviço falha ou o `LAST_OK` envelhece (hoje só se vê consultando o systemd).
-- **PostgreSQL.** Quando a produção migrar (achado A8), a função `backup_database` do script, a única que conhece o motor, passa a usar `pg_dump` (formato custom) e o ensaio passa a restaurar para um PostgreSQL descartável com `pg_restore`. O backup dos ficheiros e o manifesto mantêm-se. A secção 4 muda nos passos 4 e 6.
 - **Cifra em repouso** dos backups locais (contêm dados reais de clientes; hoje dependem das permissões do sistema de ficheiros).

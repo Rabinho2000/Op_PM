@@ -6,10 +6,8 @@ from __future__ import annotations
 
 from app.config import Settings
 from app.models.identity import AuthAuditLog, User
-from app.security.entra_auth import (
-    get_token_validator,
-    issue_mock_token,
-)
+from app.security.entra_auth import get_token_validator
+from tests.entra_mock import issue_mock_token
 
 
 def _mock_settings(**overrides) -> Settings:
@@ -195,3 +193,62 @@ def test_get_token_validator_differs_for_different_required_scope():
     validator_default = get_token_validator(_mock_settings())
     validator_scoped = get_token_validator(_mock_settings(entra_required_scope="admin_access"))
     assert validator_default is not validator_scoped
+
+
+# --- Validador mock sem chave no código da aplicação (M13) -----------------
+
+
+def test_app_code_has_no_embedded_private_key():
+    from pathlib import Path
+
+    import app
+
+    for path in Path(app.__file__).parent.rglob("*.py"):
+        assert "PRIVATE KEY-----" not in path.read_text(encoding="utf-8"), path
+
+
+def test_mock_validator_rejects_everything_without_a_public_key_file():
+    import pytest
+
+    from app.security.entra_auth import MockEntraTokenValidator, TokenValidationUnavailableError
+
+    with pytest.raises(TokenValidationUnavailableError, match="ENTRA_MOCK_PUBLIC_KEY_FILE"):
+        MockEntraTokenValidator().validate(issue_mock_token(object_id="oid-x"))
+
+
+def test_mock_validator_rejects_an_unreadable_public_key_file(tmp_path):
+    import pytest
+
+    from app.security.entra_auth import MockEntraTokenValidator, TokenValidationUnavailableError
+
+    validator = MockEntraTokenValidator(public_key_file=str(tmp_path / "nao-existe.pem"))
+    with pytest.raises(TokenValidationUnavailableError, match="não foi possível ler"):
+        validator.validate(issue_mock_token(object_id="oid-x"))
+
+
+def test_mock_validator_rejects_a_token_signed_by_another_key(tmp_path):
+    import jwt
+    import pytest
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    from app.security.entra_auth import MockEntraTokenValidator, TokenValidationError
+    from tests.entra_mock import TEST_PUBLIC_KEY_PEM
+
+    key_file = tmp_path / "pub.pem"
+    key_file.write_text(TEST_PUBLIC_KEY_PEM, encoding="ascii")
+    other = rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    )
+    from app.security.entra_auth import TEST_AUDIENCE, TEST_ISSUER
+
+    forged = jwt.encode(
+        {"iss": TEST_ISSUER, "aud": TEST_AUDIENCE, "sub": "x", "oid": "x", "iat": 0, "exp": 99999999999, "scp": "access_as_user"},
+        other,
+        algorithm="RS256",
+    )
+    validator = MockEntraTokenValidator(public_key_file=str(key_file))
+    with pytest.raises(TokenValidationError):
+        validator.validate(forged)
+    # E o token legítimo da suite passa com o mesmo ficheiro.
+    assert validator.validate(issue_mock_token(object_id="oid-ok")).object_id == "oid-ok"

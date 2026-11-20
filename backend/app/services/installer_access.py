@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.installer import Installer
 from app.models.installer_access import InstallerAccessMembership, InstallerAccessMembershipHistory
 from app.models.people import Person
+from app.security.perm import Perm
 
 
 class InstallerMembershipError(ValueError):
@@ -138,7 +139,7 @@ def revoke_installer_membership(
 
 def list_assigned_installers(db: Session, ctx) -> list[Installer]:
     """Return only installers explicitly linked to the authenticated person."""
-    if not ctx.has_permission("installer_team.view_assigned_installer"):
+    if not ctx.has_permission(Perm.INSTALLER_TEAM_VIEW_ASSIGNED_INSTALLER):
         return []
     if not ctx.active_installer_ids:
         return []

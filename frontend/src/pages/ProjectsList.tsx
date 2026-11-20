@@ -1,7 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
-  ApiError,
   listPeople,
   listProjects,
   Person,
@@ -48,6 +47,7 @@ import {
   sortProjects,
 } from "../utils/projectListConfig";
 import "./ProjectsList.css";
+import { errorDetail } from "../utils/errors";
 
 type ActiveFilter = ProjectListFilters["active"];
 type Filters = ProjectListFilters;
@@ -80,12 +80,6 @@ function missingLabels(p: Project): string[] {
 
 function projectCountLabel(count: number): string {
   return `${count} ${count === 1 ? "projeto" : "projetos"}`;
-}
-
-function errorDetail(error: unknown, fallback: string): string {
-  if (error instanceof ApiError) return error.detail;
-  if (error instanceof Error && error.message) return error.message;
-  return fallback;
 }
 
 function hasProjectListQuery(params: URLSearchParams): boolean {
@@ -364,9 +358,11 @@ function renderProjectCell(
     case "progress":
       return (
         <>
-          <div style={{ marginBottom: 4 }}>
-            <Badge tone={PROJECT_STATUS_TONES[project.status]}>{PROJECT_STATUS_LABELS[project.status]}</Badge>
-          </div>
+          {project.can_view_project_scope && (
+            <div style={{ marginBottom: 4 }}>
+              <Badge tone={PROJECT_STATUS_TONES[project.status]}>{PROJECT_STATUS_LABELS[project.status]}</Badge>
+            </div>
+          )}
           <ProgressBar value={project.workflow_progress_percent} label={`Progresso de ${project.name}`} />
         </>
       );

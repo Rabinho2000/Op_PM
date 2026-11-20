@@ -24,7 +24,7 @@ docs/ARCHITECTURE_PROPOSAL.md secção "Fonte de verdade por campo"):
 - `clickup_status_mirror`: **ClickUp** — Op_PM só espelha, nunca escreve
   de volta.
 - Custo real (`cost_lines` com `source_system='financial'`): **Financial**.
-- Email/eventos reais: **Microsoft Graph** (ver `app/adapters/graph`).
+- Email/eventos reais: **Microsoft Graph** (ver `app/adapters/graph_mail.py`).
 """
 from __future__ import annotations
 
@@ -48,10 +48,19 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
+from app.models.constraints import vocabulary_check
 from app.models.installer import Installer, InstallerTeam
+from app.services.project_lifecycle import LIFECYCLE_STATUS_CODES
 
 if TYPE_CHECKING:
     from app.models.people import Person
+
+
+def _history_now() -> dt.datetime:
+    """Hora do evento escrita em Python (não `now()` do PostgreSQL, que é a
+    hora de início da transação): a deteção de alterações posteriores no
+    rollback de importações compara-a com marcas escritas em Python."""
+    return dt.datetime.now(dt.timezone.utc)
 
 
 class Project(UUIDPk, TimestampMixin, Base):
@@ -67,6 +76,9 @@ class Project(UUIDPk, TimestampMixin, Base):
         CheckConstraint(
             "installer_team_id IS NULL OR installer_id IS NOT NULL",
             name="ck_project_team_needs_installer",
+        ),
+        vocabulary_check(
+            "lifecycle_status", LIFECYCLE_STATUS_CODES, name="ck_projects_lifecycle_status", nullable=True
         ),
     )
 
@@ -308,5 +320,5 @@ class ProjectHistory(UUIDPk, Base):
         GUID(), ForeignKey("staging_project_records.id"), nullable=True
     )
     changed_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True), default=_history_now, server_default=func.now(), nullable=False
     )

@@ -101,7 +101,7 @@ dia e a hora, e pode rever antes de enviar.
 testado (SQLite não suporta todos os índices parciais de igual forma: usar
 verificação transacional + teste de concorrência simples).
 
-### 4.2 Graph (backend/app/adapters/graph/)
+### 4.2 Graph (backend/app/adapters/graph_mail.py)
 
 - `GraphMailSender` real: client credentials com **certificado** (preferido) ou
   segredo lido **só de ficheiro** (`GRAPH_CLIENT_CERT_FILE` +

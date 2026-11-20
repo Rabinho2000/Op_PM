@@ -25,6 +25,7 @@ from app.security.permissions import (
     can_view_project_payments,
 )
 from app.services.projects import visible_projects_query
+from app.security.perm import Perm
 
 
 class ProjectPaymentsNotFound(LookupError):
@@ -55,10 +56,10 @@ def _visible_project(db: Session, ctx: AuthContext, project_id: uuid.UUID) -> Pr
 def get_project_payment_milestones(
     db: Session, *, ctx: AuthContext, project_id: uuid.UUID
 ) -> list[ProjectPaymentMilestoneRead]:
-    ctx.require("payment.view")
+    ctx.require(Perm.PAYMENT_VIEW)
     project = _visible_project(db, ctx, project_id)
     if not can_view_project_payments(ctx, project):
-        raise PermissionDenied("payment.view")
+        raise PermissionDenied(Perm.PAYMENT_VIEW)
     rows = (
         db.query(ProjectPaymentMilestone)
         .filter(ProjectPaymentMilestone.project_id == project.id)
@@ -75,7 +76,7 @@ def payment_summaries_by_project(
     projects: Sequence[Project],
 ) -> dict[uuid.UUID, dict[str, bool]]:
     """Return one aggregate query for every project in a visible page."""
-    ctx.require("payment.view")
+    ctx.require(Perm.PAYMENT_VIEW)
     visible = [project for project in projects if can_view_project_payments(ctx, project)]
     if not visible:
         return {}
@@ -126,13 +127,13 @@ def set_project_payment_milestone(
     # Scope and permissions are checked before taking the lock, so callers
     # outside the project scope can never block authorised writers.
     _visible_project(db, ctx, project_id)
-    ctx.require("payment.edit")
-    ctx.require("payment.view")
+    ctx.require(Perm.PAYMENT_EDIT)
+    ctx.require(Perm.PAYMENT_VIEW)
     project = db.query(Project).filter(Project.id == project_id).with_for_update().one_or_none()
     if project is None or not can_view_project(ctx, project):
         raise ProjectPaymentsNotFound
     if not can_edit_project_payments(ctx, project):
-        raise PermissionDenied("payment.edit")
+        raise PermissionDenied(Perm.PAYMENT_EDIT)
     if milestone not in PAYMENT_MILESTONES:
         raise InvalidPaymentMilestone(milestone)
 

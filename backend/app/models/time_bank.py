@@ -14,6 +14,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import GUID, Base
 from app.models.base import TimestampMixin, UUIDPk
+from app.models.constraints import vocabulary_check
 
 ENTRY_MODES = frozenset({"standard", "saturday", "manual", "imported"})
 ADJUSTMENT_KINDS = frozenset({"opening", "correction", "consumption"})
@@ -26,6 +27,7 @@ class TimeBankEntry(UUIDPk, TimestampMixin, Base):
         UniqueConstraint("source_key", name="uq_time_bank_entry_source_key"),
         UniqueConstraint("reversal_of_id", name="uq_time_bank_entry_one_reversal"),
         Index("ix_time_bank_entries_person_date", "person_id", "work_date"),
+        vocabulary_check("calculation_mode", ENTRY_MODES, name="ck_time_bank_entries_calculation_mode"),
     )
 
     person_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("people.id"), nullable=False)
@@ -60,6 +62,7 @@ class TimeBankAdjustment(UUIDPk, TimestampMixin, Base):
         UniqueConstraint("source_key", name="uq_time_bank_adjustment_source_key"),
         UniqueConstraint("reversal_of_id", name="uq_time_bank_adjustment_one_reversal"),
         Index("ix_time_bank_adjustments_person_date", "person_id", "effective_date"),
+        vocabulary_check("kind", ADJUSTMENT_KINDS, name="ck_time_bank_adjustments_kind"),
     )
 
     person_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("people.id"), nullable=False)
@@ -111,6 +114,7 @@ class TimeBankImportBatch(UUIDPk, Base):
     __tablename__ = "time_bank_import_batches"
     __table_args__ = (
         UniqueConstraint("sha256", "parser_version", name="uq_time_bank_import_hash_version"),
+        vocabulary_check("status", IMPORT_BATCH_STATUSES, name="ck_time_bank_import_batches_status"),
     )
 
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)

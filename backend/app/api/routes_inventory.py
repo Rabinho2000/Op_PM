@@ -52,16 +52,13 @@ from app.schemas.inventory_catalog import (
 from app.security.current_user import get_auth_context
 from app.security.permissions import (
     AuthContext,
-    PermissionDenied,
     can_allocate_inventory_for_project,
     can_collect_inventory_for_project,
     can_consume_inventory_for_project,
     can_deliver_inventory_for_project,
-    can_manage_central_inventory,
     can_manage_material_requirements,
     can_release_inventory_for_project,
     can_reverse_inventory_movement_for_project,
-    can_view_project,
 )
 from app.services.inventory import (
     IdempotencyConflictError,
@@ -100,6 +97,14 @@ from app.services.inventory_catalog import (
     update_inventory_item_atomic,
     update_inventory_location_atomic,
 )
+from app.api.deps import (
+    get_visible_project_or_404,
+    require_inventory_catalog,
+    require_inventory_view,
+    visible_project_or_404,
+)
+from app.security.guards import require_permission
+from app.security.perm import Perm
 
 router = APIRouter(prefix="/api/inventory", tags=["inventory"])
 project_router = APIRouter(prefix="/api/projects/{project_id}/inventory", tags=["inventory"])
@@ -140,17 +145,6 @@ def _filter_movement_owner(query, owner: Literal["solcor", "verde_milenar"]):
     return query.join(
         InventoryLocation, InventoryMovement.location_id == InventoryLocation.id
     ).filter(InventoryLocation.owner == owner)
-
-
-def _require(ctx: AuthContext, permission_code: str) -> None:
-    try:
-        ctx.require(permission_code)
-    except PermissionDenied as exc:
-        raise HTTPException(status_code=403, detail=f"Sem permissão: {exc}")
-
-
-def _require_catalog(ctx: AuthContext) -> None:
-    _require(ctx, "inventory.manage_catalog")
 
 
 def _visible_project_ids(db: Session, ctx: AuthContext):
@@ -194,18 +188,10 @@ def _filter_catalog_history_scope(query, db: Session, ctx: AuthContext):
     )
 
 
-def _get_project_or_404(db: Session, project_id: uuid.UUID, ctx: AuthContext) -> Project:
-    project = db.query(Project).filter(Project.id == project_id, Project.deleted_at.is_(None)).one_or_none()
-    if project is None or not can_view_project(ctx, project):
-        raise HTTPException(status_code=404, detail="Projeto não encontrado ou sem permissão para o ver.")
-    return project
-
-
 @router.get("/categories", response_model=list[str])
 def inventory_categories_endpoint(
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_view),
 ) -> list[str]:
-    _require(ctx, "inventory.view")
     return list(INVENTORY_CATEGORIES)
 
 
@@ -213,9 +199,8 @@ def inventory_categories_endpoint(
 def inventory_summary_endpoint(
     owner: Literal["solcor", "verde_milenar"] = Query(default="solcor"),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_view),
 ) -> list[InventoryItemRead]:
-    _require(ctx, "inventory.view")
     items = db.query(InventoryItem).filter(InventoryItem.is_active.is_(True)).order_by(InventoryItem.name).all()
     return [_item_to_read(db, item, owner) for item in items]
 
@@ -224,9 +209,8 @@ def inventory_summary_endpoint(
 def list_items_endpoint(
     owner: Literal["solcor", "verde_milenar"] = Query(default="solcor"),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_view),
 ) -> list[InventoryItemRead]:
-    _require(ctx, "inventory.view")
     items = db.query(InventoryItem).order_by(InventoryItem.name).all()
     return [_item_to_read(db, item, owner) for item in items]
 
@@ -235,9 +219,8 @@ def list_items_endpoint(
 def list_locations_endpoint(
     owner: Literal["solcor", "verde_milenar"] = Query(default="solcor"),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_view),
 ) -> list[InventoryLocationRead]:
-    _require(ctx, "inventory.view")
     query = _filter_project_scope(db.query(InventoryLocation), InventoryLocation.project_id, db, ctx)
     query = query.filter(InventoryLocation.owner == owner)
     return [InventoryLocationRead.model_validate(location) for location in query.order_by(InventoryLocation.name).all()]
@@ -247,9 +230,8 @@ def list_locations_endpoint(
 def create_location_endpoint(
     body: InventoryLocationCreate,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_catalog),
 ) -> InventoryLocationRead:
-    _require_catalog(ctx)
     try:
         location = create_inventory_location(db, data=body.model_dump(), actor_person_id=ctx.person_id)
     except (DuplicateCatalogValueError, CentralLocationInvariantError) as exc:
@@ -266,9 +248,8 @@ def update_location_endpoint(
     location_id: uuid.UUID,
     body: InventoryLocationUpdate,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_catalog),
 ) -> InventoryLocationRead:
-    _require_catalog(ctx)
     location = db.get(InventoryLocation, location_id)
     if location is None:
         raise HTTPException(status_code=404, detail="Localização de inventário não encontrada.")
@@ -298,9 +279,8 @@ def update_location_endpoint(
 def deactivate_location_endpoint(
     location_id: uuid.UUID,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_catalog),
 ) -> InventoryLocationRead:
-    _require_catalog(ctx)
     location = db.get(InventoryLocation, location_id)
     if location is None:
         raise HTTPException(status_code=404, detail="Localização de inventário não encontrada.")
@@ -318,10 +298,10 @@ def opening_stock_endpoint(
     body: OpeningStockCreate,
     owner: Literal["solcor", "verde_milenar"] = Query(default="solcor"),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(
+        require_permission(Perm.INVENTORY_MANAGE_CENTRAL, detail="Sem permissão para registar stock inicial.")
+    ),
 ) -> InventoryMovementRead:
-    if not can_manage_central_inventory(ctx):
-        raise HTTPException(status_code=403, detail="Sem permissão para registar stock inicial.")
     item = db.get(InventoryItem, body.item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Artigo de inventário não encontrado.")
@@ -350,9 +330,8 @@ def catalog_history_endpoint(
     entity_id: uuid.UUID | None = None,
     entity_type: str | None = Query(default=None),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_view),
 ) -> list[InventoryCatalogHistoryRead]:
-    _require(ctx, "inventory.view")
     query = _filter_catalog_history_scope(db.query(InventoryCatalogHistory), db, ctx)
     if entity_id is not None:
         query = query.filter(InventoryCatalogHistory.entity_id == entity_id)
@@ -393,9 +372,8 @@ def catalog_history_endpoint(
 def create_item_endpoint(
     body: InventoryItemCreate,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_catalog),
 ) -> InventoryItemRead:
-    _require_catalog(ctx)
     try:
         item = create_inventory_item(db, data=body.model_dump(), actor_person_id=ctx.person_id)
     except DuplicateCatalogValueError as exc:
@@ -412,9 +390,8 @@ def update_item_endpoint(
     item_id: uuid.UUID,
     body: InventoryItemUpdate,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_catalog),
 ) -> InventoryItemRead:
-    _require_catalog(ctx)
     item = db.get(InventoryItem, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Artigo de inventário não encontrado.")
@@ -444,9 +421,8 @@ def update_item_endpoint(
 def deactivate_item_endpoint(
     item_id: uuid.UUID,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_catalog),
 ) -> InventoryItemRead:
-    _require_catalog(ctx)
     item = db.get(InventoryItem, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Artigo de inventário não encontrado.")
@@ -464,9 +440,8 @@ def list_movements_endpoint(
     movement_type: str | None = Query(default=None),
     owner: Literal["solcor", "verde_milenar"] = Query(default="solcor"),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_inventory_view),
 ) -> list[InventoryMovementRead]:
-    _require(ctx, "inventory.view")
     query = _filter_project_scope(db.query(InventoryMovement), InventoryMovement.project_id, db, ctx)
     query = _filter_movement_owner(query, owner)
     if item_id is not None:
@@ -483,10 +458,10 @@ def list_movements_endpoint(
 def create_central_movement_endpoint(
     body: InventoryMovementCreate,
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(
+        require_permission(Perm.INVENTORY_MANAGE_CENTRAL, detail="Sem permissão para alterar o stock central.")
+    ),
 ) -> InventoryMovementRead:
-    if not can_manage_central_inventory(ctx):
-        raise HTTPException(status_code=403, detail="Sem permissão para alterar o stock central.")
     item = db.get(InventoryItem, body.item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Item de inventário não encontrado.")
@@ -545,10 +520,9 @@ def project_inventory_summary_endpoint(
     project_id: uuid.UUID,
     owner: Literal["solcor", "verde_milenar"] = Query(default="solcor"),
     db: Session = Depends(get_db),
-    ctx: AuthContext = Depends(get_auth_context),
+    project: Project = Depends(get_visible_project_or_404),
+    ctx: AuthContext = Depends(require_inventory_view),
 ) -> ProjectInventorySummary:
-    project = _get_project_or_404(db, project_id, ctx)
-    _require(ctx, "inventory.view")
 
     requirements = (
         db.query(ProjectMaterialRequirement)
@@ -608,9 +582,9 @@ def reverse_project_movement_endpoint(
     movement_id: uuid.UUID,
     body: ProjectInventoryMovementReverse | None = None,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> InventoryMovementRead:
-    project = _get_project_or_404(db, project_id, ctx)
     if not can_reverse_inventory_movement_for_project(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para anular movimentos deste projeto.")
     movement = db.get(InventoryMovement, movement_id)
@@ -636,9 +610,9 @@ def create_requirement_endpoint(
     body: ProjectMaterialRequirementCreate,
     owner: Literal["solcor", "verde_milenar"] = Query(default="solcor"),
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectMaterialRequirementRead:
-    project = _get_project_or_404(db, project_id, ctx)
     if not can_manage_material_requirements(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para gerir necessidades deste projeto.")
     item = db.get(InventoryItem, body.item_id)
@@ -674,9 +648,9 @@ def update_requirement_endpoint(
     requirement_id: uuid.UUID,
     body: ProjectMaterialRequirementUpdate,
     db: Session = Depends(get_db),
+    project: Project = Depends(get_visible_project_or_404),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> ProjectMaterialRequirementRead:
-    project = _get_project_or_404(db, project_id, ctx)
     if not can_manage_material_requirements(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para gerir necessidades deste projeto.")
     requirement = db.get(ProjectMaterialRequirement, requirement_id)
@@ -711,7 +685,7 @@ def _project_operation(
     permission_check,
     operation,
 ) -> InventoryMovementRead:
-    project = _get_project_or_404(db, project_id, ctx)
+    project = visible_project_or_404(db, ctx, project_id)
     if not permission_check(ctx, project):
         raise HTTPException(status_code=403, detail="Sem permissão para esta operação de inventário no projeto.")
     item = db.get(InventoryItem, body.item_id)

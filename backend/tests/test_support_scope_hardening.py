@@ -166,12 +166,18 @@ def test_data_history_filters_each_type_and_denies_explicit_forbidden_type(db_se
     )
     db_session.flush()
 
-    visible = get_data_history_endpoint(delegated_project.id, entity_type=None, db=db_session, ctx=support_ctx)
+    visible = get_data_history_endpoint(
+        delegated_project.id, entity_type=None, db=db_session, project=delegated_project, ctx=support_ctx
+    )
     assert {entry.entity_type for entry in visible} == {"installation", "licensing"}
 
     with pytest.raises(HTTPException) as denied:
         get_data_history_endpoint(
-            delegated_project.id, entity_type="communication", db=db_session, ctx=support_ctx
+            delegated_project.id,
+            entity_type="communication",
+            db=db_session,
+            project=delegated_project,
+            ctx=support_ctx,
         )
     assert denied.value.status_code == 403
 
@@ -194,7 +200,9 @@ def test_pm_data_history_still_includes_all_types(db_session):
         ]
     )
     db_session.flush()
-    visible = get_data_history_endpoint(delegated_project.id, entity_type=None, db=db_session, ctx=pm_ctx)
+    visible = get_data_history_endpoint(
+        delegated_project.id, entity_type=None, db=db_session, project=delegated_project, ctx=pm_ctx
+    )
     assert {entry.entity_type for entry in visible} == {"installation", "licensing", "communication"}
 
 

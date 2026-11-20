@@ -1,12 +1,15 @@
 import html from "../../index.html?raw";
+import bootstrap from "../../public/theme-bootstrap.js?raw";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveTheme, ThemePreference, THEME_STORAGE_KEY } from "./theme";
 
-const bootstrap = html.match(/<script data-theme-bootstrap>([\s\S]*?)<\/script>/)?.[1];
 const originalMatchMedia = Object.getOwnPropertyDescriptor(window, "matchMedia");
 const originalLocalStorage = Object.getOwnPropertyDescriptor(window, "localStorage");
 
-if (!bootstrap) throw new Error("Não foi encontrado o bootstrap de tema no index.html.");
+// A CSP não admite scripts inline: o bootstrap é um ficheiro externo, síncrono, no <head>.
+if (!/<script src="\/theme-bootstrap\.js" data-theme-bootstrap><\/script>/.test(html)) {
+  throw new Error("O index.html não carrega /theme-bootstrap.js.");
+}
 
 const cases: Array<{ preference: ThemePreference; saved: string | null; systemDark: boolean }> = [
   { preference: "system", saved: null, systemDark: false },
