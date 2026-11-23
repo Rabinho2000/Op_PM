@@ -11,11 +11,12 @@ import datetime as dt
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Column, DateTime, ForeignKey, String, Table, Text
+from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, JSON, String, Table, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base, GUID
 from app.models.base import TimestampMixin, UUIDPk
+from app.models.constraints import vocabulary_check
 
 if TYPE_CHECKING:
     from app.models.project import Project
@@ -44,6 +45,47 @@ class Visit(UUIDPk, TimestampMixin, Base):
     events: Mapped[list[CalendarEvent]] = relationship(back_populates="visit")
 
 
+# Vocabulários fechados; o CHECK na BD é gerado a partir destas constantes.
+CALENDAR_SERIES_RULES = frozenset({"weekly"})
+CALENDAR_AUDIT_ACTIONS = frozenset({"create", "update", "cancel"})
+
+
+class CalendarEventSeries(UUIDPk, TimestampMixin, Base):
+    """Metadados de uma série semanal de eventos do calendário local.
+
+    As ocorrências continuam a ser ``CalendarEvent`` normais, preservando a
+    API e os filtros existentes. A série guarda apenas a regra necessária
+    para tornar as ocorrências idempotentes e permitir alterações em âmbito
+    explícito.
+    """
+
+    __tablename__ = "calendar_event_series"
+    __table_args__ = (
+        UniqueConstraint(
+            "created_by_user_id", "idempotency_key", name="uq_calendar_event_series_idempotency"
+        ),
+        vocabulary_check("recurrence_rule", CALENDAR_SERIES_RULES, name="ck_calendar_event_series_recurrence_rule"),
+    )
+
+    created_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("users.id"), nullable=False
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    recurrence_rule: Mapped[str] = mapped_column(String(16), nullable=False, default="weekly")
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="Europe/Lisbon")
+    starts_on: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    starts_at_local: Mapped[str] = mapped_column(String(5), nullable=False)
+    ends_day_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    ends_at_local: Mapped[str] = mapped_column(String(5), nullable=False)
+    starts_fold: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    ends_fold: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    until_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    occurrence_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    events: Mapped[list[CalendarEvent]] = relationship(back_populates="series")
+
+
 calendar_event_assignees = Table(
     "calendar_event_assignees",
     Base.metadata,
@@ -54,6 +96,11 @@ calendar_event_assignees = Table(
 
 class CalendarEvent(UUIDPk, TimestampMixin, Base):
     __tablename__ = "calendar_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "series_id", "series_occurrence_index", name="uq_calendar_event_series_occurrence"
+        ),
+    )
 
     visit_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("visits.id"), nullable=True)
     project_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("projects.id"), nullable=True)
@@ -84,6 +131,12 @@ class CalendarEvent(UUIDPk, TimestampMixin, Base):
     graph_event_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     # caminho local do fallback .ics enquanto o Graph não está configurado
     ics_fallback_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Nulos para todos os eventos legados e para eventos únicos. Ocorrências
+    # semanais referenciam a série e têm índice estável começado em zero.
+    series_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("calendar_event_series.id"), nullable=True, index=True
+    )
+    series_occurrence_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     visit: Mapped[Visit | None] = relationship(back_populates="events")
     project: Mapped[Project | None] = relationship()
@@ -96,3 +149,23 @@ class CalendarEvent(UUIDPk, TimestampMixin, Base):
     )
     process_stage: Mapped[WorkflowStage | None] = relationship(foreign_keys=[process_stage_id])
     process_subtask: Mapped[WorkflowSubtask | None] = relationship(foreign_keys=[process_subtask_id])
+    series: Mapped[CalendarEventSeries | None] = relationship(back_populates="events")
+
+
+class CalendarEventAudit(UUIDPk, Base):
+    """Registo append-only das alterações a eventos do calendário."""
+
+    __tablename__ = "calendar_event_audit"
+    __table_args__ = (
+        vocabulary_check("action", CALENDAR_AUDIT_ACTIONS, name="ck_calendar_event_audit_action"),
+    )
+
+    event_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False, index=True)
+    series_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True, index=True)
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False)
+    actor_person_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)  # create | update | cancel
+    field_changes: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
+    occurred_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

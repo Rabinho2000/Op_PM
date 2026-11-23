@@ -142,11 +142,27 @@ function lisbonOffsetMinutes(utcMs: number): number {
   return Math.round((wallAsUtc - Math.floor(utcMs / 60000) * 60000) / 60000);
 }
 
-export function lisbonWallClockToIso(local: string): string {
+export function lisbonWallClockToIso(local: string, ambiguous: "earlier" | "later" = "later"): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(local);
   if (!match) throw new Error(`Data/hora inválida: ${local}`);
   const [, y, mo, d, h, mi] = match.map(Number) as unknown as number[];
   const asUtc = Date.UTC(y, mo - 1, d, h, mi);
+  const offsets = new Set([
+    lisbonOffsetMinutes(asUtc - 2 * 60 * 60 * 1000),
+    lisbonOffsetMinutes(asUtc),
+    lisbonOffsetMinutes(asUtc + 2 * 60 * 60 * 1000),
+  ]);
+  const candidates = [...offsets]
+    .map((offset) => asUtc - offset * 60 * 1000)
+    .filter((candidate) => {
+      const actualOffset = lisbonOffsetMinutes(candidate);
+      return candidate + actualOffset * 60 * 1000 === asUtc;
+    })
+    .sort((a, b) => a - b);
+  if (candidates.length > 0) {
+    const chosen = ambiguous === "earlier" ? candidates[0] : candidates[candidates.length - 1];
+    return new Date(chosen).toISOString();
+  }
   // Duas passagens: a primeira aproxima com o offset de `asUtc`, a segunda
   // corrige perto das mudanças de hora (último domingo de Março/Outubro).
   const first = asUtc - lisbonOffsetMinutes(asUtc) * 60000;

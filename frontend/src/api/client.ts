@@ -2702,6 +2702,11 @@ export interface CalendarEvent {
   category_label?: string | null;
   category_color?: string | null;
   can_manage: boolean;
+  recurrence_series_id?: string | null;
+  recurrence_rule?: "weekly" | null;
+  recurrence_index?: number | null;
+  recurrence_count?: number | null;
+  recurrence_until?: string | null;
 }
 
 export interface CalendarEventFilters {
@@ -2782,6 +2787,9 @@ export interface CalendarEventCreatePayload {
   category?: string;
   process_stage_id?: string | null;
   process_subtask_id?: string | null;
+  recurrence?: "weekly";
+  recurrence_until?: string;
+  idempotency_key?: string;
 }
 
 export const createCalendarEvent = (payload: CalendarEventCreatePayload) =>
@@ -2801,11 +2809,18 @@ export interface CalendarEventUpdatePayload {
   status?: string;
 }
 
-export const updateCalendarEvent = (id: string, changes: CalendarEventUpdatePayload) =>
-  apiPatch<CalendarEvent>(`/api/planning/events/${id}`, changes);
+export type CalendarEventMutationScope = "occurrence" | "series";
 
-export const cancelCalendarEvent = (id: string) =>
-  apiPost<CalendarEvent>(`/api/planning/events/${id}/cancel`, {});
+export const updateCalendarEvent = (
+  id: string,
+  changes: CalendarEventUpdatePayload,
+  scope: CalendarEventMutationScope = "occurrence",
+) => apiPatch<CalendarEvent>(`/api/planning/events/${id}?scope=${scope}`, changes);
+
+export const cancelCalendarEvent = (
+  id: string,
+  scope: CalendarEventMutationScope = "occurrence",
+) => apiPost<CalendarEvent>(`/api/planning/events/${id}/cancel?scope=${scope}`, {});
 
 // --- Relatório semanal ao cliente ---
 
