@@ -110,6 +110,47 @@ describe("Suppliers (lista)", () => {
     expect(screen.getByRole("link", { name: "Abrir localização" })).toHaveAttribute("href", "https://maps.example.invalid/abc");
   });
 
+  it("separa contacto da empresa (sob o nome) e pessoas de contacto (coluna própria, primeira em destaque)", async () => {
+    listSuppliers.mockResolvedValue([
+      makeSupplier({
+        contact: "Texto legado que não deve aparecer",
+        contacts: [
+          { id: "c-1", name: "Pessoa Um", department: "Comercial", phone: "000 000 001", email: "um@example.invalid" },
+          { id: "c-2", name: "Pessoa Dois", department: null, phone: null, email: "dois@example.invalid" },
+        ],
+      }),
+    ]);
+    renderWithProviders(<Suppliers />, { me: viewOnly() });
+    await screen.findByText("Fornecedor A");
+
+    const headers = screen.getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers).toEqual(["Fornecedor", "Pessoa de contacto", "Tipos de material", "Localização"]);
+
+    const [companyCell, personCell] = within(screen.getAllByRole("row")[1]).getAllByRole("cell");
+    // Empresa: telefone e email à esquerda, sob o nome.
+    expect(within(companyCell).getByRole("link", { name: "+351 253 145 794" })).toHaveAttribute("href", "tel:+351253145794");
+    expect(within(companyCell).getByRole("link", { name: "info@fornecedor-a.example" })).toHaveAttribute("href", "mailto:info@fornecedor-a.example");
+    expect(within(companyCell).queryByText("Pessoa Um")).not.toBeInTheDocument();
+    // Pessoas: todas, a primeira destacada; sem o texto legado.
+    expect(within(personCell).getByText("Pessoa Um").closest(".supplier-person")).toHaveClass("supplier-person--primary");
+    expect(within(personCell).getByText("Pessoa Dois").closest(".supplier-person")).toHaveClass("supplier-person--secondary");
+    expect(within(personCell).getByRole("link", { name: "000 000 001" })).toHaveAttribute("href", "tel:000000001");
+    expect(within(personCell).getByRole("link", { name: "dois@example.invalid" })).toHaveAttribute("href", "mailto:dois@example.invalid");
+    expect(within(personCell).queryByText("+351 253 145 794")).not.toBeInTheDocument();
+    expect(screen.queryByText("Texto legado que não deve aparecer")).not.toBeInTheDocument();
+  });
+
+  it("usa o texto legado de contacto como alternativa quando não há pessoas estruturadas", async () => {
+    renderWithProviders(<Suppliers />, { me: viewOnly() });
+    await screen.findByText("Fornecedor A");
+    const rows = screen.getAllByRole("row");
+    const personCellA = within(rows[1]).getAllByRole("cell")[1];
+    expect(within(personCellA).getByText("Ana")).toBeInTheDocument();
+    // Sem pessoas nem texto legado: traço.
+    const personCellB = within(rows[2]).getAllByRole("cell")[1];
+    expect(personCellB).toHaveTextContent("—");
+  });
+
   it("abre o detalhe completo ao clicar no nome e fecha com Escape", async () => {
     listSuppliers.mockResolvedValue([
       makeSupplier({

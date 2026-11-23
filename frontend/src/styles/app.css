@@ -2237,6 +2237,26 @@ a.cell-title:hover {
   box-shadow: var(--shadow-lg);
 }
 
+.modal--xl {
+  width: min(1200px, 100%);
+  height: calc(100vh - 32px);
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal--xl .modal__head {
+  flex: 0 0 auto;
+  padding-block: 12px;
+}
+
+.modal--xl .modal__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .modal__head {
   display: flex;
   align-items: center;

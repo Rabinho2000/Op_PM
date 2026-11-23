@@ -54,4 +54,23 @@ describe("Modal", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Primeiro" })).not.toBeInTheDocument());
     view.unmount();
   });
+
+  it("usa a largura padrão por omissão e a variante larga só quando pedida", () => {
+    const { rerender } = render(
+      <Modal title="Normal" onClose={() => {}}>
+        <p>Conteúdo</p>
+      </Modal>
+    );
+    const normal = screen.getByRole("dialog", { name: "Normal" });
+    expect(normal).toHaveClass("modal");
+    expect(normal).not.toHaveClass("modal--xl");
+
+    rerender(
+      <Modal title="Largo" size="xl" onClose={() => {}}>
+        <p>Conteúdo</p>
+      </Modal>
+    );
+    const wide = screen.getByRole("dialog", { name: "Largo" });
+    expect(wide).toHaveClass("modal", "modal--xl");
+  });
 });

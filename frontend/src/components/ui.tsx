@@ -260,16 +260,21 @@ export function Avatar({ name, small }: { name: string | null | undefined; small
 // Escape/Tab while it is open.
 const modalStack: symbol[] = [];
 
+export type ModalSize = "md" | "xl";
+
 export function Modal({
   title,
   onClose,
   children,
   footer,
+  size = "md",
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  /** `md` (por omissão, 560px) para formulários; `xl` para vistas de detalhe largas. */
+  size?: ModalSize;
 }) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -318,7 +323,7 @@ export function Modal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} ref={dialogRef}>
+      <div className={size === "md" ? "modal" : `modal modal--${size}`} role="dialog" aria-modal="true" aria-labelledby={titleId} ref={dialogRef}>
         <div className="modal__head">
           <h2 id={titleId}>{title}</h2>
           <button type="button" className="btn btn--ghost btn--icon" onClick={onClose} aria-label="Fechar">
