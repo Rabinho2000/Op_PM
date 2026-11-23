@@ -113,3 +113,37 @@ A revisão `f5a7c9d1e3b2` encadeia sobre `d4e6f8a1b2c3` e cria:
 O `assigned_to_person_id` legado é preservado e copiado para a relação na
 migração. `upgrade -> downgrade -> upgrade` mantém as linhas legadas e
 reaplica o backfill sem duplicar participantes.
+
+## Recorrência semanal
+
+- Eventos únicos mantêm o contrato anterior. A criação de uma série envia
+  `recurrence="weekly"`, `recurrence_until` (data inclusiva obrigatória) e
+  `idempotency_key`. O servidor limita a série a 52 ocorrências e grava cada
+  ocorrência como `CalendarEvent`, ligada por `series_id` e índice único.
+  A chave é única por conta criadora; um retry com o mesmo conteúdo devolve a
+  primeira ocorrência existente, enquanto reutilizá-la com conteúdo diferente
+  devolve `409`.
+- As horas são locais a `Europe/Lisbon`: cada semana mantém as horas de parede,
+  incluindo quando o offset muda. Uma hora inexistente no avanço de primavera
+  rejeita toda a série antes de gravar; quando o formulário recebe uma hora
+  repetida no outono, usa a segunda ocorrência. Não há deslocação silenciosa.
+- `PATCH /api/planning/events/{id}?scope=occurrence` edita uma ocorrência
+  (âmbito predefinido e compatível). `scope=series` aplica os campos a toda a
+  série; só um `starts_at` explícito desloca todas as ocorrências pelo mesmo
+  número de dias e mantém o espaçamento semanal e a hora local. Uma edição sem
+  alteração de início preserva as datas e horas reais de cada ocorrência,
+  incluindo exceções movidas individualmente.
+- `POST /api/planning/events/{id}/cancel?scope=occurrence|series` marca a
+  ocorrência ou a série como `cancelado`; nenhuma ocorrência é apagada.
+- Operações com `scope=series` exigem permissão de gestão **e** leitura sobre
+  todas as ocorrências (`403` caso contrário) e são atómicas.
+- `CalendarEventRead` expõe `recurrence_series_id`, `recurrence_rule`,
+  `recurrence_index`, `recurrence_count` e `recurrence_until`.
+- Cada criação, alteração e cancelamento de evento (incluindo cada ocorrência
+  de uma série) fica registado em `calendar_event_audit` (append-only, com
+  autor e diferenças campo a campo).
+- Migração `c4e6a8b0d2f1` (sobre `d3f5a7c9e1b2`): cria `calendar_event_series`
+  e duas colunas opcionais em `calendar_events`; eventos anteriores ficam com
+  ambas nulas. Migração `d7a9c3e5f1b2`: cria `calendar_event_audit`. O
+  downgrade de `c4e6a8b0d2f1` mantém as ocorrências como eventos únicos mas
+  perde o vínculo à série e a chave de idempotência.

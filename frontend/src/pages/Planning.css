@@ -276,6 +276,12 @@
   white-space: nowrap;
 }
 
+.planning-event-chip__recurrence {
+  flex: 0 0 auto;
+  color: var(--text-subtle);
+  font-weight: 800;
+}
+
 .planning-event-chip__title {
   min-width: 0;
   overflow: hidden;

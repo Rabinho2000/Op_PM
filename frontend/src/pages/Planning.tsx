@@ -29,7 +29,7 @@ import Icon from "../components/Icon";
 import { useToast } from "../components/Toast";
 import { Alert, Avatar, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHeader, Tone } from "../components/ui";
 import { useSession } from "../session/SessionContext";
-import { lisbonWallClockToIso, todayIsoLisbon } from "../utils/dates";
+import { formatDatePt, lisbonWallClockToIso, todayIsoLisbon } from "../utils/dates";
 import { normalizeSearchText } from "../utils/text";
 import "./Planning.css";
 
@@ -448,6 +448,9 @@ interface EventFormState {
   process_subtask_id: string;
   starts_at: string;
   ends_at: string;
+  recurrence: "none" | "weekly";
+  recurrence_until: string;
+  mutation_scope: "occurrence" | "series";
 }
 
 function initialEventForm(event: CalendarEvent | null, defaultDate: string | null, categories: CalendarEventCategory[]): EventFormState {
@@ -465,7 +468,15 @@ function initialEventForm(event: CalendarEvent | null, defaultDate: string | nul
     process_subtask_id: event?.process_subtask_id ?? "",
     starts_at: event ? toDatetimeLocalValue(event.starts_at) : defaultDate ? `${defaultDate}T09:00` : "",
     ends_at: event ? toDatetimeLocalValue(event.ends_at) : defaultDate ? `${defaultDate}T10:00` : "",
+    recurrence: event?.recurrence_rule === "weekly" ? "weekly" : "none",
+    recurrence_until: event?.recurrence_until ?? "",
+    mutation_scope: "occurrence",
   };
+}
+
+function newCalendarIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `weekly-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function EventModal({
@@ -490,6 +501,8 @@ function EventModal({
   onSaved: () => void;
 }) {
   const [form, setForm] = useState<EventFormState>(() => initialEventForm(event, defaultDate, categories));
+  // Uma chave por abertura do formulário: um retry do mesmo pedido não duplica a série.
+  const idempotencyKey = useRef<string>(newCalendarIdempotencyKey());
   const [tasks, setTasks] = useState<Task[]>([]);
   const [processOptions, setProcessOptions] = useState<PlanningProcessOption[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
@@ -538,6 +551,8 @@ function EventModal({
   }, [form.project_id]);
 
   const selectedStage = processOptions.find((option) => option.stage_id === form.process_stage_id);
+  // Numa hora repetida no outono, a série usa a primeira ocorrência (como o servidor).
+  const repeatedHourChoice = (event ? form.mutation_scope === "series" : form.recurrence === "weekly") ? "earlier" : "later";
   const conflicts = useMemo(() => {
     if (!form.starts_at || !form.ends_at) return [];
     try {
@@ -545,13 +560,13 @@ function EventModal({
         id: event?.id,
         assigned_to_person_id: form.assigned_to_person_id || null,
         assigned_to_person_ids: form.assigned_to_person_ids,
-        starts_at: lisbonWallClockToIso(form.starts_at),
-        ends_at: lisbonWallClockToIso(form.ends_at),
+        starts_at: lisbonWallClockToIso(form.starts_at, repeatedHourChoice),
+        ends_at: lisbonWallClockToIso(form.ends_at, repeatedHourChoice),
       });
     } catch {
       return [];
     }
-  }, [allEvents, event?.id, form.assigned_to_person_id, form.assigned_to_person_ids, form.starts_at, form.ends_at]);
+  }, [allEvents, event?.id, form.assigned_to_person_id, form.assigned_to_person_ids, form.starts_at, form.ends_at, repeatedHourChoice]);
 
   useEffect(() => {
     setConflictAcknowledged(false);
@@ -591,6 +606,30 @@ function EventModal({
       setError("A hora de fim tem de ser depois da hora de início.");
       return;
     }
+    if (!event && form.recurrence === "weekly") {
+      if (!form.recurrence_until) {
+        setError("Indique a data final da série semanal.");
+        return;
+      }
+      if (
+        toDatetimeLocalValue(lisbonWallClockToIso(form.starts_at, "earlier")) !== form.starts_at ||
+        toDatetimeLocalValue(lisbonWallClockToIso(form.ends_at, "earlier")) !== form.ends_at
+      ) {
+        setError("A hora escolhida não existe em Lisboa nessa data devido à mudança para o horário de verão.");
+        return;
+      }
+      const first = new Date(`${form.starts_at.slice(0, 10)}T00:00:00Z`);
+      const last = new Date(`${form.recurrence_until}T00:00:00Z`);
+      const occurrenceCount = Math.floor((last.getTime() - first.getTime()) / 86_400_000 / 7) + 1;
+      if (occurrenceCount < 1) {
+        setError("A data final não pode ser anterior à primeira ocorrência.");
+        return;
+      }
+      if (occurrenceCount > 52) {
+        setError("Uma série semanal pode ter no máximo 52 ocorrências.");
+        return;
+      }
+    }
     if (!form.category) {
       setError("Escolha uma categoria.");
       return;
@@ -603,8 +642,8 @@ function EventModal({
     try {
       const common = {
         title: form.title.trim(),
-        starts_at: lisbonWallClockToIso(form.starts_at),
-        ends_at: lisbonWallClockToIso(form.ends_at),
+        starts_at: lisbonWallClockToIso(form.starts_at, repeatedHourChoice),
+        ends_at: lisbonWallClockToIso(form.ends_at, repeatedHourChoice),
         project_id: form.project_id || null,
         task_id: form.task_id || null,
         assigned_to_person_id: form.assigned_to_person_id || null,
@@ -613,8 +652,17 @@ function EventModal({
         process_stage_id: form.process_stage_id || null,
         process_subtask_id: form.process_subtask_id || null,
       };
-      if (event) await updateCalendarEvent(event.id, common);
-      else await createCalendarEvent(common);
+      if (event) {
+        if (form.mutation_scope === "series") await updateCalendarEvent(event.id, common, "series");
+        else await updateCalendarEvent(event.id, common);
+      } else if (form.recurrence === "weekly") {
+        await createCalendarEvent({
+          ...common,
+          recurrence: "weekly",
+          recurrence_until: form.recurrence_until,
+          idempotency_key: idempotencyKey.current,
+        });
+      } else await createCalendarEvent(common);
       onSaved();
     } catch (saveError) {
       setError(errorMessage(saveError, "Não foi possível guardar o evento."));
@@ -672,6 +720,34 @@ function EventModal({
           <label htmlFor="e-ends">Fim *</label>
           <input id="e-ends" className="input" type="datetime-local" value={form.ends_at} onChange={(change) => setForm({ ...form, ends_at: change.target.value })} />
         </div>
+        {!event && (
+          <>
+            <div className="field">
+              <label htmlFor="e-recurrence">Repetição semanal</label>
+              <select id="e-recurrence" className="select" value={form.recurrence} onChange={(change) => setForm({ ...form, recurrence: change.target.value as EventFormState["recurrence"] })}>
+                <option value="none">Evento único</option>
+                <option value="weekly">Semanal</option>
+              </select>
+            </div>
+            {form.recurrence === "weekly" && (
+              <div className="field">
+                <label htmlFor="e-recurrence-until">Repetir até *</label>
+                <input id="e-recurrence-until" className="input" type="date" min={form.starts_at.slice(0, 10) || undefined} value={form.recurrence_until} onChange={(change) => setForm({ ...form, recurrence_until: change.target.value })} />
+                <span className="field__hint">Data final inclusive; máximo 52 ocorrências, sempre à hora local de Lisboa. Numa hora repetida no outono, usa-se a primeira ocorrência.</span>
+              </div>
+            )}
+          </>
+        )}
+        {event?.recurrence_series_id && (
+          <div className="field span-2">
+            <label htmlFor="e-mutation-scope">Aplicar alterações</label>
+            <select id="e-mutation-scope" className="select" value={form.mutation_scope} onChange={(change) => setForm({ ...form, mutation_scope: change.target.value as EventFormState["mutation_scope"] })}>
+              <option value="occurrence">Só esta ocorrência</option>
+              <option value="series">Toda a série ({event.recurrence_count ?? ""})</option>
+            </select>
+            <span className="field__hint">Ao aplicar à série, a data desloca todas as ocorrências pelo mesmo número de dias e a hora local é mantida em Lisboa.</span>
+          </div>
+        )}
         <div className="field">
           <label htmlFor="e-category">Categoria</label>
           <select id="e-category" className="select" value={form.category} onChange={(change) => setForm({ ...form, category: change.target.value })} disabled={categories.length === 0}>
@@ -764,6 +840,7 @@ function EventChip({
     <>
       <span className="planning-event-chip__dot" aria-hidden="true" />
       <span className="planning-event-chip__time">{formatTimePt(event.starts_at)}</span>
+      {event.recurrence_rule === "weekly" && <span className="planning-event-chip__recurrence" aria-label="Série semanal">↻</span>}
       <span className="planning-event-chip__title">{event.title}</span>
     </>
   );
@@ -779,7 +856,7 @@ function EventChip({
       className="planning-event-chip"
       style={style}
       onClick={onClick}
-      aria-label={`${event.title}, ${meta.label}, Manual, responsáveis: ${participants}`}
+      aria-label={`${event.title}, ${meta.label}, ${event.recurrence_rule === "weekly" ? "série semanal" : "manual"}, responsáveis: ${participants}`}
     >
       {content}
     </button>
@@ -807,6 +884,7 @@ function EventDetailModal({
   onClose,
   onEdit,
   onCancel,
+  onCancelSeries,
 }: {
   event: CalendarEvent;
   people: Person[];
@@ -814,7 +892,9 @@ function EventDetailModal({
   onClose: () => void;
   onEdit: () => void;
   onCancel: () => void;
+  onCancelSeries: () => void;
 }) {
+  const [confirmSeriesCancel, setConfirmSeriesCancel] = useState(false);
   const meta = eventCategoryMeta(event, categories);
   const projectUrl = projectUrlFor(event);
   return (
@@ -824,7 +904,8 @@ function EventDetailModal({
       footer={
         event.can_manage && event.status !== "cancelado" ? (
           <>
-            <button type="button" className="btn btn--danger" onClick={onCancel}>Cancelar evento</button>
+            <button type="button" className="btn btn--danger" onClick={onCancel}>{event.recurrence_series_id ? "Cancelar esta ocorrência" : "Cancelar evento"}</button>
+            {event.recurrence_series_id && <button type="button" className="btn btn--danger" onClick={() => setConfirmSeriesCancel(true)}>Cancelar série inteira</button>}
             <button type="button" className="btn btn--primary" onClick={onEdit}>Editar</button>
           </>
         ) : undefined
@@ -837,11 +918,22 @@ function EventDetailModal({
         </span>
         <Badge tone="neutral">Manual</Badge>
       </div>
+      {confirmSeriesCancel && (
+        <Alert tone="warning" title="Cancelar a série semanal?" action={<><button type="button" className="btn btn--danger btn--sm" onClick={onCancelSeries}>Confirmar</button><button type="button" className="btn btn--sm" onClick={() => setConfirmSeriesCancel(false)}>Voltar</button></>}>
+          Todas as {event.recurrence_count ?? ""} ocorrências serão marcadas como canceladas. Os registos serão mantidos.
+        </Alert>
+      )}
       <dl className="kv planning-event-detail">
         <dt>Início</dt>
         <dd>{formatDayHeaderPt(lisbonDateOf(event.starts_at))} · {formatTimePt(event.starts_at)}</dd>
         <dt>Fim</dt>
         <dd>{formatDayHeaderPt(lisbonDateOf(event.ends_at))} · {formatTimePt(event.ends_at)}</dd>
+        {event.recurrence_rule === "weekly" && (
+          <>
+            <dt>Série</dt>
+            <dd>Semanal · ocorrência {event.recurrence_index} de {event.recurrence_count} · até {formatDatePt(event.recurrence_until ?? null)}</dd>
+          </>
+        )}
         {(event.project_id || event.project_context_hidden) && (
           <>
             <dt>Projeto</dt>
@@ -1025,11 +1117,12 @@ export default function Planning() {
     }
   }
 
-  async function handleCancel(event: CalendarEvent) {
+  async function handleCancel(event: CalendarEvent, cancelScope: "occurrence" | "series" = "occurrence") {
     if (event.source === "process") return;
     try {
-      await cancelCalendarEvent(event.id);
-      notify("Evento cancelado.", "success");
+      if (cancelScope === "series") await cancelCalendarEvent(event.id, "series");
+      else await cancelCalendarEvent(event.id);
+      notify(cancelScope === "series" ? "Série cancelada." : "Evento cancelado.", "success");
       setDetailEvent(null);
       loadEvents();
     } catch (cancelError) {
@@ -1130,7 +1223,7 @@ export default function Planning() {
         )}
       </Card>
 
-      {detailEvent && <EventDetailModal event={detailEvent} people={people} categories={categories} onClose={() => setDetailEvent(null)} onCancel={() => handleCancel(detailEvent)} onEdit={() => { setEditingEvent(detailEvent); setDetailEvent(null); }} />}
+      {detailEvent && <EventDetailModal event={detailEvent} people={people} categories={categories} onClose={() => setDetailEvent(null)} onCancel={() => handleCancel(detailEvent)} onCancelSeries={() => handleCancel(detailEvent, "series")} onEdit={() => { setEditingEvent(detailEvent); setDetailEvent(null); }} />}
       {(creatingForDate !== null || editingEvent) && <EventModal event={editingEvent} defaultDate={creatingForDate} projects={orderedProjects} people={people} categories={categories} allEvents={events ?? []} projectRequired={projectRequired} onClose={() => { setCreatingForDate(null); setEditingEvent(null); }} onSaved={() => { notify(editingEvent ? "Evento atualizado." : "Evento criado.", "success"); setCreatingForDate(null); setEditingEvent(null); loadEvents(); }} />}
     </div>
   );

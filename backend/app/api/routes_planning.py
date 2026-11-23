@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.exc import SQLAlchemyError
@@ -39,6 +40,7 @@ from app.services.planning import (
     PlanningPreferenceValidationError,
     cancel_calendar_event,
     create_calendar_event,
+    create_weekly_calendar_event_series,
     event_assignee_ids,
     get_event_for_mutation,
     get_planning_preferences,
@@ -46,6 +48,7 @@ from app.services.planning import (
     list_calendar_events,
     list_process_calendar_events,
     list_process_options,
+    update_calendar_event_series,
     update_calendar_event,
     update_planning_preferences,
 )
@@ -164,6 +167,12 @@ def _to_read(db: Session, event: CalendarEvent, ctx: AuthContext) -> CalendarEve
             data.process_subtask_title = subtask.title
             if data.process_stage_id is None:
                 data.process_stage_id = subtask.stage_id
+    if event.series is not None:
+        data.recurrence_series_id = event.series.id
+        data.recurrence_rule = "weekly"
+        data.recurrence_index = (event.series_occurrence_index or 0) + 1
+        data.recurrence_count = event.series.occurrence_count
+        data.recurrence_until = event.series.until_date
     label, color = CALENDAR_EVENT_CATEGORIES.get(event.category, CALENDAR_EVENT_CATEGORIES["other"])
     data.category_label = label
     data.category_color = color
@@ -368,20 +377,31 @@ def create_event_endpoint(
     _deny_installer_generic_planning(ctx)
     try:
         supplied = body.model_dump(exclude_unset=True)
-        event = create_calendar_event(
-            db,
-            ctx=ctx,
-            title=body.title,
-            starts_at=body.starts_at,
-            ends_at=body.ends_at,
-            project_id=body.project_id,
-            task_id=body.task_id,
-            assigned_to_person_id=body.assigned_to_person_id,
-            assigned_to_person_ids=(body.assigned_to_person_ids if "assigned_to_person_ids" in supplied else None),
-            category=body.category,
-            process_stage_id=body.process_stage_id,
-            process_subtask_id=body.process_subtask_id,
-        )
+        common = {
+            "ctx": ctx,
+            "title": body.title,
+            "starts_at": body.starts_at,
+            "ends_at": body.ends_at,
+            "project_id": body.project_id,
+            "task_id": body.task_id,
+            "assigned_to_person_id": body.assigned_to_person_id,
+            "assigned_to_person_ids": (
+                body.assigned_to_person_ids if "assigned_to_person_ids" in supplied else None
+            ),
+            "category": body.category,
+            "process_stage_id": body.process_stage_id,
+            "process_subtask_id": body.process_subtask_id,
+        }
+        if body.recurrence == "weekly":
+            assert body.recurrence_until is not None and body.idempotency_key is not None
+            event = create_weekly_calendar_event_series(
+                db,
+                recurrence_until=body.recurrence_until,
+                idempotency_key=body.idempotency_key,
+                **common,
+            )
+        else:
+            event = create_calendar_event(db, **common)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     except CalendarEventValidationError as exc:
@@ -393,6 +413,7 @@ def create_event_endpoint(
 def update_event_endpoint(
     event_id: uuid.UUID,
     body: CalendarEventUpdate,
+    scope: Literal["occurrence", "series"] = Query(default="occurrence"),
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ) -> CalendarEventRead:
@@ -401,24 +422,38 @@ def update_event_endpoint(
     if event is None:
         raise HTTPException(status_code=404, detail="Evento não encontrado.")
     try:
-        updated = update_calendar_event(db, event=event, changes=body.model_dump(exclude_unset=True), ctx=ctx)
+        changes = body.model_dump(exclude_unset=True)
+        updated = (
+            update_calendar_event_series(db, event=event, changes=changes, ctx=ctx)
+            if scope == "series"
+            else update_calendar_event(db, event=event, changes=changes, ctx=ctx)
+        )
     except PermissionError as exc:
+        db.rollback()
         raise HTTPException(status_code=403, detail=str(exc))
     except CalendarEventValidationError as exc:
+        db.rollback()
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     return _to_read(db, updated, ctx)
 
 
 @router.post("/events/{event_id}/cancel", response_model=CalendarEventRead)
 def cancel_event_endpoint(
-    event_id: uuid.UUID, db: Session = Depends(get_db), ctx: AuthContext = Depends(get_auth_context)
+    event_id: uuid.UUID,
+    scope: Literal["occurrence", "series"] = Query(default="occurrence"),
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
 ) -> CalendarEventRead:
     _deny_installer_generic_planning(ctx)
     event = get_event_for_mutation(db, event_id)
     if event is None:
         raise HTTPException(status_code=404, detail="Evento não encontrado.")
     try:
-        updated = cancel_calendar_event(db, event=event, ctx=ctx)
+        updated = cancel_calendar_event(db, event=event, ctx=ctx, whole_series=scope == "series")
     except PermissionError as exc:
+        db.rollback()
         raise HTTPException(status_code=403, detail=str(exc))
+    except CalendarEventValidationError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
     return _to_read(db, updated, ctx)

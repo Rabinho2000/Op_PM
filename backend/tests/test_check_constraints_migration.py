@@ -146,7 +146,8 @@ def test_migration_applies_normalizes_emails_and_downgrades(database_at_base: Pa
         _people_and_users(connection, "  Mistura@Example.INVALID ", "outra@example.invalid")
         indexes_before = _indexes(connection)
 
-    _assert_ok(_run_alembic(database_at_base, "upgrade", "head"))
+    # só esta revisão: as posteriores criam os seus próprios índices
+    _assert_ok(_run_alembic(database_at_base, "upgrade", THIS_REVISION))
     with sqlite3.connect(database_at_base) as connection:
         emails = sorted(email for (email,) in connection.execute("SELECT email FROM users"))
         assert emails == ["mistura@example.invalid", "outra@example.invalid"]
