@@ -12,7 +12,7 @@ from pathlib import Path
 from app.models.inventory import INVENTORY_CATEGORIES
 from app.utils.text import alnum_casefold_key
 
-BASE_REVISION = "d3f5a7c9e1b2"
+BASE_REVISION = "d7a9c3e5f1b2"
 THIS_REVISION = "e4c7a9b1d3f5"
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 

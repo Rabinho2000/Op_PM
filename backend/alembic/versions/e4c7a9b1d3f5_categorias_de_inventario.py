@@ -5,7 +5,7 @@ anterior, para que o vocabulário em uso continue idêntico após a migração.
 `inventory_items.category` não tem CHECK de vocabulário e não é alterado.
 
 Revision ID: e4c7a9b1d3f5
-Revises: d3f5a7c9e1b2
+Revises: d7a9c3e5f1b2
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "e4c7a9b1d3f5"
-down_revision: str | Sequence[str] | None = "d3f5a7c9e1b2"
+down_revision: str | Sequence[str] | None = "d7a9c3e5f1b2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
