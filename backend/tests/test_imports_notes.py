@@ -2680,3 +2680,641 @@ def test_commercial_cannot_change_admin_fields_of_an_existing_project_via_notes(
     assert applied.status_code == 403, applied.text
     db_session.expire_all()
     assert db_session.get(Project, existing.id).power_kwp == 1.0
+
+
+# --- Formulários HTML v15/v16 (fixtures exclusivamente sintéticas) ----------
+
+
+def _v15v16_bytes(version: str) -> bytes:
+    return (FIXTURES_DIR / f"synthetic_notas_iniciais_v{version}.html").read_bytes()
+
+
+def _v15_variant(old: str, new: str, *, version: str = "15") -> bytes:
+    html = _v15v16_bytes(version).decode("utf-8")
+    assert old in html
+    return html.replace(old, new).encode("utf-8")
+
+
+def test_v15_html_extracts_all_fields_and_validates():
+    payload = extract_payload(filename="notas-iniciais_sintetico.html", content=_v15v16_bytes("15"))
+
+    assert validate_payload(payload) == "15"
+    assert payload["formVersion"] == "15"
+    assert payload["cliente"] == "Cliente Sintético V15 Lda"
+    assert payload["contacto"] == "Contacto Sintético V15"
+    assert payload["funcao"] == "Outra — Responsável técnico sintético"
+    assert payload["telefone"] == "+351 910 151 515"
+    assert payload["email"] == "v15.sintetico@example.invalid"
+    assert (payload["lat"], payload["lon"]) == (37.12345, -8.54321)
+    assert payload["paineis"] == {"quantidade": 24, "potenciaWp": 500.0}
+    assert payload["potenciaKwpCalculada"] == 12.0
+    assert payload["potenciaKwp"] == 12.0
+    assert payload["inversores"] == [
+        {"modelo": "Inversor Sintético A 6 kW", "quantidade": 1},
+        {"modelo": "Inversor Sintético B 6 kW", "quantidade": 2},
+    ]
+    assert payload["baterias"].startswith("Bateria Sintética 5 kWh")
+    # "Controlador de bateria" não pode sobrepor as baterias.
+    assert payload["controlador"] == "Controlador Sintético V15"
+    assert payload["backup"] is True
+    assert payload["outroEquipamento"] == "Bomba de calor sintética"
+    assert payload["injecao"] == "Com injeção"
+    assert payload["om"] == "Sim"
+    assert payload["omAnos"] == "5"
+    assert payload["rgpd"] is True
+    assert payload["upacExistente"] is False
+    assert payload["urgencia"] == "Não"
+    # "Nome da pasta do projeto" não pode ser lido como O&M.
+    assert payload["pastaProjeto"] == "PASTA-SINTETICA-V15"
+    assert payload["observacoes"] == "Observação sintética v15."
+    assert payload["divergenciasHelioscope"] == "Diferença sintética de 0,2 kWp."
+    assert payload["helioscopeIgnorar"] == "Sombreamento sintético."
+    assert payload["pressupostosProposta"] == "Pressupostos sintéticos v15."
+    assert payload["anexos"] == [{"nome": "planta-sintetica-v15.pdf", "tipo": "application/pdf", "tamanho": 2048}]
+    assert payload["camposDesconhecidos"] == [
+        {"label": "Campo novo sintético do formulário", "value": "Valor desconhecido sintético v15"}
+    ]
+    assert "data:application" not in json.dumps(payload)
+
+
+def test_v16_html_handles_omitted_pending_and_no_battery_variants():
+    payload = extract_payload(filename="notas-iniciais_sintetico.html", content=_v15v16_bytes("16"))
+
+    assert validate_payload(payload) == "16"
+    assert payload["cliente"] == "Cliente Sintético V16 SA"
+    assert payload["telefone"] == "+351 910 161 616"
+    # em.vz são omissões, nunca dados.
+    for key in ("email", "lat", "lon", "backup", "observacoes", "anexos"):
+        assert key not in payload
+    assert "não indicado" not in json.dumps(payload, ensure_ascii=False)
+    assert payload["paineis"] == {"quantidade": 100, "potenciaWp": 455.0}
+    assert payload["potenciaKwp"] == 45.5
+    assert payload["inversores"] == [{"modelo": "Inversor Sintético C 50 kW", "quantidade": 1}]
+    assert payload["baterias"] == "Sem baterias"
+    assert payload["outroEquipamento"] == "A CONFIRMAR"
+    assert payload["om"] == "A CONFIRMAR"
+    assert payload["rgpd"] is False
+    assert payload["upacExistente"] is True
+    assert payload["injecao"] == "Sem injeção"
+    assert "camposDesconhecidos" not in payload
+
+
+@pytest.mark.parametrize("version", ["15", "16"])
+def test_v15_v16_extract_validate_preview_apply_end_to_end(tmp_path, version):
+    engine, db = _isolated_import_db(tmp_path, f"v{version}-e2e.db")
+    content = _v15v16_bytes(version)
+    batch = preview_notes_import(
+        db, filename=f"notas-iniciais_sintetico_v{version}.html", content=content, uploaded_by_person_id=None
+    )
+    db.commit()
+    assert batch.status == BATCH_STATUS_PENDING_CONFIRMATION
+    assert batch.form_version == version
+    record = db.query(FieldImportRecord).filter_by(batch_id=batch.id).one()
+    assert record.is_new_project
+    assert "data:application" not in record.mapped_fields_json
+
+    apply_notes_import(db, batch=batch, target_project_id=None, applied_by_person_id=None)
+    db.commit()
+    assert batch.status == BATCH_STATUS_APPLIED
+
+    project = db.query(Project).one()
+    installation = db.query(ProjectInstallationData).filter_by(project_id=project.id).one()
+    inverters = json.loads(installation.inverters)
+    if version == "15":
+        assert project.name == "Cliente Sintético V15 Lda"
+        assert project.client_email == "v15.sintetico@example.invalid"
+        assert installation.panel_count == 24 and installation.panel_power_wp == 500
+        assert installation.has_backup is True
+        assert installation.batteries.startswith("Bateria Sintética 5 kWh")
+        assert [item["quantidade"] for item in inverters] == [1, 2]
+        assert "Anos de O&M: 5" in installation.notes
+        assert "Pasta do projeto em Projects: PASTA-SINTETICA-V15" in installation.notes
+        assert "Controlador: Controlador Sintético V15" in installation.notes
+        assert "Campo não mapeado — Campo novo sintético do formulário: Valor desconhecido sintético v15" in installation.notes
+        assert "Anexos: planta-sintetica-v15.pdf" in installation.notes
+        assert installation.om_notes == "Sim"
+    else:
+        assert project.name == "Cliente Sintético V16 SA"
+        assert installation.panel_count == 100 and installation.panel_power_wp == 455
+        assert installation.has_backup is None
+        assert installation.batteries == "Sem baterias"
+        assert installation.om_notes == "A CONFIRMAR"
+        assert [item["quantidade"] for item in inverters] == [1]
+        assert "não indicado" not in (installation.notes or "")
+    db.close()
+
+
+@pytest.mark.parametrize("version", ["13", "14", "17", "99", "15.1"])
+def test_unsupported_form_versions_are_rejected_even_with_valid_structure(version):
+    html = _v15v16_bytes("15").decode("utf-8").replace("notas iniciais v15", f"notas iniciais v{version}")
+    payload = extract_payload(filename="notas-iniciais-v15.html", content=html.encode("utf-8"))
+    # A versão do rodapé é lida por inteiro (nunca truncada "15.1" → "15").
+    assert payload["formVersion"] == version
+    with pytest.raises(NotesImportError, match="não é compatível"):
+        validate_payload(payload)
+
+
+def test_future_version_in_json_payload_is_rejected():
+    payload = extract_payload(filename="x.html", content=_v15v16_bytes("15"))
+    payload["formVersion"] = "17"
+    with pytest.raises(NotesImportError, match="não é compatível"):
+        validate_payload(payload)
+
+
+def test_filename_never_decides_version():
+    content = _v15v16_bytes("15")
+    for name in ("notas-iniciais-v12.html", "notas-iniciais-v99.html"):
+        assert extract_payload(filename=name, content=content)["formVersion"] == "15"
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "message"),
+    [
+        # Cabeçalhos da tabela de inversores diferentes de Modelo / Qtd.
+        ("<th>Modelo</th><th>Qtd.</th>", "<th>Marca</th><th>Preço</th>", "inversores"),
+        # Quantidades/potências não positivas.
+        ("<td>Inversor Sintético A 6 kW</td><td>1</td>", "<td>Inversor Sintético A 6 kW</td><td>0</td>", "quantidade"),
+        ("(Wp) <b>500</b>", "(Wp) <b>0</b>", "potenciaWp"),
+    ],
+)
+def test_v15_semantic_validation_rejects_structurally_invalid_content(old, new, message):
+    payload = extract_payload(filename="x.html", content=_v15_variant(old, new))
+    assert payload["formVersion"] == "15"
+    with pytest.raises(NotesImportError, match=f"v15 inválido.*{message}"):
+        validate_payload(payload)
+
+
+def test_v15_negative_panel_quantity_keeps_its_sign_and_is_rejected():
+    # Regressão: o `-` colado ao número é sinal, não separador.
+    payload = extract_payload(filename="x.html", content=_v15_variant("<b>24</b>", "<b>-3</b>"))
+    assert payload["paineis"]["quantidade"] == -3
+    with pytest.raises(NotesImportError, match="inválido"):
+        validate_payload(payload)
+
+
+def test_v15_free_text_panels_are_normalized_to_validated_structured_values():
+    # O extrator converte "24 x 500 Wp" em quantidade/potência; a forma
+    # estruturada resultante é a que a validação v15 verifica.
+    old = '<div class="sub">Quantidade <b>24</b></div><div class="sub">Potência unitária (Wp) <b>500</b></div>'
+    payload = extract_payload(filename="x.html", content=_v15_variant(old, "24 x 500 Wp"))
+    assert payload["paineis"] == {"quantidade": 24, "potenciaWp": 500.0}
+    assert validate_payload(payload) == "15"
+
+
+def test_v16_footer_does_not_imply_semantics_json_with_wrong_shape_is_rejected():
+    for bad in (
+        {"paineis": {"descricao": "24 x 500 Wp"}},
+        {"inversores": "Inversor livre"},
+        {"inversores": [{"modelo": "X", "quantidade": 1, "extra": 1}]},
+        {"paineis": {"quantidade": 10, "potenciaWp": 500}, "potenciaKwpCalculada": 99.0},
+    ):
+        payload = {"formVersion": "16", "cliente": "Cliente Sintético", "potenciaKwp": 5.0, **bad}
+        with pytest.raises(NotesImportError, match="v16 inválido"):
+            validate_payload(payload)
+
+
+def test_v15_optional_fields_are_not_required():
+    payload = {"formVersion": "15", "cliente": "Cliente Sintético Mínimo", "potenciaKwp": 3.0}
+    assert validate_payload(payload) == "15"
+    pending = {"formVersion": "16", "cliente": "Cliente Sintético", "inversores": "A CONFIRMAR"}
+    assert validate_payload(pending) == "16"
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        "synthetic_notas_iniciais_v10_legacy.html",
+        "synthetic_notas_iniciais_v11_contactos.html",
+        "synthetic_notas_iniciais_v12_structural.html",
+    ],
+)
+def test_previous_versions_still_extract_and_validate(fixture):
+    payload = extract_payload(filename="x.html", content=(FIXTURES_DIR / fixture).read_bytes())
+    assert validate_payload(payload) in {"10", "11", "12"}
+    mapped = map_payload_to_fields(payload)
+    assert mapped["project"]["client_name"]
+
+
+def test_v15_sensitive_fields_stay_redacted():
+    html = _v15v16_bytes("15").replace(
+        b"<h2>Comercial</h2>",
+        b'<h2>Comercial</h2><div class="f"><dt>Palavra-passe do portal</dt><dd>segredo-sintetico-123</dd></div>',
+    )
+    mapped = map_payload_to_fields(extract_payload(filename="x.html", content=html))
+    assert "segredo-sintetico-123" not in json.dumps(mapped, ensure_ascii=False)
+
+
+# --- v15/v16: marcadores A CONFIRMAR e valores em falta nunca se perdem ------
+
+_V15_INVERTER_B = "<td>Inversor Sintético B 6 kW</td><td>2</td>"
+_V15_POWER = "(Wp) <b>500</b>"
+_V15_QUANTITY = "<b>24</b>"
+_PENDING_CELL = '<em class="cf">A CONFIRMAR</em>'
+
+
+def _preview_and_apply_v15(tmp_path, name, content):
+    engine, db = _isolated_import_db(tmp_path, name)
+    batch = preview_notes_import(db, filename="notas-iniciais_sintetico.html", content=content, uploaded_by_person_id=None)
+    db.commit()
+    apply_notes_import(db, batch=batch, target_project_id=None, applied_by_person_id=None)
+    db.commit()
+    project = db.query(Project).one()
+    installation = db.query(ProjectInstallationData).filter_by(project_id=project.id).one()
+    return db, installation
+
+
+def test_v15_inverter_pending_quantity_is_preserved_through_preview_and_apply(tmp_path):
+    content = _v15_variant(_V15_INVERTER_B, f"<td>Inversor Sintético B 6 kW</td><td>{_PENDING_CELL}</td>")
+    payload = extract_payload(filename="x.html", content=content)
+    assert payload["inversores"] == [
+        {"modelo": "Inversor Sintético A 6 kW", "quantidade": 1},
+        {"modelo": "Inversor Sintético B 6 kW", "quantidadeTexto": "A CONFIRMAR"},
+    ]
+    assert validate_payload(payload) == "15"
+
+    db, installation = _preview_and_apply_v15(tmp_path, "inv-pending.db", content)
+    stored = json.loads(installation.inverters)
+    assert stored[1] == {"modelo": "Inversor Sintético B 6 kW", "quantidadeTexto": "A CONFIRMAR"}
+    assert "Inversores — quantidade A CONFIRMAR: Inversor Sintético B 6 kW" in installation.notes
+    db.close()
+
+
+def test_v15_inverter_pending_model_is_preserved_as_text(tmp_path):
+    content = _v15_variant(_V15_INVERTER_B, f"<td>{_PENDING_CELL}</td><td>2</td>")
+    payload = extract_payload(filename="x.html", content=content)
+    assert payload["inversores"][1] == {"modelo": "A CONFIRMAR", "quantidade": 2}
+    db, installation = _preview_and_apply_v15(tmp_path, "inv-model-pending.db", content)
+    assert json.loads(installation.inverters)[1] == {"modelo": "A CONFIRMAR", "quantidade": 2}
+    db.close()
+
+
+@pytest.mark.parametrize(
+    ("replacement", "message"),
+    [
+        ("<td>Inversor Sintético B 6 kW</td><td></td>", "quantidade em falta"),
+        ('<td>Inversor Sintético B 6 kW</td><td><em class="vz">não indicado</em></td>', "quantidade em falta"),
+        ("<td>Inversor Sintético B 6 kW</td><td>muitos</td>", "esperado número ou 'A CONFIRMAR'"),
+        ("<td></td><td>2</td>", "modelo"),
+        ('<td><em class="vz">não indicado</em></td><td>2</td>', "modelo"),
+    ],
+)
+def test_v15_inverter_missing_or_non_numeric_quantity_is_refused_before_any_write(tmp_path, replacement, message):
+    content = _v15_variant(_V15_INVERTER_B, replacement)
+    engine, db = _isolated_import_db(tmp_path, "inv-refused.db")
+    with pytest.raises(NotesImportError, match=message):
+        preview_notes_import(db, filename="x.html", content=content, uploaded_by_person_id=None)
+    db.rollback()
+    assert db.query(FieldImportBatch).count() == 0
+    assert db.query(Project).count() == 0
+    db.close()
+
+
+def test_v15_panel_pending_unit_power_is_preserved_through_preview_and_apply(tmp_path):
+    content = _v15_variant(_V15_POWER, f"(Wp) {_PENDING_CELL}")
+    payload = extract_payload(filename="x.html", content=content)
+    assert payload["paineis"] == {"quantidade": 24, "potenciaWpTexto": "A CONFIRMAR"}
+    assert "potenciaKwpCalculada" not in payload
+    assert validate_payload(payload) == "15"
+
+    db, installation = _preview_and_apply_v15(tmp_path, "panel-power-pending.db", content)
+    assert installation.panel_count == 24
+    assert installation.panel_power_wp is None
+    assert "Painéis — potência unitária (Wp): A CONFIRMAR" in installation.notes
+    db.close()
+
+
+def test_v15_panel_pending_quantity_is_preserved_through_preview_and_apply(tmp_path):
+    content = _v15_variant(_V15_QUANTITY, _PENDING_CELL)
+    payload = extract_payload(filename="x.html", content=content)
+    assert payload["paineis"] == {"quantidadeTexto": "A CONFIRMAR", "potenciaWp": 500.0}
+    db, installation = _preview_and_apply_v15(tmp_path, "panel-qty-pending.db", content)
+    assert installation.panel_count is None
+    assert installation.panel_power_wp == 500
+    assert "Painéis — quantidade: A CONFIRMAR" in installation.notes
+    db.close()
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "message"),
+    [
+        (_V15_POWER, "(Wp) <b>muitos</b>", "potenciaWpTexto"),
+        (_V15_POWER, "(Wp) <b>500</b> aproximadamente", "potenciaWpTexto"),
+        (_V15_QUANTITY, "<b>vários</b>", "quantidadeTexto"),
+    ],
+)
+def test_v15_panel_non_numeric_value_other_than_pending_is_refused_before_any_write(tmp_path, old, new, message):
+    content = _v15_variant(old, new)
+    engine, db = _isolated_import_db(tmp_path, "panel-refused.db")
+    with pytest.raises(NotesImportError, match=message):
+        preview_notes_import(db, filename="x.html", content=content, uploaded_by_person_id=None)
+    db.rollback()
+    assert db.query(FieldImportBatch).count() == 0
+    assert db.query(Project).count() == 0
+    db.close()
+
+
+@pytest.mark.parametrize("calculated", [12.0, 12, 12.005])
+def test_v15_json_consistent_calculated_power_is_accepted(calculated):
+    payload = {
+        "formVersion": "15",
+        "cliente": "Cliente Sintético",
+        "paineis": {"quantidade": 24, "potenciaWp": 500},
+        "potenciaKwpCalculada": calculated,
+    }
+    assert validate_payload(payload) == "15"
+
+
+@pytest.mark.parametrize("calculated", [0, 0.0, -12.0, 13.0, 1.2])
+def test_v15_json_inconsistent_or_negative_calculated_power_is_rejected(calculated):
+    payload = {
+        "formVersion": "15",
+        "cliente": "Cliente Sintético",
+        "paineis": {"quantidade": 24, "potenciaWp": 500},
+        "potenciaKwpCalculada": calculated,
+    }
+    with pytest.raises(NotesImportError, match="inválid"):
+        validate_payload(payload)
+
+
+def test_v15_json_zero_calculated_power_names_the_inconsistent_field():
+    payload = {
+        "formVersion": "15",
+        "cliente": "Cliente Sintético",
+        "paineis": {"quantidade": 24, "potenciaWp": 500},
+        "potenciaKwpCalculada": 0,
+    }
+    with pytest.raises(NotesImportError, match="potenciaKwpCalculada"):
+        validate_payload(payload)
+
+
+def test_v15_json_pending_markers_accepted_and_unknown_text_refused():
+    base = {"formVersion": "15", "cliente": "Cliente Sintético"}
+    ok = {
+        **base,
+        "paineis": {"quantidade": 24, "potenciaWpTexto": "A CONFIRMAR"},
+        "inversores": [{"modelo": "X", "quantidadeTexto": "a confirmar"}],
+    }
+    assert validate_payload(ok) == "15"
+    for bad in (
+        {"paineis": {"quantidade": 24, "potenciaWpTexto": "talvez"}},
+        {"paineis": {"quantidade": 24, "quantidadeTexto": "A CONFIRMAR"}},
+        {"inversores": [{"modelo": "X", "quantidade": 1, "quantidadeTexto": "A CONFIRMAR"}]},
+        {"inversores": [{"modelo": "X"}]},
+        {"inversores": [{"modelo": "X", "quantidadeTexto": "talvez"}]},
+    ):
+        with pytest.raises(NotesImportError, match="v15 inválido"):
+            validate_payload({**base, **bad})
+
+
+def test_v15_pending_inverter_and_panel_through_real_routes(api_client, db_session):
+    headers = _headers("comercial.sintetico@example.invalid")
+    content = _v15_variant(_V15_INVERTER_B, f"<td>Inversor Sintético B 6 kW</td><td>{_PENDING_CELL}</td>")
+    content = content.replace(_V15_POWER.encode(), f"(Wp) {_PENDING_CELL}".encode())
+    preview = api_client.post(
+        "/api/imports/notes/preview",
+        files={"file": ("notas-iniciais_sintetico.html", content, "text/html")},
+        headers=headers,
+    )
+    assert preview.status_code == 201, preview.text
+    body = preview.json()
+    assert body["form_version"] == "15"
+    notes = body["records"][0]["mapped_fields"]["installation"]["notes"]
+    assert "Inversores — quantidade A CONFIRMAR: Inversor Sintético B 6 kW" in notes
+    assert "Painéis — potência unitária (Wp): A CONFIRMAR" in notes
+
+    applied = api_client.post(
+        "/api/imports/notes/apply", json={"batch_id": body["id"], "confirm": True}, headers=headers
+    )
+    assert applied.status_code == 200, applied.text
+    installation = (
+        db_session.query(ProjectInstallationData)
+        .filter(ProjectInstallationData.project_id == applied.json()["project_id"])
+        .one()
+    )
+    assert "quantidadeTexto" in installation.inverters
+    assert "Inversores — quantidade A CONFIRMAR" in installation.notes
+    assert installation.panel_power_wp is None
+
+
+# --- v15/v16: descrição "Potência pico total" gerada pelo formulário ---------
+
+_TOTAL_PANELS_DD = (
+    "Quantidade: <b>40</b> · Potência unitária (Wp): <b>550</b>"
+    "<br><small>Potência pico total: <b>22,00 kWp</b> · 40 × 550 Wp</small>"
+)
+
+
+def _total_fixture_bytes() -> bytes:
+    return (FIXTURES_DIR / "synthetic_notas_iniciais_v16_paineis_total.html").read_bytes()
+
+
+def _total_variant(replacement_dd: str) -> bytes:
+    html = _total_fixture_bytes().decode("utf-8")
+    assert _TOTAL_PANELS_DD in html
+    return html.replace(_TOTAL_PANELS_DD, replacement_dd).encode("utf-8")
+
+
+def test_v16_panels_with_generated_total_description_extract_validate_preview_and_apply(tmp_path):
+    payload = extract_payload(filename="x.html", content=_total_fixture_bytes())
+    assert payload["formVersion"] == "16"
+    assert payload["paineis"] == {"quantidade": 40, "potenciaWp": 550.0}
+    assert payload["potenciaKwpCalculada"] == 22.0
+    assert payload["potenciaKwp"] == 22.0
+    assert validate_payload(payload) == "16"
+
+    db, installation = _preview_and_apply_v15(tmp_path, "panel-total.db", _total_fixture_bytes())
+    assert installation.panel_count == 40
+    assert installation.panel_power_wp == 550
+    assert installation.power_kwp == 22.0
+    assert "Potência pico" not in (installation.notes or "")
+    assert db.query(Project).one().power_kwp == 22.0
+    db.close()
+
+
+def test_v16_panels_total_description_does_not_hide_pending_values():
+    pending = '<em class="cf">A CONFIRMAR</em>'
+    unit_pending = extract_payload(
+        filename="x.html",
+        content=_total_variant(_TOTAL_PANELS_DD.replace("<b>550</b>", pending)),
+    )
+    assert unit_pending["paineis"] == {"quantidade": 40, "potenciaWpTexto": "A CONFIRMAR"}
+    assert validate_payload(unit_pending) == "16"
+
+    qty_pending = extract_payload(
+        filename="x.html",
+        content=_total_variant(_TOTAL_PANELS_DD.replace("<b>40</b> ·", f"{pending} ·")),
+    )
+    assert qty_pending["paineis"]["quantidadeTexto"] == "A CONFIRMAR"
+    assert qty_pending["paineis"]["potenciaWp"] == 550.0
+    assert validate_payload(qty_pending) == "16"
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("<b>550</b>", "<b>550</b> aproximadamente"),
+        ("<b>550</b>", "<b>550</b> a confirmar com o cliente"),
+        ("<b>550</b>", "<b>muitos</b>"),
+        ("<b>40</b> ·", "<b>40</b> painéis ·"),
+    ],
+)
+def test_v16_panels_total_description_still_refuses_extra_or_unknown_text(tmp_path, old, new):
+    content = _total_variant(_TOTAL_PANELS_DD.replace(old, new))
+    engine, db = _isolated_import_db(tmp_path, "panel-total-refused.db")
+    with pytest.raises(NotesImportError, match="v16 inválido.*paineis"):
+        preview_notes_import(db, filename="x.html", content=content, uploaded_by_person_id=None)
+    db.rollback()
+    assert db.query(FieldImportBatch).count() == 0
+    assert db.query(Project).count() == 0
+    db.close()
+
+
+def test_v16_panels_total_description_negative_quantity_is_not_accepted():
+    payload = extract_payload(filename="x.html", content=_total_variant(_TOTAL_PANELS_DD.replace("<b>40</b>", "<b>-4</b>")))
+    assert payload["paineis"]["quantidade"] == -4
+    with pytest.raises(NotesImportError, match="inválid"):
+        validate_payload(payload)
+
+
+# --- v15/v16: Painéis só com marcador, sem nenhum número ---------------------
+
+
+def test_v15_panels_only_pending_marker_is_preserved_through_preview_and_apply(tmp_path):
+    content = _total_variant('<em class="cf">A CONFIRMAR</em>')
+    payload = extract_payload(filename="x.html", content=content)
+    assert payload["paineis"] == {"descricaoTexto": "A CONFIRMAR"}
+    assert validate_payload(payload) == "16"
+
+    db, installation = _preview_and_apply_v15(tmp_path, "panel-only-pending.db", content)
+    assert installation.panel_count is None and installation.panel_power_wp is None
+    assert "Painéis: A CONFIRMAR" in installation.notes
+    db.close()
+
+
+def test_v15_panels_only_pending_marker_with_both_labels_pending_is_preserved():
+    pending = '<em class="cf">A CONFIRMAR</em>'
+    content = _total_variant(f"Quantidade: {pending} · Potência unitária (Wp): {pending}")
+    payload = extract_payload(filename="x.html", content=content)
+    assert payload["paineis"] == {"quantidadeTexto": "A CONFIRMAR", "potenciaWpTexto": "A CONFIRMAR"}
+    assert validate_payload(payload) == "16"
+    notes = map_payload_to_fields(payload)["installation"]["notes"]
+    assert "Painéis — quantidade: A CONFIRMAR" in notes
+    assert "Painéis — potência unitária (Wp): A CONFIRMAR" in notes
+
+
+def test_v15_panels_only_free_text_without_numbers_is_refused_before_any_write(tmp_path):
+    content = _total_variant("vários painéis")
+    engine, db = _isolated_import_db(tmp_path, "panel-only-text.db")
+    with pytest.raises(NotesImportError, match="paineis.descricaoTexto"):
+        preview_notes_import(db, filename="x.html", content=content, uploaded_by_person_id=None)
+    db.rollback()
+    assert db.query(FieldImportBatch).count() == 0
+    db.close()
+
+
+def _separate_panel_fields_html(quantity: str, power: str, version: str = "15") -> bytes:
+    return (
+        '<html><body><section><dl>'
+        "<dt>Nome do cliente</dt><dd>Cliente Sintético Campos Separados</dd>"
+        f"<dt>Quantidade de painéis</dt><dd>{quantity}</dd>"
+        f"<dt>Potência por painel</dt><dd>{power}</dd>"
+        "<dt>Inversores</dt><dd><table><thead><tr><th>Modelo</th><th>Qtd.</th></tr></thead>"
+        "<tbody><tr><td>Inversor Sintético E</td><td>1</td></tr></tbody></table></dd>"
+        f"</dl></section><footer>Formulário de notas iniciais v{version}</footer></body></html>"
+    ).encode()
+
+
+def test_v15_separate_panel_fields_with_pending_markers_are_preserved(tmp_path):
+    pending = '<em class="cf">A CONFIRMAR</em>'
+    content = _separate_panel_fields_html(pending, pending)
+    payload = extract_payload(filename="x.html", content=content)
+    assert payload["paineis"] == {"quantidadeTexto": "A CONFIRMAR", "potenciaWpTexto": "A CONFIRMAR"}
+    assert validate_payload(payload) == "15"
+
+    db, installation = _preview_and_apply_v15(tmp_path, "panel-separate-pending.db", content)
+    assert installation.panel_count is None and installation.panel_power_wp is None
+    assert "Painéis — quantidade: A CONFIRMAR" in installation.notes
+    assert "Painéis — potência unitária (Wp): A CONFIRMAR" in installation.notes
+    db.close()
+
+
+def test_v15_separate_panel_fields_numeric_and_mixed_cases():
+    numeric = extract_payload(filename="x.html", content=_separate_panel_fields_html("12", "400 Wp"))
+    assert numeric["paineis"] == {"quantidade": 12, "potenciaWp": 400.0}
+    assert validate_payload(numeric) == "15"
+
+    mixed = extract_payload(filename="x.html", content=_separate_panel_fields_html("12", "A CONFIRMAR"))
+    assert mixed["paineis"] == {"quantidade": 12, "potenciaWpTexto": "A CONFIRMAR"}
+    assert validate_payload(mixed) == "15"
+
+    unknown = extract_payload(filename="x.html", content=_separate_panel_fields_html("12", "talvez"))
+    with pytest.raises(NotesImportError, match="v15 inválido.*potenciaWpTexto"):
+        validate_payload(unknown)
+
+
+def test_v15_json_panels_description_pending_only_accepts_marker_and_refuses_text():
+    base = {"formVersion": "15", "cliente": "Cliente Sintético"}
+    assert validate_payload({**base, "paineis": {"descricaoTexto": "A CONFIRMAR"}}) == "15"
+    with pytest.raises(NotesImportError, match="descricaoTexto"):
+        validate_payload({**base, "paineis": {"descricaoTexto": "talvez"}, "potenciaKwp": 1.0})
+
+
+# --- v10–v12: descrição livre de painéis mantém o comportamento original ----
+
+
+def _legacy_panel_description_html(version: str) -> bytes:
+    return (
+        "<html><body><section><dl>"
+        "<dt>Cliente</dt><dd>Cliente Sintético Descrição Livre</dd>"
+        "<dt>Painéis</dt><dd>24 painéis, potência 500 Wp</dd>"
+        f"</dl></section><footer>Formulário de notas iniciais v{version}</footer></body></html>"
+    ).encode()
+
+
+@pytest.mark.parametrize(
+    ("version", "expected_panels"),
+    [
+        ("10", {"descricao": "24 painéis, potência 500 Wp"}),
+        ("11", {"quantidade": 24, "potenciaWp": 500.0}),
+        ("12", {"quantidade": 24, "potenciaWp": 500.0}),
+    ],
+)
+def test_legacy_free_text_panel_description_keeps_quantity_and_power(version, expected_panels):
+    payload = extract_payload(filename="x.html", content=_legacy_panel_description_html(version))
+    assert payload["formVersion"] == version
+    assert payload["paineis"] == expected_panels
+    if version == "10":
+        # Comportamento v10 original: a descrição fica como texto, sem potência derivada.
+        assert "potenciaKwp" not in payload
+    else:
+        assert payload["potenciaKwp"] == 12.0
+    assert validate_payload(payload) == version
+    installation = map_payload_to_fields(payload)["installation"]
+    assert installation["panel_count"] == 24
+    assert installation["panel_power_wp"] == 500
+
+
+@pytest.mark.parametrize("version", ["10", "11", "12"])
+def test_legacy_versions_never_gain_panel_text_keys_for_pending_values(version):
+    html = (
+        "<html><body><section><dl>"
+        "<dt>Cliente</dt><dd>Cliente Sintético Legado</dd>"
+        "<dt>Painéis</dt><dd>A CONFIRMAR</dd>"
+        "<dt>Potência total</dt><dd>3 kWp</dd>"
+        f"</dl></section><footer>Formulário de notas iniciais v{version}</footer></body></html>"
+    ).encode()
+    payload = extract_payload(filename="x.html", content=html)
+    assert not any(key.endswith("Texto") for key in payload.get("paineis", {}))
+    assert validate_payload(payload) == version
+
+
+def test_v15_missing_inverter_quantity_is_a_400_through_real_route_and_writes_nothing(api_client, db_session):
+    content = _v15_variant(_V15_INVERTER_B, "<td>Inversor Sintético B 6 kW</td><td></td>")
+    resp = api_client.post(
+        "/api/imports/notes/preview",
+        files={"file": ("notas-iniciais_sintetico.html", content, "text/html")},
+        headers=_headers("comercial.sintetico@example.invalid"),
+    )
+    assert resp.status_code == 400
+    assert "quantidade em falta" in resp.json()["detail"]
+    assert db_session.query(FieldImportBatch).count() == 0
