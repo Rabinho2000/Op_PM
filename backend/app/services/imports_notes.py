@@ -58,7 +58,12 @@ from app.utils.text import strip_accents
 # Versões do formulário aceites — "v11" no nome do ficheiro pode conter
 # conteúdo já na versão 12 (o nome do ficheiro nunca é a fonte de
 # verdade); qualquer versão fora desta lista é rejeitada explicitamente.
-COMPATIBLE_FORM_VERSIONS: frozenset[str] = frozenset({"10", "11", "12"})
+COMPATIBLE_FORM_VERSIONS: frozenset[str] = frozenset({"10", "11", "12", "15", "16"})
+
+# Versões cujo conteúdo é validado semanticamente (estrutura e valores) além
+# do número: o rodapé/`formVersion` sozinho nunca garante o formato. As
+# versões 13 e 14 não foram observadas e continuam rejeitadas.
+STRUCTURED_FORM_VERSIONS: frozenset[str] = frozenset({"15", "16"})
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
 MAX_FILENAME_LENGTH = 512
@@ -789,6 +794,12 @@ class _LegacyFieldExtractor(HTMLParser):
         self._ct_capture: str | None = None
         self._ct_buffer: list[str] = []
         self._ct_invalid = False
+        self._vz_depth = 0
+        self._inverter_table: tuple[bool, str, list[list[str]]] | None = None
+        self._panel_text: dict[str, str] = {}
+        self._panel_labeled_claimed = False
+        self._panel_labeled_data: dict[str, int | float] = {}
+        self._panel_labeled_text: dict[str, str] = {}
         self.form_version = "10"
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -816,6 +827,13 @@ class _LegacyFieldExtractor(HTMLParser):
             self._current_row = []
         elif tag in {"th", "td"} and self._current_row is not None:
             self._current_cell = []
+
+        if self._dd_parts is not None and tag == "em":
+            # `em.vz` marca valores omitidos no export v15+: nunca são dados.
+            if self._vz_depth:
+                self._vz_depth += 1
+            elif "vz" in (attrs_map.get("class") or "").split():
+                self._vz_depth = 1
 
         if self._dd_parts is not None:
             self._track_contact_start(tag, attrs_map)
@@ -859,6 +877,8 @@ class _LegacyFieldExtractor(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
+        if tag == "em" and self._vz_depth:
+            self._vz_depth -= 1
         self._track_contact_end(tag)
         if tag == "dt":
             self._current_label = " ".join(self._dt_parts).strip()
@@ -879,6 +899,8 @@ class _LegacyFieldExtractor(HTMLParser):
             self._in_footer = False
 
     def handle_data(self, data: str) -> None:
+        if self._vz_depth and self._dd_parts is not None:
+            return
         if self._ct_capture is not None and self._ct is not None:
             self._ct_buffer.append(data)
         if self._in_dt:
@@ -1006,6 +1028,7 @@ class _LegacyFieldExtractor(HTMLParser):
         self._dd_table_rows = []
         self._dd_attachments = []
         self._dd_contacts = []
+        self._vz_depth = 0
         self._reset_contact_state()
         self._current_label = ""
 
@@ -1082,10 +1105,16 @@ class _LegacyFieldExtractor(HTMLParser):
         elif normalized_label in {"paineis", "painel"}:
             self._panel_description = value
             self._merge_panel_data(value)
+            if not self._scan_labeled_panel_value(value) and not _numbers(value):
+                # Painéis sem nenhum número (ex.: só `A CONFIRMAR`): preservado
+                # para as versões estruturadas o aceitarem ou recusarem.
+                self._panel_text["descricaoTexto"] = _safe_text(value)
         elif "quantidade" in normalized_label and ("painel" in normalized_label or "painei" in normalized_label):
             self._merge_panel_data(value, quantity=True)
+            self._note_pending_panel_text("quantidadeTexto", value)
         elif "potencia" in normalized_label and "painel" in normalized_label:
             self._merge_panel_data(value, panel_power=True)
+            self._note_pending_panel_text("potenciaWpTexto", value)
         elif "potencia" in normalized_label and ("calculada" in normalized_label or "calculo" in normalized_label):
             self.fields["potenciaKwpCalculada"] = self._first_number(value)
         elif "potencia" in normalized_label and ("declarada" in normalized_label or "instalada" in normalized_label):
@@ -1094,9 +1123,16 @@ class _LegacyFieldExtractor(HTMLParser):
         elif normalized_label in {"potencia kwp", "potencia", "potencia total"}:
             self.fields["potenciaKwp"] = self._first_number(value)
             self.fields["potenciaKwpRaw"] = value
+        elif "controlador" in normalized_label:
+            self.fields["controlador"] = value
+        elif "pasta" in normalized_label and "projet" in normalized_label:
+            self.fields["pastaProjeto"] = value
+        elif "anos" in normalized_label and (" o m" in f" {normalized_label}" or "manutencao" in normalized_label):
+            self.fields["omAnos"] = value
         elif "inversor" in normalized_label:
             rows = self._parse_inverter_rows(table_rows or [])
             self.fields["inversores"] = rows if rows else value
+            self._inverter_table = (self._inverter_headers_valid(table_rows or []), value, table_rows or [])
         elif "bateria" in normalized_label:
             self.fields["baterias"] = value
         elif "backup" in normalized_label:
@@ -1107,8 +1143,6 @@ class _LegacyFieldExtractor(HTMLParser):
             self.fields["carregadoresVe"] = value
         elif "tipo" in normalized_label and "instalacao" in normalized_label:
             self.fields["tipoInstalacao"] = value
-        elif "controlador" in normalized_label:
-            self.fields["controlador"] = value
         elif "outro equipamento" in normalized_label or "outros equipamento" in normalized_label:
             self.fields["outroEquipamento"] = value
         elif "injecao" in normalized_label:
@@ -1173,6 +1207,86 @@ class _LegacyFieldExtractor(HTMLParser):
                 self._panel_data["quantidade"] = _as_int_or_float(values[0])
         self.fields["paineis"] = dict(self._panel_data)
 
+    def _scan_labeled_panel_value(self, value: str) -> bool:
+        """v15+: `Quantidade: <b>N</b> · Potência unitária (Wp): <b>N</b>` seguido
+        da descrição gerada pelo formulário (`Potência pico total: … · N × M Wp`).
+
+        Só escreve em estado próprio (`_panel_labeled_*`): o resultado é usado em
+        `finalize()` apenas nas versões estruturadas, para que o caminho v10–v12
+        (`_merge_panel_data`) fique exatamente como era. Cada valor termina no
+        separador estrutural `·`/`|`, no início da descrição `Potência pico` ou
+        no fim; um valor não numérico (ex.: `A CONFIRMAR`) fica em texto."""
+        flags = re.IGNORECASE | re.DOTALL
+        quantity = re.search(r"quantidade\s*:?\s*(.*?)\s*(?=[·|]|pot[eê]ncia|$)", value, flags)
+        power = re.search(
+            r"pot[eê]ncia\s+unit[aá]ria\s*(?:\(\s*wp\s*\))?\s*:?\s*(.*?)\s*(?=[·|]|pot[eê]ncia\s+pico|$)",
+            value,
+            flags,
+        )
+        if not quantity and not power:
+            return False
+        self._panel_labeled_claimed = True
+        for match, key in ((quantity, "quantidade"), (power, "potenciaWp")):
+            if not match:
+                continue
+            # Travessão separador (seguido de espaço) sai; um `-` colado ao
+            # número é o sinal dele ("-3" não é "3").
+            text = re.sub(r"^[-–—]\s+", "", match.group(1).strip())
+            text = re.sub(r"[\s,;–—-]+$", "", text)
+            if not text:
+                continue
+            leading = re.match(r"([-+]?\d[\d.,]*)\s*(.*)$", text, re.DOTALL)
+            parsed = _parse_number(leading.group(1)) if leading else None
+            if parsed is not None and leading is not None:
+                self._panel_labeled_data[key] = _as_int_or_float(parsed) if key == "quantidade" else parsed
+                if not re.fullmatch(r"(?:wp|w|un\.?|unidades?)?", leading.group(2).strip(), re.IGNORECASE):
+                    self._panel_labeled_text[f"{key}Texto"] = _safe_text(text)
+            else:
+                self._panel_labeled_text[f"{key}Texto"] = _safe_text(text)
+        return True
+
+    def _note_pending_panel_text(self, key: str, value: str) -> None:
+        """Campo de painéis separado sem número (ex.: `A CONFIRMAR`): guarda o
+        texto para as versões estruturadas o preservarem ou recusarem."""
+        if value and not _numbers(value):
+            self._panel_text[key] = _safe_text(value)
+
+    @staticmethod
+    def _inverter_headers_valid(rows: list[list[str]]) -> bool:
+        if len(rows) < 2:
+            return False
+        headers = [_normalize_label(cell) for cell in rows[0]]
+        has_model = any("modelo" in header or "inversor" in header for header in headers)
+        has_quantity = any("quantidade" in header or header in {"qtd", "quant", "qty"} for header in headers)
+        return has_model and has_quantity
+
+    @staticmethod
+    def _parse_structured_inverter_rows(rows: list[list[str]]) -> list[dict[str, int | float | str]]:
+        """Linhas v15+: nada é descartado. Uma quantidade não numérica fica em
+        `quantidadeTexto` (a validação aceita só o marcador `A CONFIRMAR`) e
+        uma linha com conteúdo mas sem modelo mantém `modelo` vazio para ser
+        recusada de forma explícita."""
+        headers = [_normalize_label(cell) for cell in rows[0]]
+        model_index = next(i for i, header in enumerate(headers) if "modelo" in header or "inversor" in header)
+        quantity_index = next(
+            i for i, header in enumerate(headers) if "quantidade" in header or header in {"qtd", "quant", "qty"}
+        )
+        parsed: list[dict[str, int | float | str]] = []
+        for row in rows[1:]:
+            if not any(cell.strip() for cell in row):
+                continue
+            model = row[model_index].strip() if model_index < len(row) else ""
+            quantity_text = row[quantity_index].strip() if quantity_index < len(row) else ""
+            item: dict[str, int | float | str] = {"modelo": model}
+            quantity = re.fullmatch(r"([-+]?\d[\d.,]*)\s*(?:un\.?|x)?", quantity_text, re.IGNORECASE)
+            number = _parse_number(quantity.group(1)) if quantity else None
+            if number is not None:
+                item["quantidade"] = _as_int_or_float(number)
+            elif quantity_text:
+                item["quantidadeTexto"] = _safe_text(quantity_text)
+            parsed.append(item)
+        return parsed
+
     @staticmethod
     def _parse_inverter_rows(rows: list[list[str]]) -> list[dict[str, int | float | str]]:
         if len(rows) < 2:
@@ -1199,11 +1313,19 @@ class _LegacyFieldExtractor(HTMLParser):
         return parsed
 
     def finalize(self) -> None:
-        footer = _normalize_label(" ".join(self._footer_parts))
+        raw_footer = " ".join(self._footer_parts)
+        footer = _normalize_label(raw_footer)
         match = re.search(r"(?:versao|version)\s*(?:do formulario)?\s*[:\-]?\s*v\s*(\d+)\b", footer)
         if match is None:
             match = re.search(r"\bv\s*(\d+)\b", footer)
         self.form_version = match.group(1) if match else "10"
+        if match:
+            # `_normalize_label` apaga a pontuação ("v15.1" → "v15 1"); um
+            # sufixo decimal tem de manter a versão completa para ser rejeitada
+            # em vez de ser truncada silenciosamente para a versão inteira.
+            decimal = re.search(rf"\bv\s*{self.form_version}((?:\.\d+)+)(?![\w.])", raw_footer, re.IGNORECASE)
+            if decimal:
+                self.form_version += decimal.group(1)
 
         role = self.fields.get("funcao")
         qualifier = self.fields.pop("funcaoOutra", None)
@@ -1217,11 +1339,28 @@ class _LegacyFieldExtractor(HTMLParser):
         elif role and qualifier and _normalize_label(str(role)) != _normalize_label(str(qualifier)):
             self.fields["funcao"] = f"{role} — {qualifier}"
 
+        if self.form_version in STRUCTURED_FORM_VERSIONS and self._inverter_table is not None:
+            headers_valid, raw_inverters, inverter_rows = self._inverter_table
+            if not headers_valid:
+                # Sem cabeçalhos Modelo/Qtd. a tabela não é a estrutura v15+:
+                # fica como texto e a validação semântica rejeita-a.
+                self.fields["inversores"] = raw_inverters
+            else:
+                self.fields["inversores"] = self._parse_structured_inverter_rows(inverter_rows) or raw_inverters
+
         if self._panel_data:
             if self.form_version == "10" and self._panel_description and set(self._panel_data) >= {"quantidade", "potenciaWp"}:
                 self.fields["paineis"] = {"descricao": self._panel_description}
             else:
                 self.fields["paineis"] = dict(self._panel_data)
+        if self.form_version in STRUCTURED_FORM_VERSIONS and (self._panel_labeled_claimed or self._panel_text):
+            if self._panel_labeled_claimed:
+                # O formato rotulado do formulário substitui o que o caminho
+                # genérico (pensado para texto livre) tenha inferido do mesmo campo.
+                for key in ("quantidade", "potenciaWp"):
+                    self._panel_data.pop(key, None)
+                self._panel_data.update(self._panel_labeled_data)
+            self.fields["paineis"] = {**self._panel_data, **self._panel_labeled_text, **self._panel_text}
 
         panel = self.fields.get("paineis")
         if isinstance(panel, dict) and panel.get("quantidade") is not None and panel.get("potenciaWp") is not None:
@@ -1426,6 +1565,8 @@ def _validate_payload_types(payload: object) -> None:
         "injecao": 128,
         "om": 10_000,
         "controlador": 10_000,
+        "omAnos": 256,
+        "pastaProjeto": 512,
         "urgencia": 10_000,
         "observacoes": 10_000,
         "divergenciasHelioscope": 10_000,
@@ -1555,6 +1696,96 @@ def _validate_payload_types(payload: object) -> None:
         raise _validation_error("upacExistente", "esperado booleano ou texto")
 
 
+_PENDING_VALUE_LABELS = frozenset({"a confirmar"})
+
+
+def _validate_structured_form_semantics(payload: dict, form_version: str) -> None:
+    """Valida a estrutura e os valores dos formulários v15/v16.
+
+    O número da versão não basta: os campos presentes têm de ter a forma
+    que o formulário produz (painéis com quantidade e potência unitária,
+    inversores como tabela Modelo/Qtd., flags coerentes). Campos opcionais
+    continuam opcionais; só o que existe é verificado."""
+
+    def fail(field: str, message: str) -> NotesImportError:
+        return NotesImportError(f"Formulário v{form_version} inválido — campo '{field}': {message}.")
+
+    def is_positive_number(value: object) -> bool:
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+
+    def is_pending(value: object) -> bool:
+        return isinstance(value, str) and _normalize_label(value) in _PENDING_VALUE_LABELS
+
+    paineis = payload.get("paineis")
+    if paineis is not None:
+        if not isinstance(paineis, dict) or "descricao" in paineis:
+            raise fail("paineis", "esperado quantidade e potência unitária (Wp) estruturadas")
+        if not set(paineis) <= {"quantidade", "potenciaWp", "quantidadeTexto", "potenciaWpTexto", "descricaoTexto"}:
+            raise fail("paineis", "chaves inesperadas")
+        if paineis.get("descricaoTexto") is not None and not is_pending(paineis["descricaoTexto"]):
+            raise fail("paineis.descricaoTexto", "esperado números ou 'A CONFIRMAR'")
+        quantity = paineis.get("quantidade")
+        power = paineis.get("potenciaWp")
+        # O par 0/0 é o "sem painéis" do formulário (instalação sem fotovoltaico);
+        # um zero isolado, ou zero com o outro valor positivo, continua inválido.
+        no_panels = _is_zero_number(quantity) and _is_zero_number(power)
+        if not no_panels:
+            if quantity is not None and not (is_positive_number(quantity) and float(quantity).is_integer()):
+                raise fail("paineis.quantidade", "esperado inteiro positivo")
+            if power is not None and not is_positive_number(power):
+                raise fail("paineis.potenciaWp", "esperado número positivo")
+        # Um valor não numérico só é aceite se for o marcador conhecido, e
+        # nunca em simultâneo com o número: o marcador é preservado nas notas.
+        for key in ("quantidade", "potenciaWp"):
+            text = paineis.get(f"{key}Texto")
+            if text is None:
+                continue
+            if paineis.get(key) is not None:
+                raise fail(f"paineis.{key}Texto", "texto adicional junto do valor numérico")
+            if not is_pending(text):
+                raise fail(f"paineis.{key}Texto", "esperado número ou 'A CONFIRMAR'")
+
+    inversores = payload.get("inversores")
+    if isinstance(inversores, str):
+        if not is_pending(inversores):
+            raise fail("inversores", "esperada tabela com colunas Modelo e Qtd.")
+    elif isinstance(inversores, list):
+        for index, item in enumerate(inversores):
+            field = f"inversores[{index}]"
+            if not isinstance(item, dict) or not set(item) <= {"modelo", "quantidade", "quantidadeTexto"}:
+                raise fail(field, "esperado modelo e quantidade")
+            quantity = item.get("quantidade")
+            text = item.get("quantidadeTexto")
+            if quantity is not None and text is not None:
+                raise fail(f"{field}.quantidadeTexto", "texto adicional junto do valor numérico")
+            if quantity is not None:
+                if not is_positive_number(quantity):
+                    raise fail(f"{field}.quantidade", "esperado número positivo")
+            elif text is None:
+                raise fail(f"{field}.quantidade", "quantidade em falta (use um número ou 'A CONFIRMAR')")
+            elif not is_pending(text):
+                raise fail(f"{field}.quantidade", "esperado número ou 'A CONFIRMAR'")
+    elif inversores is not None:
+        raise fail("inversores", "esperada tabela com colunas Modelo e Qtd.")
+
+    for key in ("baterias", "controlador", "omAnos", "pastaProjeto"):
+        value = payload.get(key)
+        if value is not None and not isinstance(value, str):
+            raise fail(key, "esperado texto")
+
+    # Presente (inclusive 0) e com quantidade × potência conhecidas: tem de coincidir.
+    calculated = payload.get("potenciaKwpCalculada")
+    if (
+        isinstance(paineis, dict)
+        and paineis.get("quantidade") is not None
+        and paineis.get("potenciaWp") is not None
+        and calculated is not None
+    ):
+        expected = float(paineis["quantidade"]) * float(paineis["potenciaWp"]) / 1000
+        if abs(float(calculated) - expected) > 0.01:
+            raise fail("potenciaKwpCalculada", "não corresponde a quantidade × potência unitária")
+
+
 def validate_payload(payload: dict) -> str:
     """Valida tipos, limites e mínimos e devolve a versão do formulário."""
     _validate_payload_types(payload)
@@ -1568,6 +1799,9 @@ def validate_payload(payload: dict) -> str:
             f"Versão do formulário {form_version!r} não é compatível com este importador "
             f"(versões aceites: {', '.join(sorted(COMPATIBLE_FORM_VERSIONS))})."
         )
+
+    if form_version in STRUCTURED_FORM_VERSIONS:
+        _validate_structured_form_semantics(payload, form_version)
 
     cliente = payload.get("cliente")
     if not isinstance(cliente, str) or not cliente.strip():
@@ -1606,9 +1840,16 @@ def _normalize_phone(value: str | None) -> str | None:
     return digits or None
 
 
+def _is_zero_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value == 0
+
+
 def _panel_values(value: object) -> dict:
     if isinstance(value, dict):
         result = dict(value)
+        if _is_zero_number(result.get("quantidade")) and _is_zero_number(result.get("potenciaWp")):
+            # "Sem painéis" (quantidade 0 e potência unitária 0): não há dados de painéis.
+            return {}
         if result.get("quantidade") is not None and result.get("potenciaWp") is not None:
             return result
         description = result.get("descricao")
@@ -1697,6 +1938,8 @@ def map_payload_to_fields(payload: dict, *, already_sanitized: bool = False) -> 
         ("RGPD", "rgpd"),
         ("Backup", "backup"),
         ("Controlador", "controlador"),
+        ("Anos de O&M", "omAnos"),
+        ("Pasta do projeto em Projects", "pastaProjeto"),
         ("Potência calculada (kWp)", "potenciaKwpCalculada"),
         ("Potência declarada (kWp)", "potenciaKwpDeclarada"),
         ("Outro equipamento", "outroEquipamento"),
@@ -1708,6 +1951,25 @@ def map_payload_to_fields(payload: dict, *, already_sanitized: bool = False) -> 
         value = payload.get(key)
         if value not in (None, ""):
             extra_notes_parts.append(f"{label}: {_safe_text(str(value))}")
+    # Marcadores `A CONFIRMAR` (v15+) vão para as notas de proveniência: o
+    # valor numérico em falta nunca desaparece sem rasto.
+    pending_panels = payload.get("paineis")
+    if isinstance(pending_panels, dict):
+        for key, label in (
+            ("descricaoTexto", "Painéis"),
+            ("quantidadeTexto", "Painéis — quantidade"),
+            ("potenciaWpTexto", "Painéis — potência unitária (Wp)"),
+        ):
+            if pending_panels.get(key):
+                extra_notes_parts.append(f"{label}: {_safe_text(str(pending_panels[key]))}")
+    pending_inverters = payload.get("inversores")
+    if isinstance(pending_inverters, list):
+        for item in pending_inverters:
+            if isinstance(item, dict) and item.get("quantidadeTexto"):
+                model = _safe_text(str(item.get("modelo") or ""))
+                extra_notes_parts.append(
+                    f"Inversores — quantidade {_safe_text(str(item['quantidadeTexto']))}: {model}"
+                )
     additional_people = []
     for person in (payload.get("contactos") or [])[1:]:
         if not isinstance(person, dict) or not person.get("nome"):
