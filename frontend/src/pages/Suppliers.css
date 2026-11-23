@@ -38,3 +38,83 @@
     flex: 1 1 calc(50% - 8px);
   }
 }
+
+/* Contactos: empresa à esquerda (sob o nome), pessoa de contacto destacada à direita. */
+.contact-line__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.contact-line__link svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.suppliers-page .table th.col-person {
+  min-width: 220px;
+}
+
+.supplier-person {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.supplier-person + .supplier-person {
+  margin-top: 8px;
+}
+
+.supplier-person__name {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.supplier-person__dept {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.supplier-person--primary {
+  padding: 8px 12px;
+  border-left: 3px solid var(--brand-fill, currentColor);
+  border-radius: 0 8px 8px 0;
+  background: var(--brand-soft, var(--surface-2));
+  font-size: 0.95rem;
+}
+
+.supplier-person--primary .supplier-person__name {
+  font-size: 1rem;
+}
+
+.supplier-person--primary .contact-line__link svg {
+  color: var(--brand-text, currentColor);
+}
+
+.supplier-person--secondary {
+  padding: 0 12px 0 15px;
+  font-size: 0.85rem;
+}
+
+.supplier-person--secondary .supplier-person__name {
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  /* Cartão: a pessoa de contacto ocupa a largura toda, alinhada à esquerda. */
+  .suppliers-page .table td.supplier-person-cell {
+    display: block;
+    text-align: left;
+  }
+
+  .suppliers-page .table td.supplier-person-cell::before {
+    float: none;
+    display: block;
+    max-width: none;
+    margin: 0 0 4px;
+  }
+}

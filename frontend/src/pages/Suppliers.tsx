@@ -30,6 +30,56 @@ export function toApiFilters(f: Filters): SupplierFilters {
   };
 }
 
+const telHref = (phone: string) => `tel:${phone.replace(/[^\d+]/g, "")}`;
+
+function PhoneLink({ phone }: { phone: string }) {
+  return (
+    <a className="contact-line__link" href={telHref(phone)}>
+      <Icon name="phone" size={14} />
+      <span>{phone}</span>
+    </a>
+  );
+}
+
+function MailLink({ email }: { email: string }) {
+  return (
+    <a className="contact-line__link" href={`mailto:${email}`}>
+      <Icon name="mail" size={14} />
+      <span>{email}</span>
+    </a>
+  );
+}
+
+// Pessoas de contacto do fornecedor. A primeira tem mais destaque; o texto
+// livre legado (`contact`) só aparece quando não há pessoas estruturadas.
+function ContactPeople({ supplier }: { supplier: Supplier }) {
+  const people = supplier.contacts;
+  if (people.length === 0) {
+    return supplier.contact ? (
+      <div className="supplier-person supplier-person--primary">
+        <strong className="supplier-person__name">{supplier.contact}</strong>
+      </div>
+    ) : (
+      <span className="muted">—</span>
+    );
+  }
+  return (
+    <>
+      {people.map((c, index) => (
+        <div
+          key={c.id ?? `${c.name}-${index}`}
+          className={`supplier-person ${index === 0 ? "supplier-person--primary" : "supplier-person--secondary"}`}
+        >
+          <strong className="supplier-person__name">{c.name}</strong>
+          {c.department && <span className="supplier-person__dept">{c.department}</span>}
+          {c.phone && <PhoneLink phone={c.phone} />}
+          {c.email && <MailLink email={c.email} />}
+        </div>
+      ))}
+    </>
+  );
+}
+
 export default function Suppliers() {
   const { can } = useSession();
   const { notify } = useToast();
@@ -180,9 +230,8 @@ export default function Suppliers() {
                 <thead>
                   <tr>
                     <th scope="col" className="col-main">Fornecedor</th>
+                    <th scope="col" className="col-person">Pessoa de contacto</th>
                     <th scope="col">Tipos de material</th>
-                    <th scope="col">Telefone</th>
-                    <th scope="col">Email</th>
                     <th scope="col">Localização</th>
                     {canManage && <th scope="col">Ações</th>}
                   </tr>
@@ -199,37 +248,31 @@ export default function Suppliers() {
                         >
                           {s.name}
                         </button>
-                        <span className="cell-sub">
-                          {s.website && (
+                        {s.website && (
+                          <span className="cell-sub">
                             <a href={s.website} target="_blank" rel="noreferrer noopener">
                               {s.website.replace(/^https?:\/\//i, "").replace(/\/$/, "")}
                             </a>
-                          )}
-                          {s.contact && <> {s.website ? "· " : ""}{s.contact}</>}
-                        </span>
-                        {s.contacts.map((c) => (
-                          <span key={c.id ?? c.name} className="cell-sub">
-                            <strong>{c.name}</strong>
-                            {c.department && <> ({c.department})</>}
-                            {c.phone && (
-                              <>
-                                {" · "}
-                                <a href={`tel:${c.phone.replace(/[^\d+]/g, "")}`}>{c.phone}</a>
-                              </>
-                            )}
-                            {c.email && (
-                              <>
-                                {" · "}
-                                <a href={`mailto:${c.email}`}>{c.email}</a>
-                              </>
-                            )}
                           </span>
-                        ))}
+                        )}
+                        {s.phone && (
+                          <span className="cell-sub contact-line">
+                            <PhoneLink phone={s.phone} />
+                          </span>
+                        )}
+                        {s.email && (
+                          <span className="cell-sub contact-line">
+                            <MailLink email={s.email} />
+                          </span>
+                        )}
                         {!s.is_active && (
                           <div style={{ marginTop: 4 }}>
                             <Badge>Inativo</Badge>
                           </div>
                         )}
+                      </td>
+                      <td className="supplier-person-cell">
+                        <ContactPeople supplier={s} />
                       </td>
                       <td>
                         {s.material_types.length > 0 ? (
@@ -244,10 +287,6 @@ export default function Suppliers() {
                           <span className="muted">—</span>
                         )}
                       </td>
-                      <td className="nowrap">
-                        {s.phone ? <a href={`tel:${s.phone.replace(/[^\d+]/g, "")}`}>{s.phone}</a> : <span className="muted">—</span>}
-                      </td>
-                      <td>{s.email ? <a href={`mailto:${s.email}`}>{s.email}</a> : <span className="muted">—</span>}</td>
                       <td>
                         {s.address ? <span>{s.address}</span> : <span className="muted">—</span>}
                         {s.maps_url && (
