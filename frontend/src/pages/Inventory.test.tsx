@@ -10,6 +10,69 @@ import { StaticSessionProvider } from "../session/SessionContext";
 import { ToastProvider } from "../components/Toast";
 import { renderWithProviders } from "../test/render";
 import Inventory, { LEGACY_INVENTORY_CATEGORY_ALIASES } from "./Inventory";
+
+const CATEGORY_KEYS: Record<string, string> = {
+  Painéis: "paineis",
+  Inversores: "inversores",
+  Baterias: "baterias",
+  Estruturas: "estruturas",
+  "Cabos DC": "cabosdc",
+  "Cabos AC": "cabosac",
+  "Proteções/Quadros": "protecoesquadros",
+  Conectores: "conectores",
+  "Monitorização/Comunicação": "monitorizacaocomunicacao",
+  Consumíveis: "consumiveis",
+  Outros: "outros",
+  "Outros/Sem categoria": "outrossemcategoria",
+  "Cabo DC": "cabosdc",
+  "Cabo AC": "cabosac",
+  Painel: "paineis",
+  "Painéis solares": "paineis",
+  Inversor: "inversores",
+  Bateria: "baterias",
+  Estrutura: "estruturas",
+  Conector: "conectores",
+  Consumível: "consumiveis",
+  Ferramentas: "ferramentas",
+  "Ferramentas Plus": "ferramentasplus",
+  "Módulos antigos": "modulosantigos",
+  "FERRAMENTAS!!!": "ferramentas",
+  Straße: "strasse",
+  STRASSE: "strasse",
+};
+
+const CATEGORY_SLUGS: Record<string, string> = {
+  Painéis: "paineis",
+  Inversores: "inversores",
+  Baterias: "baterias",
+  Estruturas: "estruturas",
+  "Cabos DC": "cabos-dc",
+  "Cabos AC": "cabos-ac",
+  "Proteções/Quadros": "protecoes-quadros",
+  Conectores: "conectores",
+  "Monitorização/Comunicação": "monitorizacao-comunicacao",
+  Consumíveis: "consumiveis",
+  Outros: "outros-sem-categoria",
+  "Outros/Sem categoria": "outros-sem-categoria--legado",
+  Ferramentas: "ferramentas",
+  "Ferramentas Plus": "ferramentas-plus",
+  "Módulos antigos": "modulos-antigos",
+};
+
+function categoryInfo(
+  name: string,
+  overrides: Partial<{ has_custom_image: boolean; image_version: string | null; category_key: string; slug: string }> = {},
+) {
+  const category_key = CATEGORY_KEYS[name] ?? name;
+  return {
+    name,
+    category_key,
+    slug: CATEGORY_SLUGS[name] ?? category_key,
+    has_custom_image: false,
+    image_version: null,
+    ...overrides,
+  };
+}
 import type { Perm } from "../generated/permissions";
 
 const api = vi.hoisted(() => ({
@@ -18,6 +81,7 @@ const api = vi.hoisted(() => ({
   listInventoryMovements: vi.fn(),
   listInventoryCategories: vi.fn(),
   listInventoryCategoryDetails: vi.fn(),
+  createInventoryCategory: vi.fn(),
   getInventoryCategoryImageBlob: vi.fn(),
   getInventoryItemPhotoBlob: vi.fn(),
   listInventoryItemDocuments: vi.fn(),
@@ -131,15 +195,15 @@ beforeEach(() => {
   ]);
   api.listInventoryCategoryDetails.mockResolvedValue([
     "Painéis", "Inversores", "Baterias", "Estruturas", "Cabos DC", "Cabos AC",
-    "Proteções/Quadros", "Conectores", "Monitorização/Comunicação", "Consumíveis", "Outros/Sem categoria",
-  ].map((name) => ({ name, has_custom_image: false, image_version: null })));
+    "Proteções/Quadros", "Conectores", "Monitorização/Comunicação", "Consumíveis", "Outros",
+  ].map((name) => categoryInfo(name)));
   api.getInventoryCategoryImageBlob.mockResolvedValue(new Blob(["category"], { type: "image/png" }));
   api.getInventoryItemPhotoBlob.mockResolvedValue(new Blob(["item"], { type: "image/jpeg" }));
   api.listInventoryItemDocuments.mockResolvedValue([]);
   api.getInventoryItemDocumentBlob.mockResolvedValue(new Blob(["pdf"], { type: "application/pdf" }));
   api.uploadInventoryItemDocument.mockResolvedValue({});
   api.deleteInventoryItemDocument.mockResolvedValue(undefined);
-  api.uploadInventoryCategoryImage.mockResolvedValue({ name: "Inversores", has_custom_image: true, image_version: "v2", content_type: "image/png" });
+  api.uploadInventoryCategoryImage.mockResolvedValue({ ...categoryInfo("Inversores", { has_custom_image: true, image_version: "v2" }), content_type: "image/png" });
   api.deleteInventoryCategoryImage.mockResolvedValue(undefined);
   api.uploadInventoryItemPhoto.mockResolvedValue({ has_photo: true, content_type: "image/jpeg" });
   api.deleteInventoryItemPhoto.mockResolvedValue(undefined);
@@ -473,6 +537,272 @@ describe("Inventário", () => {
     expect(screen.getByText((_, element) => element?.tagName === "SPAN" && element.textContent?.trim() === "Categoria: Sem categoria")).toBeInTheDocument();
   });
 
+  it("cria uma categoria vazia para quem gere o catálogo e apresenta o cartão", async () => {
+    api.createInventoryCategory.mockResolvedValue(categoryInfo("Ferramentas"));
+    renderWithProviders(<Inventory />, {
+      me: makeMe({ permissions: ["inventory.view", "inventory.manage_catalog"] }),
+    });
+    await screen.findByRole("button", { name: /Criar categoria/ });
+    fireEvent.click(screen.getByRole("button", { name: /Criar categoria/ }));
+    const dialog = screen.getByRole("dialog", { name: "Criar categoria" });
+    fireEvent.change(within(dialog).getByLabelText("Nome da categoria"), { target: { value: "Ferramentas" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^Criar categoria$/ }));
+
+    await waitFor(() => expect(api.createInventoryCategory).toHaveBeenCalledWith("Ferramentas"));
+    const card = await screen.findByRole("button", { name: /Ferramentas/ });
+    expect(within(card).getByText("0 artigos")).toBeInTheDocument();
+    expect(within(card).getByText(/— em stock/)).toBeInTheDocument();
+    fireEvent.click(card);
+    expect(await screen.findByRole("navigation", { name: "Trilho de navegação" })).toHaveTextContent("Ferramentas");
+    expect(await screen.findByText("Ainda não há artigos em Ferramentas.")).toBeInTheDocument();
+  });
+
+  it("mostra e permite gerir a imagem de categorias quando ainda não há artigos", async () => {
+    api.listInventoryItems.mockResolvedValue([]);
+    api.createInventoryCategory.mockResolvedValue(categoryInfo("Ferramentas"));
+    api.uploadInventoryCategoryImage.mockResolvedValue({ ...categoryInfo("Ferramentas", { has_custom_image: true, image_version: "tools-v1" }), content_type: "image/png" });
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:empty-category-image");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    renderWithProviders(<Inventory />, {
+      me: makeMe({ permissions: ["inventory.view", "inventory.manage_catalog"] }),
+    });
+
+    await screen.findByText("Sem artigos de inventário ainda.");
+    fireEvent.click(screen.getByRole("button", { name: /Criar categoria/ }));
+    const dialog = screen.getByRole("dialog", { name: "Criar categoria" });
+    fireEvent.change(within(dialog).getByLabelText("Nome da categoria"), { target: { value: "Ferramentas" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^Criar categoria$/ }));
+
+    const card = await screen.findByRole("button", {
+      name: (accessibleName) => accessibleName.includes("Ferramentas") && !accessibleName.includes("Ferramentas Plus") && accessibleName.includes("Ver artigos"),
+    });
+    expect(within(card).getByText("0 artigos")).toBeInTheDocument();
+    fireEvent.click(card);
+    expect(await screen.findByText("Ainda não há artigos em Ferramentas.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Selecionar imagem de categoria"), {
+      target: { files: [new File(["category image"], "ferramentas.png", { type: "image/png" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar imagem de categoria" }));
+    await waitFor(() => expect(api.uploadInventoryCategoryImage).toHaveBeenCalledWith("Ferramentas", expect.any(File)));
+  });
+
+  it("preserva categorias Unicode no cartão e na lista de artigos", async () => {
+    api.listInventoryCategoryDetails.mockResolvedValue([
+      categoryInfo("工具"),
+    ]);
+    api.listInventoryItems.mockResolvedValue([
+      item({ id: "unicode-item", name: "Alicate 工具", category: "工具" }),
+    ]);
+    renderWithProviders(<Inventory />, { me: makeMe({ permissions: ["inventory.view"] }) });
+
+    const card = await screen.findByRole("button", { name: /工具.*Ver artigos/ });
+    expect(within(card).getByText("1 artigo")).toBeInTheDocument();
+    fireEvent.click(card);
+    expect(screen.getByRole("heading", { name: "工具" })).toBeInTheDocument();
+    expect(await screen.findByText("Alicate 工具")).toBeInTheDocument();
+  });
+
+  it("mantém a categoria legada reservada separada de Outros nos cartões e filtros", async () => {
+    api.listInventoryCategoryDetails.mockResolvedValue([
+      categoryInfo("Outros"),
+      categoryInfo("Outros/Sem categoria", {
+        category_key: "outrossemcategoria",
+        slug: "outros-sem-categoria--legado",
+        has_custom_image: true,
+        image_version: "legacy-image-v1",
+      }),
+    ]);
+    api.listInventoryItems.mockResolvedValue([
+      item({ id: "other-item", sku: "OTHER-ITEM", name: "Artigo Outros", category: "Outros", category_key: "outros" }),
+      item({
+        id: "legacy-other-item",
+        sku: "LEGACY-OTHER-ITEM",
+        name: "Artigo literal legado",
+        category: "Outros/Sem categoria",
+        category_key: "outrossemcategoria",
+      }),
+    ]);
+    renderWithHistory("/inventory");
+
+    const legacyCard = await screen.findByRole("button", {
+      name: (accessibleName) => accessibleName.includes("Outros/Sem categoria (legado)") && accessibleName.includes("Ver artigos"),
+    });
+    expect(within(legacyCard).getByText("1 artigo")).toBeInTheDocument();
+    fireEvent.click(legacyCard);
+    await waitFor(() => expect(screen.getByTestId("router-search")).toHaveTextContent("?categoria=outros-sem-categoria--legado"));
+    expect(await screen.findByText("Artigo literal legado")).toBeInTheDocument();
+    expect(screen.queryByText("Artigo Outros")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Inventário" }));
+    const otherCard = await screen.findByRole("button", {
+      name: (accessibleName) => accessibleName.startsWith("Outros/Sem categoria ")
+        && !accessibleName.includes("(legado)")
+        && accessibleName.includes("Ver artigos"),
+    });
+    expect(within(otherCard).getByText("1 artigo")).toBeInTheDocument();
+    fireEvent.click(otherCard);
+    await waitFor(() => expect(screen.getByTestId("router-search")).toHaveTextContent("?categoria=outros-sem-categoria"));
+    expect(await screen.findByText("Artigo Outros")).toBeInTheDocument();
+    expect(screen.queryByText("Artigo literal legado")).not.toBeInTheDocument();
+  });
+
+  it("usa a chave e imagem do backend para juntar Straße/STRASSE num único cartão", async () => {
+    api.listInventoryCategoryDetails.mockResolvedValue([
+      categoryInfo("Straße", { category_key: "strasse", slug: "strasse", has_custom_image: true, image_version: "unicode-v1" }),
+      categoryInfo("工具"),
+      categoryInfo("材料"),
+    ]);
+    api.listInventoryItems.mockResolvedValue([
+      item({ id: "street-1", name: "Artigo Straße", category: "Straße", category_key: "strasse" }),
+      item({ id: "street-2", name: "Artigo STRASSE", category: "STRASSE", category_key: "strasse" }),
+      item({ id: "tools", name: "Artigo ferramentas", category: "工具", category_key: "工具" }),
+      item({ id: "materials", name: "Artigo materiais", category: "材料", category_key: "材料" }),
+    ]);
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:shared-strasse-image");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    renderWithProviders(<Inventory />, { me: makeMe({ permissions: ["inventory.view"] }) });
+    await screen.findByRole("combobox", { name: "Pesquisar inventário" });
+
+    const streetCards = await screen.findAllByRole("button", {
+      name: (accessibleName) => accessibleName.includes("Straße") && accessibleName.includes("Ver artigos"),
+    });
+    expect(streetCards).toHaveLength(1);
+    expect(within(streetCards[0]).getByText("2 artigos")).toBeInTheDocument();
+    expect(streetCards[0].querySelector("img.inventory-illustration--photo")).toHaveAttribute("src", "blob:shared-strasse-image");
+    expect(screen.getAllByRole("button", { name: /工具.*Ver artigos/ })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /材料.*Ver artigos/ })).toHaveLength(1);
+    await waitFor(() => expect(api.getInventoryCategoryImageBlob).toHaveBeenCalledWith("Straße", "unicode-v1"));
+    expect(api.getInventoryCategoryImageBlob.mock.calls.filter(([name]) => name === "STRASSE")).toHaveLength(0);
+  });
+
+  it("filtra Straße e STRASSE pelo slug canónico e mantém categorias chinesas distintas", async () => {
+    api.listInventoryCategoryDetails.mockResolvedValue([
+      categoryInfo("Straße", { category_key: "strasse", slug: "strasse" }),
+      categoryInfo("工具"),
+      categoryInfo("材料"),
+    ]);
+    api.listInventoryItems.mockResolvedValue([
+      item({ id: "street-1", name: "Artigo Straße", category: "Straße", category_key: "strasse" }),
+      item({ id: "street-2", name: "Artigo STRASSE", category: "STRASSE", category_key: "strasse" }),
+      item({ id: "tools", name: "Artigo ferramentas", category: "工具", category_key: "工具" }),
+      item({ id: "materials", name: "Artigo materiais", category: "材料", category_key: "材料" }),
+    ]);
+    renderWithHistory("/inventory?categoria=strasse");
+
+    expect(await screen.findByRole("heading", { name: "Straße" })).toBeInTheDocument();
+    expect(screen.getByText("Artigo Straße")).toBeInTheDocument();
+    expect(screen.getByText("Artigo STRASSE")).toBeInTheDocument();
+    expect(screen.queryByText("Artigo ferramentas")).not.toBeInTheDocument();
+    expect(screen.queryByText("Artigo materiais")).not.toBeInTheDocument();
+  });
+
+  it("abre categorias chinesas por slug do backend e não mistura os seus filtros", async () => {
+    api.listInventoryCategoryDetails.mockResolvedValue([
+      categoryInfo("Straße", { category_key: "strasse", slug: "strasse" }),
+      categoryInfo("工具"),
+      categoryInfo("材料"),
+    ]);
+    api.listInventoryItems.mockResolvedValue([
+      item({ id: "street", name: "Artigo de rua", category: "Straße", category_key: "strasse" }),
+      item({ id: "tools", name: "Artigo ferramentas", category: "工具", category_key: "工具" }),
+      item({ id: "materials", name: "Artigo materiais", category: "材料", category_key: "材料" }),
+    ]);
+    renderWithHistory("/inventory");
+    await openCategory("材料");
+
+    expect(await screen.findByTestId("router-search")).toHaveTextContent("?categoria=%E6%9D%90%E6%96%99");
+    expect(screen.getByRole("heading", { name: "材料" })).toBeInTheDocument();
+    expect(screen.getByText("Artigo materiais")).toBeInTheDocument();
+    expect(screen.queryByText("Artigo ferramentas")).not.toBeInTheDocument();
+    expect(screen.queryByText("Artigo de rua")).not.toBeInTheDocument();
+  });
+
+  it("associa e gere imagens por nome canónico persistido sem misturar categorias", async () => {
+    api.listInventoryCategoryDetails.mockResolvedValue([
+      categoryInfo("Ferramentas", { has_custom_image: true, image_version: "tools-v1" }),
+      categoryInfo("Ferramentas Plus", { has_custom_image: true, image_version: "plus-v1" }),
+    ]);
+    api.listInventoryItems.mockResolvedValue([
+      item({ id: "tools-item", name: "Alicate", category: "FERRAMENTAS!!!" }),
+      item({ id: "plus-item", name: "Chave", category: "Ferramentas Plus" }),
+    ]);
+    api.uploadInventoryCategoryImage.mockResolvedValue({ ...categoryInfo("Ferramentas", { has_custom_image: true, image_version: "tools-v2" }), content_type: "image/png" });
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:canonical-category-image");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    renderWithProviders(<Inventory />, {
+      me: makeMe({ permissions: ["inventory.view", "inventory.manage_catalog"] }),
+    });
+
+    await waitFor(() => {
+      expect(api.getInventoryCategoryImageBlob).toHaveBeenCalledWith("Ferramentas", "tools-v1");
+      expect(api.getInventoryCategoryImageBlob).toHaveBeenCalledWith("Ferramentas Plus", "plus-v1");
+    });
+    expect(api.getInventoryCategoryImageBlob.mock.calls.some(([name]) => name === "FERRAMENTAS!!!")).toBe(false);
+    const card = await screen.findByRole("button", {
+      name: (accessibleName) => accessibleName.includes("Ferramentas") && !accessibleName.includes("Ferramentas Plus") && accessibleName.includes("Ver artigos"),
+    });
+    fireEvent.click(card);
+    fireEvent.change(await screen.findByLabelText("Selecionar imagem de categoria"), {
+      target: { files: [new File(["tools image"], "tools.png", { type: "image/png" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar imagem de categoria" }));
+    await waitFor(() => expect(api.uploadInventoryCategoryImage).toHaveBeenCalledWith("Ferramentas", expect.any(File)));
+    fireEvent.click(screen.getByRole("button", { name: "Remover imagem de categoria" }));
+    await waitFor(() => expect(api.deleteInventoryCategoryImage).toHaveBeenCalledWith("Ferramentas"));
+    expect(api.deleteInventoryCategoryImage).not.toHaveBeenCalledWith("Ferramentas Plus");
+  });
+
+  it("não oferece criação de categorias a leitores", async () => {
+    renderWithProviders(<Inventory />, { me: makeMe({ permissions: ["inventory.view"] }) });
+    await screen.findByRole("combobox", { name: "Pesquisar inventário" });
+    expect(screen.queryByRole("button", { name: /Criar categoria/ })).not.toBeInTheDocument();
+  });
+
+  it("mostra categorias legadas só com pontuação com rótulos acessíveis e grupos separados", async () => {
+    const exclamationKey = "!legacy:synthetic-exclamation";
+    const questionKey = "!legacy:synthetic-question";
+    api.listInventoryItems.mockResolvedValue([
+      item({
+        id: "legacy-punctuation-one",
+        sku: "LEGACY-PUNCTUATION-ONE",
+        name: "Artigo legado de exclamação",
+        category: "!!!",
+        category_key: exclamationKey,
+      }),
+      item({
+        id: "legacy-punctuation-two",
+        sku: "LEGACY-PUNCTUATION-TWO",
+        name: "Artigo legado de interrogação",
+        category: "???",
+        category_key: questionKey,
+      }),
+    ]);
+    api.listInventoryCategoryDetails.mockResolvedValue([
+      categoryInfo("!!!", {
+        category_key: exclamationKey,
+        slug: "!legacy-slug:synthetic-exclamation",
+        has_custom_image: true,
+        image_version: "legacy-image-v1",
+      }),
+      categoryInfo("???", {
+        category_key: questionKey,
+        slug: "!legacy-slug:synthetic-question",
+      }),
+    ]);
+
+    renderWithProviders(<Inventory />, { me: makeMe({ permissions: ["inventory.view"] }) });
+
+    expect(await screen.findByRole("button", { name: /!!! \(legado\).*Ver artigos/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /\?\?\? \(legado\).*Ver artigos/ })).toBeInTheDocument();
+    await openCategory("!!! (legado)");
+
+    expect(await screen.findByText("Artigo legado de exclamação")).toBeInTheDocument();
+    expect(screen.queryByText("Artigo legado de interrogação")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(api.getInventoryCategoryImageBlob).toHaveBeenCalledWith("!!!", "legacy-image-v1"),
+    );
+  });
+
   it("mantém a tabela de aliases sincronizada com o backend", () => {
     expect(LEGACY_INVENTORY_CATEGORY_ALIASES).toEqual({
       "Cabo AC": "Cabos AC",
@@ -500,9 +830,9 @@ describe("Inventário", () => {
 
   it("gere a imagem da categoria aberta e atualiza os metadados sem botões dentro do cartão", async () => {
     api.listInventoryCategoryDetails.mockResolvedValue([
-      { name: "Cabos DC", has_custom_image: false, image_version: null },
+      categoryInfo("Cabos DC"),
     ]);
-    api.uploadInventoryCategoryImage.mockResolvedValue({ name: "Cabos DC", has_custom_image: true, image_version: "v2", content_type: "image/png" });
+    api.uploadInventoryCategoryImage.mockResolvedValue({ ...categoryInfo("Cabos DC", { has_custom_image: true, image_version: "v2" }), content_type: "image/png" });
     vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:category-image");
     vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     renderWithHistory("/inventory", ["inventory.view", "inventory.manage_catalog"]);
@@ -536,7 +866,7 @@ describe("Inventário", () => {
 
   it("mantém a imagem da categoria aberta só para leitura sem inventory.manage_catalog", async () => {
     api.listInventoryCategoryDetails.mockResolvedValue([
-      { name: "Cabos DC", has_custom_image: true, image_version: "version-1" },
+      categoryInfo("Cabos DC", { has_custom_image: true, image_version: "version-1" }),
     ]);
     vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:category-readonly");
     vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
@@ -551,7 +881,7 @@ describe("Inventário", () => {
 
   it("não oferece gestão na categoria agregada sem correspondência canónica da API", async () => {
     api.listInventoryCategoryDetails.mockResolvedValue([
-      { name: "Outros", has_custom_image: false, image_version: null },
+      categoryInfo("Outros"),
     ]);
     renderWithProviders(<Inventory />, {
       me: makeMe({ permissions: ["inventory.view", "inventory.manage_catalog"] }),
@@ -564,8 +894,8 @@ describe("Inventário", () => {
 
   it("usa has_custom_image e os metadados devolvidos pelo backend na ficha do artigo", async () => {
     api.listInventoryCategoryDetails.mockResolvedValue([
-      { name: "Inversores", has_custom_image: true, image_version: "2026-10-22T12:00:00Z" },
-      { name: "Painéis", has_custom_image: false, image_version: null },
+      categoryInfo("Inversores", { has_custom_image: true, image_version: "2026-10-22T12:00:00Z" }),
+      categoryInfo("Painéis"),
     ]);
     api.listInventoryItems.mockResolvedValue([item({
       id: "visual-item",

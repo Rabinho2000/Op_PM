@@ -170,6 +170,8 @@ def _headers(email: str) -> dict[str, str]:
         ("post", "/api/installers", {"name": "X"}, "Sem permissão para gerir instaladores e equipas."),
         ("get", "/api/migration/import-batches", None, "Sem permissão para ver dados de migração."),
         ("get", "/api/inventory/categories", None, "Sem permissão: Permissão em falta: inventory.view"),
+        ("post", "/api/inventory/categories", {"name": "Ferramentas"},
+         "Sem permissão: Permissão em falta: inventory.manage_catalog"),
         ("get", "/api/support-delegations", None, "Permissão em falta: admin.manage_users"),
     ],
 )

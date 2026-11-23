@@ -35,6 +35,7 @@ from app.models.installer_access import (  # noqa: F401
 )
 from app.models.inventory import (  # noqa: F401
     InventoryCatalogHistory,
+    InventoryCategory,
     InventoryItem,
     InventoryLocation,
     InventoryMovement,

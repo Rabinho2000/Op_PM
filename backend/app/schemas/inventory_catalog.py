@@ -1,14 +1,33 @@
 """Schemas do catálogo de inventário e da entrada de stock inicial."""
 from __future__ import annotations
 
+import hashlib
+import unicodedata
 import uuid
 from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.inventory import INVENTORY_CATEGORIES, LOCATION_TYPES
+from app.models.inventory import (
+    INVENTORY_CATEGORIES,
+    INVENTORY_CATEGORY_KEY_MAX_LENGTH,
+    INVENTORY_CATEGORY_NAME_MAX_LENGTH,
+    LOCATION_TYPES,
+)
 from app.utils.text import alnum_casefold_key
+
+# Rótulo do grupo "Outros" no frontend; reservado para não o confundir com a
+# categoria incorporada "Outros".
+RESERVED_UNASSIGNED_INVENTORY_CATEGORY = "Outros/Sem categoria"
+
+
+class InventoryCategoryError(ValueError):
+    """Erro base das regras do catálogo de categorias."""
+
+
+class InventoryCategoryKeyTooLongError(InventoryCategoryError):
+    """Nome cuja chave normalizada excede o limite persistível."""
 
 
 def _clean_required_text(value: str, field_name: str) -> str:
@@ -20,11 +39,89 @@ def _clean_required_text(value: str, field_name: str) -> str:
     return value
 
 
-def _category_key(value: str) -> str:
+def inventory_category_key(value: str) -> str:
+    """Chave canónica partilhada pela API para categorias de inventário."""
     return alnum_casefold_key(value)
 
 
-_CATEGORY_BY_KEY = {_category_key(category): category for category in INVENTORY_CATEGORIES}
+def inventory_category_key_for_read(value: str) -> str:
+    """Chave de leitura sempre limitada e não vazia.
+
+    Valores legados fora do limite do nome, com chave vazia (só pontuação) ou
+    com chave expandida demasiado longa recebem uma identidade opaca
+    (`!legacy:<sha256>`) que não colide com chaves normalizadas (só contêm
+    letras/números).
+    """
+    if len(value) <= INVENTORY_CATEGORY_NAME_MAX_LENGTH:
+        key = inventory_category_key(value)
+        if key and len(key) <= INVENTORY_CATEGORY_KEY_MAX_LENGTH:
+            return key
+    digest = hashlib.sha256(value.encode("utf-8", errors="surrogatepass")).hexdigest()
+    return f"!legacy:{digest}"
+
+
+def is_reserved_unassigned_inventory_category(value: object) -> bool:
+    """Reconhece o rótulo reservado para o grupo incorporado ``Outros``."""
+    return isinstance(value, str) and inventory_category_key_for_read(
+        value
+    ) == inventory_category_key(RESERVED_UNASSIGNED_INVENTORY_CATEGORY)
+
+
+def inventory_category_slug(value: str) -> str:
+    """Slug de URL derivado da mesma equivalência Unicode do backend."""
+    safe_key = inventory_category_key_for_read(value)
+    if safe_key.startswith("!legacy:"):
+        return f"!legacy-slug:{safe_key.removeprefix('!legacy:')}"
+    if safe_key == inventory_category_key("Outros"):
+        return "outros-sem-categoria"
+    if is_reserved_unassigned_inventory_category(value):
+        # Separador duplo: identifica sem colisão a linha legada literal.
+        return "outros-sem-categoria--legado"
+    slug: list[str] = []
+    for char in unicodedata.normalize("NFKD", value).casefold():
+        if unicodedata.category(char).startswith("M"):
+            continue
+        if char.isalnum():
+            slug.append(char)
+        elif slug and slug[-1] != "-":
+            slug.append("-")
+    return "".join(slug).strip("-")
+
+
+def normalize_inventory_category_name(value: object, *, required: bool = False) -> str | None:
+    """Limpa espaços; valida tipo e presença. Não limita o tamanho (ver abaixo)."""
+    if value is None:
+        if required:
+            raise ValueError("A categoria é obrigatória.")
+        return None
+    if not isinstance(value, str):
+        raise ValueError("A categoria tem de ser texto.")
+    cleaned = " ".join(value.split())
+    if not cleaned:
+        if required:
+            raise ValueError("A categoria é obrigatória.")
+        return None
+    return cleaned
+
+
+def validate_inventory_category_input(value: object, *, required: bool = False) -> str | None:
+    """Valida uma entrada nova/alterada antes de consultar ou escrever no catálogo."""
+    cleaned = normalize_inventory_category_name(value, required=required)
+    if cleaned is None:
+        return None
+    if len(cleaned) > INVENTORY_CATEGORY_NAME_MAX_LENGTH:
+        raise InventoryCategoryKeyTooLongError("A categoria excede o limite permitido.")
+    key = inventory_category_key(cleaned)
+    if not key:
+        raise ValueError("A categoria tem de conter pelo menos uma letra ou número.")
+    if len(key) > INVENTORY_CATEGORY_KEY_MAX_LENGTH:
+        raise InventoryCategoryKeyTooLongError(
+            "A categoria excede o limite após normalização Unicode."
+        )
+    return cleaned
+
+
+_CATEGORY_BY_KEY = {inventory_category_key(category): category for category in INVENTORY_CATEGORIES}
 
 # Valores legados frequentes aceites na entrada e agrupados no mesmo grupo
 # canónico no frontend. A base de dados mantém os valores antigos até serem
@@ -41,30 +138,44 @@ LEGACY_INVENTORY_CATEGORY_ALIASES: dict[str, str] = {
     "Consumível": "Consumíveis",
 }
 _ALIAS_CATEGORY_BY_KEY = {
-    _category_key(alias): canonical
+    inventory_category_key(alias): canonical
     for alias, canonical in LEGACY_INVENTORY_CATEGORY_ALIASES.items()
 }
 
 
 def normalize_inventory_category(value: object) -> str | None:
-    if value is None:
-        return None
+    """Limpa o texto e resolve categorias de origem e aliases para o nome canónico.
+
+    Não decide se uma categoria desconhecida existe: isso depende do catálogo
+    na BD e é verificado em `app.services.inventory_categories`.
+    """
+    cleaned = normalize_inventory_category_name(value)
+    if cleaned is None or len(cleaned) > INVENTORY_CATEGORY_NAME_MAX_LENGTH:
+        return cleaned
+    key = inventory_category_key_for_read(cleaned)
+    return _CATEGORY_BY_KEY.get(key) or _ALIAS_CATEGORY_BY_KEY.get(key) or cleaned
+
+
+def normalize_inventory_category_for_read(value: object) -> str | None:
+    """Como `normalize_inventory_category`, para valores já gravados (nunca falha)."""
     if not isinstance(value, str):
-        raise ValueError("A categoria tem de ser texto.")
-    cleaned = " ".join(value.split())
-    if not cleaned:
         return None
-    category = (
-        _CATEGORY_BY_KEY.get(_category_key(cleaned))
-        or _ALIAS_CATEGORY_BY_KEY.get(_category_key(cleaned))
-    )
-    if category is None:
-        raise ValueError("Categoria inválida. Escolha uma categoria da lista.")
-    return category
+    return normalize_inventory_category(value)
 
 
 def _validate_category(value: str | None) -> str | None:
     return normalize_inventory_category(value)
+
+
+class InventoryCategoryCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=INVENTORY_CATEGORY_NAME_MAX_LENGTH)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name(cls, value: object) -> str:
+        return normalize_inventory_category_name(value, required=True) or ""
 
 
 class InventoryItemCreate(BaseModel):
@@ -73,7 +184,7 @@ class InventoryItemCreate(BaseModel):
     sku: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=256)
     unit: str = Field(default="un", min_length=1, max_length=16)
-    category: str | None = Field(default=None, max_length=64)
+    category: str | None = Field(default=None, max_length=INVENTORY_CATEGORY_NAME_MAX_LENGTH)
     manufacturer: str | None = Field(default=None, max_length=128)
     model: str | None = Field(default=None, max_length=128)
     subcategory: str | None = Field(default=None, max_length=100)
@@ -120,7 +231,7 @@ class InventoryItemUpdate(BaseModel):
     sku: str | None = Field(default=None, max_length=64)
     name: str | None = Field(default=None, max_length=256)
     unit: str | None = Field(default=None, max_length=16)
-    category: str | None = Field(default=None, max_length=64)
+    category: str | None = Field(default=None, max_length=INVENTORY_CATEGORY_NAME_MAX_LENGTH)
     manufacturer: str | None = Field(default=None, max_length=128)
     model: str | None = Field(default=None, max_length=128)
     subcategory: str | None = Field(default=None, max_length=100)

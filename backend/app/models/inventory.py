@@ -30,6 +30,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -53,8 +54,13 @@ INVENTORY_OWNERS: frozenset[str] = frozenset(
     {INVENTORY_OWNER_SOLCOR, INVENTORY_OWNER_VERDE_MILENAR}
 )
 
-# Vocabulário canónico do catálogo. A coluna continua nullable e sem enum na
-# BD para não exigir migração nem reescrever categorias legadas.
+INVENTORY_CATEGORY_NAME_MAX_LENGTH = 64
+INVENTORY_CATEGORY_KEY_MAX_LENGTH = 256
+
+# Categorias de origem do catálogo. Semeiam a tabela `inventory_categories`
+# (migração) e fixam a ordem de apresentação; o vocabulário em uso é a união
+# destas com as categorias criadas pelos utilizadores. `inventory_items.category`
+# continua nullable e sem CHECK de vocabulário na BD: a validação é do serviço.
 INVENTORY_CATEGORIES: tuple[str, ...] = (
     "Painéis",
     "Inversores",
@@ -68,6 +74,33 @@ INVENTORY_CATEGORIES: tuple[str, ...] = (
     "Consumíveis",
     "Outros",
 )
+
+
+
+class InventoryCategory(Base):
+    """Categoria do catálogo, independente de artigos e movimentos.
+
+    O nome é a chave natural do registo. ``normalized_key`` impede variantes
+    que só diferem em maiúsculas, acentos ou pontuação sem introduzir IDs
+    artificiais no catálogo.
+    """
+
+    __tablename__ = "inventory_categories"
+    __table_args__ = (
+        CheckConstraint("length(trim(name)) > 0", name="ck_inventory_categories_name_nonempty"),
+        CheckConstraint("length(normalized_key) > 0", name="ck_inventory_categories_key_nonempty"),
+        UniqueConstraint("normalized_key", name="uq_inventory_categories_normalized_key"),
+    )
+
+    name: Mapped[str] = mapped_column(String(INVENTORY_CATEGORY_NAME_MAX_LENGTH), primary_key=True)
+    normalized_key: Mapped[str] = mapped_column(String(INVENTORY_CATEGORY_KEY_MAX_LENGTH), nullable=False)
+    created_by_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("people.id"), nullable=True
+    )
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
 
 # Localização física/lógica de stock (ver InventoryLocation.location_type).
 LOCATION_TYPE_CENTRAL = "central"
@@ -188,12 +221,10 @@ class InventoryItem(UUIDPk, TimestampMixin, Base):
     sku: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     unit: Mapped[str] = mapped_column(String(16), default="un")
-    # Categoria livre (não um enum fechado na BD): o catálogo sugere um
-    # conjunto inicial no frontend (inversores, painéis, cabo DC, cabo AC,
-    # contadores de produção, meters, estrutura, comunicação — pedido do
-    # responsável, backlog F1) mas permite adicionar categorias novas sem
-    # migração, porque o próprio pedido exige essa extensibilidade.
-    category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Texto sem CHECK/FK na BD: o vocabulário é aberto (tabela
+    # `inventory_categories` + categorias de origem) e validado no serviço, para
+    # não rejeitar nem reescrever categorias legadas já gravadas.
+    category: Mapped[str | None] = mapped_column(String(INVENTORY_CATEGORY_NAME_MAX_LENGTH), nullable=True)
     manufacturer: Mapped[str | None] = mapped_column(String(128), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     subcategory: Mapped[str | None] = mapped_column(String(100), nullable=True)

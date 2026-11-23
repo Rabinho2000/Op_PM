@@ -20,15 +20,19 @@ from app.models.inventory import (
 )
 from app.models.project import Project
 from app.models.supplier import Supplier
-from app.schemas.inventory_catalog import normalize_inventory_category
+from app.schemas.inventory_catalog import (
+    LEGACY_INVENTORY_CATEGORY_ALIASES,
+    InventoryCategoryError,
+    inventory_category_key_for_read,
+    normalize_inventory_category,
+    normalize_inventory_category_for_read,
+)
+from app.services.inventory_categories import resolve_inventory_category
 
 
 def inventory_item_section_label(item: InventoryItem) -> str:
     """Etiqueta canónica da subsecção, calculada a partir dos dados do artigo."""
-    try:
-        category = normalize_inventory_category(item.category)
-    except ValueError:
-        category = item.category
+    category = normalize_inventory_category_for_read(item.category)
     subcategory = (item.subcategory or "").strip()
     manufacturer = (item.manufacturer or "").strip()
     model = (item.model or "").strip()
@@ -130,6 +134,10 @@ def create_inventory_item(
     data: dict[str, object],
     actor_person_id: uuid.UUID | None,
 ) -> InventoryItem:
+    try:
+        data = {**data, "category": resolve_inventory_category(db, data.get("category"))}
+    except InventoryCategoryError as exc:
+        raise CatalogError(str(exc)) from exc
     sku = str(data["sku"])
     if _find_item_by_sku(db, sku) is not None:
         raise DuplicateCatalogValueError("Já existe um artigo com este SKU.")
@@ -185,6 +193,25 @@ def deactivate_inventory_item(
     )
 
 
+def _resolve_category_change(db: Session, item: InventoryItem, requested: object) -> object:
+    """Categoria a gravar num PATCH.
+
+    Reenviar o valor já gravado é sempre aceite (um formulário que reenvia uma
+    categoria histórica desconhecida ou demasiado longa edita os outros campos
+    sem a alterar); os aliases legados reenviados são promovidos ao nome
+    canónico. Qualquer outra categoria tem de existir no vocabulário.
+    """
+    if requested == item.category and isinstance(requested, str):
+        is_alias = inventory_category_key_for_read(requested) in {
+            inventory_category_key_for_read(alias) for alias in LEGACY_INVENTORY_CATEGORY_ALIASES
+        }
+        return normalize_inventory_category(requested) if is_alias else requested
+    try:
+        return resolve_inventory_category(db, requested)
+    except InventoryCategoryError as exc:
+        raise CatalogError(str(exc)) from exc
+
+
 def update_inventory_item_atomic(
     db: Session,
     *,
@@ -202,14 +229,7 @@ def update_inventory_item_atomic(
     db.refresh(locked_item)
     item = locked_item
     if "category" in changes:
-        requested_category = changes["category"]
-        try:
-            changes = {**changes, "category": normalize_inventory_category(requested_category)}
-        except ValueError as exc:
-            # Permitir que um formulário que reenvie uma categoria histórica
-            # desconhecida sem alteração edite os outros campos do artigo.
-            if requested_category != item.category:
-                raise CatalogError(str(exc)) from exc
+        changes = {**changes, "category": _resolve_category_change(db, item, changes["category"])}
     if "sku" in changes:
         sku = str(changes["sku"])
         if _find_item_by_sku(db, sku, exclude_id=item.id) is not None:

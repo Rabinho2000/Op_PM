@@ -1341,6 +1341,7 @@ export interface InventoryItem {
   name: string;
   unit: string;
   category: string | null;
+  category_key?: string | null;
   manufacturer?: string | null;
   model?: string | null;
   subcategory?: string | null;
@@ -1363,6 +1364,9 @@ export const listInventoryCategories = () => apiGet<string[]>("/api/inventory/ca
 
 export interface InventoryCategoryImageInfo {
   name: string;
+  /** Chave canónica e slug de URL calculados pelo servidor (mesma equivalência Unicode). */
+  category_key: string;
+  slug: string;
   has_custom_image: boolean;
   image_version: string | null;
 }
@@ -1373,6 +1377,9 @@ export interface InventoryCategoryImageUploadResult extends InventoryCategoryIma
 
 export const listInventoryCategoryDetails = () =>
   apiGet<InventoryCategoryImageInfo[]>("/api/inventory/categories/details");
+
+export const createInventoryCategory = (name: string) =>
+  apiPost<InventoryCategoryImageInfo>("/api/inventory/categories", { name });
 
 export type InventoryItemDocumentKind = "datasheet" | "manual" | "guia" | "outro";
 
