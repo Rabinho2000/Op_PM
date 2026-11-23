@@ -31,7 +31,7 @@ export function InventoryCategoryImage({
   imageVersion: string | null;
   accountKey: string;
   canManage?: boolean;
-  onImageChanged?: (result: InventoryCategoryImageInfo) => void;
+  onImageChanged?: (result: Pick<InventoryCategoryImageInfo, "name" | "has_custom_image" | "image_version">) => void;
 }) {
   const [hasCustomImageLocal, setHasCustomImageLocal] = useState(hasCustomImage);
   const [imageVersionLocal, setImageVersionLocal] = useState(imageVersion);

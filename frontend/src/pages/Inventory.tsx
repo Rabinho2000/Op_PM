@@ -3,6 +3,7 @@ import { FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, useCallback, u
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   createCentralMovement,
+  createInventoryCategory,
   createInventoryItem,
   createInventoryLocation,
   createOpeningStock,
@@ -246,8 +247,21 @@ function canonicalInventoryCategory(category: string | null | undefined): string
   return LEGACY_CATEGORY_BY_KEY.get(key) ?? category;
 }
 
+/** Só para quando o servidor não envia o slug (ex.: categorias de origem sem detalhe). */
 function inventoryCategorySlug(category: string): string {
   return normalizeSearchText(category).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+const UNASSIGNED_CATEGORY_LABEL = "Outros/Sem categoria";
+const LEGACY_UNASSIGNED_CATEGORY_KEY = "outrossemcategoria";
+
+/** Rótulo de um grupo: "Outros" é o grupo sem categoria; valores legados ambíguos ganham «(legado)». */
+function inventoryCategoryDisplayLabel(detail: Pick<InventoryCategoryImageInfo, "name" | "category_key">): string {
+  if (detail.name === "Outros") return UNASSIGNED_CATEGORY_LABEL;
+  if (detail.category_key.startsWith("!legacy:") || detail.category_key === LEGACY_UNASSIGNED_CATEGORY_KEY) {
+    return `${detail.name} (legado)`;
+  }
+  return detail.name;
 }
 
 function highlightSearchTerm(text: string, query: string) {
@@ -381,7 +395,7 @@ function InventoryArticleList({
     <CategoryIllustration category={group.label} />
     <div className="inventory-article__main">
       <div className="inventory-article__heading"><button type="button" className="btn btn--sm btn--ghost cell-title" aria-label={`Ver artigo ${item.name}`} onClick={() => onDetail(item)}>{item.name}</button>{!item.is_active ? <Badge tone="neutral">Inativo</Badge> : item.below_min_stock ? <Badge tone="danger" dot>Abaixo do mínimo</Badge> : null}</div>
-      <div className="inventory-article__meta"><span>Referência: <strong>{item.sku}</strong></span><span>Unidade: <strong>{item.unit}</strong></span>{group.label === "Outros/Sem categoria" && <span>Categoria: <strong>{item.category ?? "Sem categoria"}</strong></span>}</div>
+      <div className="inventory-article__meta"><span>Referência: <strong>{item.sku}</strong></span><span>Unidade: <strong>{item.unit}</strong></span>{group.label.startsWith(UNASSIGNED_CATEGORY_LABEL) && <span>Categoria: <strong>{item.category ?? "Sem categoria"}</strong></span>}</div>
       <div className="inventory-article__stock">
         <span>Stock: <strong>{formatQuantity(item.physical_stock, item.unit)} {item.unit}</strong></span>
         <span>Disponível: <strong>{formatQuantity(item.available_stock, item.unit)} {item.unit}</strong></span>
@@ -497,7 +511,7 @@ function ItemFormModal({
             value={category}
             onChange={(e) => setCategory(e.target.value)}
             maxLength={64}
-            placeholder="Escolha ou escreva uma categoria nova"
+            placeholder="Escolha uma categoria da lista (novas em «Criar categoria»)"
           />
           <datalist id="item-category-suggestions">
             {categories.map((categoryOption) => (
@@ -538,6 +552,64 @@ function ItemFormModal({
         <div className="field">
           <label htmlFor="item-lead-time">Prazo de fornecimento (dias)</label>
           <input id="item-lead-time" className="input" type="number" min="0" step="1" value={leadTime} onChange={(e) => setLeadTime(e.target.value)} />
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function CreateInventoryCategoryModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (category: InventoryCategoryImageInfo) => void;
+}) {
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    if (!name.trim()) {
+      setError("Indique o nome da categoria.");
+      return;
+    }
+    setSaving(true);
+    try {
+      onCreated(await createInventoryCategory(name.trim()));
+    } catch (err) {
+      setError(errorMessage(err, "Não foi possível criar a categoria."));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      title="Criar categoria"
+      onClose={onClose}
+      footer={<>
+        <button type="button" className="btn" onClick={onClose}>Cancelar</button>
+        <button type="submit" form="inventory-category-form" className="btn btn--primary" disabled={saving}>
+          {saving ? "A guardar…" : "Criar categoria"}
+        </button>
+      </>}
+    >
+      <form id="inventory-category-form" className="form-grid" onSubmit={(event) => void handleSubmit(event)}>
+        {error && <div className="span-2"><Alert tone="danger">{error}</Alert></div>}
+        <div className="field span-2">
+          <label htmlFor="inventory-category-name">Nome da categoria</label>
+          <input
+            id="inventory-category-name"
+            className="input"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            maxLength={64}
+            autoComplete="off"
+            required
+          />
+          <span className="field__hint">A categoria fica disponível no catálogo sem criar artigos nem alterar stock.</span>
         </div>
       </form>
     </Modal>
@@ -826,6 +898,7 @@ export default function Inventory() {
   currentAccountKeyRef.current = accountKey;
   const [items, setItems] = useState<InventoryItem[] | null>(null);
   const [categories, setCategories] = useState<string[]>([]);
+  const [creatingCategory, setCreatingCategory] = useState(false);
   const [categoryImages, setCategoryImages] = useState<InventoryCategoryImageInfo[]>([]);
   const [locations, setLocations] = useState<InventoryLocation[] | null>(null);
   const [movements, setMovements] = useState<InventoryMovement[] | null>(null);
@@ -863,25 +936,40 @@ export default function Inventory() {
   );
   const itemUnits = useMemo(() => new Map((items ?? []).map((item) => [item.id, item.unit])), [items]);
   const centralLocation = activeCentralLocations.length === 1 ? activeCentralLocations[0] : null;
+  const categoryModel = useMemo(() => {
+    const detailByLabel = new Map<string, InventoryCategoryImageInfo>();
+    const labelByKey = new Map<string, string>();
+    for (const detail of categoryImages) {
+      const label = inventoryCategoryDisplayLabel(detail);
+      if (detailByLabel.has(label)) continue;
+      detailByLabel.set(label, detail);
+      labelByKey.set(detail.category_key, label);
+    }
+    const builtIn = new Set<string>(INVENTORY_CATEGORY_ORDER);
+    const custom = [...detailByLabel.keys()]
+      .filter((label) => !builtIn.has(label))
+      .sort((left, right) => left.localeCompare(right, "pt-PT"));
+    return { labels: [...INVENTORY_CATEGORY_ORDER, ...custom] as string[], detailByLabel, labelByKey };
+  }, [categoryImages]);
   const selectedCategorySlug = searchParams.get("categoria");
-  const selectedCategory = INVENTORY_CATEGORY_ORDER.find((label) => inventoryCategorySlug(label) === selectedCategorySlug) ?? null;
-  const resultsMode = Boolean(searchParams.get("q")) && !selectedCategory;
-  const categoryImageByLabel = useMemo(
-    () => new Map(categoryImages.map((detail) => [canonicalInventoryCategory(detail.name), detail])),
-    [categoryImages],
+  const slugForCategory = useCallback(
+    (label: string) => categoryModel.detailByLabel.get(label)?.slug ?? inventoryCategorySlug(label),
+    [categoryModel],
   );
+  const selectedCategory = categoryModel.labels.find((label) => slugForCategory(label) === selectedCategorySlug) ?? null;
+  const resultsMode = Boolean(searchParams.get("q")) && !selectedCategory;
   const categoryForItem = useCallback((item: InventoryItem) => {
-    const category = canonicalInventoryCategory(item.category);
-    return INVENTORY_CATEGORY_ORDER.includes(category as typeof INVENTORY_CATEGORY_ORDER[number])
-      ? category
-      : "Outros/Sem categoria";
-  }, []);
+    const byKey = item.category_key ? categoryModel.labelByKey.get(item.category_key) : undefined;
+    if (byKey) return byKey;
+    const label = canonicalInventoryCategory(item.category);
+    return categoryModel.labels.includes(label) ? label : UNASSIGNED_CATEGORY_LABEL;
+  }, [categoryModel]);
   const catalogGroups = useMemo(() => {
-    const groups: InventoryCategoryGroup[] = INVENTORY_CATEGORY_ORDER.map((label) => ({ label, items: [] }));
+    const groups: InventoryCategoryGroup[] = categoryModel.labels.map((label) => ({ label, items: [] }));
     const groupsByLabel = new Map(groups.map((group) => [group.label, group]));
     for (const item of items ?? []) groupsByLabel.get(categoryForItem(item))?.items.push(item);
     return groups.sort((left, right) => Number(left.items.length === 0) - Number(right.items.length === 0));
-  }, [items, categoryForItem]);
+  }, [items, categoryModel, categoryForItem]);
   const visibleGroups = useMemo(
     () => hideEmptyCategories ? catalogGroups.filter((group) => group.items.length > 0) : catalogGroups,
     [catalogGroups, hideEmptyCategories],
@@ -893,11 +981,11 @@ export default function Inventory() {
   const searchOptions = searchResults.slice(0, 8);
   const showSearchSuggestions = searchFocused && searchInput.trim().length > 0 && !resultsMode;
   const resultGroups = useMemo(() => {
-    const groups: InventoryCategoryGroup[] = INVENTORY_CATEGORY_ORDER.map((label) => ({ label, items: [] }));
+    const groups: InventoryCategoryGroup[] = categoryModel.labels.map((label) => ({ label, items: [] }));
     const groupsByLabel = new Map(groups.map((group) => [group.label, group]));
     for (const item of searchResults) groupsByLabel.get(categoryForItem(item))?.items.push(item);
     return groups.filter((group) => group.items.length > 0);
-  }, [searchResults, categoryForItem]);
+  }, [searchResults, categoryModel, categoryForItem]);
 
   const load = useCallback(() => {
     setError(null);
@@ -980,7 +1068,7 @@ export default function Inventory() {
     setViewingItem(null);
     inspectorTriggerRef.current = null;
     focusInspectorAfterOpenRef.current = false;
-    setSearchParams({ categoria: inventoryCategorySlug(category) });
+    setSearchParams({ categoria: slugForCategory(category) });
     setSearchInput("");
     setSearchQuery("");
     setActiveSearchOption(-1);
@@ -1141,6 +1229,11 @@ export default function Inventory() {
           <>
             {ownerSelector}
             {canManageCatalog && (
+              <button type="button" className="btn" onClick={() => setCreatingCategory(true)}>
+                <Icon name="plus" size={16} /> Criar categoria
+              </button>
+            )}
+            {canManageCatalog && (
               <button type="button" className="btn" onClick={() => setCreatingItem(true)}>
                 <Icon name="plus" size={16} /> Criar artigo
               </button>
@@ -1232,9 +1325,8 @@ export default function Inventory() {
                   <label className="inventory-sort"><span>Ordenar artigos</span><select className="select" value={sort} onChange={(event) => setSort(event.target.value as InventorySort)}><option value="name">Nome</option><option value="stock">Stock</option></select></label>
                 </div>
                 {(() => {
-                  const imageInfo = categoryImages.find((detail) => detail.name === selectedCategory)
-                    ?? categoryImageByLabel.get(selectedCategory);
-                  const isCanonicalApiCategory = imageInfo?.name === selectedCategory;
+                  const imageInfo = categoryModel.detailByLabel.get(selectedCategory);
+                  const isCanonicalApiCategory = imageInfo !== undefined && imageInfo.name !== "Outros";
                   return <InventoryCategoryImage
                     category={imageInfo?.name ?? selectedCategory}
                     hasCustomImage={imageInfo?.has_custom_image ?? false}
@@ -1243,7 +1335,7 @@ export default function Inventory() {
                     canManage={canManageCatalog && isCanonicalApiCategory}
                     onImageChanged={(updatedImage) => {
                       if (currentOwnerRef.current !== owner || currentAccountKeyRef.current !== accountKey) return;
-                      setCategoryImages((current) => current.map((detail) => detail.name === updatedImage.name ? updatedImage : detail));
+                      setCategoryImages((current) => current.map((detail) => detail.name === updatedImage.name ? { ...detail, ...updatedImage } : detail));
                     }}
                   />;
                 })()}
@@ -1269,13 +1361,15 @@ export default function Inventory() {
             <div className="inventory-result-group__heading"><h3>{group.label}</h3><button type="button" className="btn btn--sm" onClick={() => openCategory(group.label)}>Ver categoria</button></div>
             <InventoryArticleList group={group} sort="name" canManageCatalog={canManageCatalog} canManageCentral={canManageCentral} onEdit={setEditingItem} onDetail={openItemDetail} onOpeningStock={setOpeningStockItem} onDeactivate={setDeactivatingItem} onReactivate={(item) => void reactivateItem(item)} />
           </section>)}
-        </section> : items.length === 0 ? <EmptyState icon="database" title="Sem artigos de inventário ainda." text={canManageCatalog ? "Crie o primeiro artigo para poder registar stock inicial." : "Um utilizador autorizado pode criar o catálogo."} action={canManageCatalog ? <button type="button" className="btn btn--primary" onClick={() => setCreatingItem(true)}><Icon name="plus" size={16} /> Criar artigo</button> : undefined} /> : <div className="inventory-category-grid">
+        </section> : <>
+          {items.length === 0 && <EmptyState icon="database" title="Sem artigos de inventário ainda." text={canManageCatalog ? "Crie o primeiro artigo para poder registar stock inicial." : "Um utilizador autorizado pode criar o catálogo."} action={canManageCatalog ? <button type="button" className="btn btn--primary" onClick={() => setCreatingItem(true)}><Icon name="plus" size={16} /> Criar artigo</button> : undefined} />}
+          <div className="inventory-category-grid">
           {visibleGroups.map((group) => {
             const itemCountLabel = `${group.items.length} ${group.items.length === 1 ? "artigo" : "artigos"}`;
-            const imageInfo = categoryImageByLabel.get(group.label);
+            const imageInfo = categoryModel.detailByLabel.get(group.label);
             return <button type="button" className={`inventory-category-card${group.items.length === 0 ? " inventory-category-card--empty" : ""}`} key={group.label} onClick={() => openCategory(group.label)}>
               <InventoryCategoryImage
-                category={group.label}
+                category={imageInfo?.name ?? group.label}
                 hasCustomImage={imageInfo?.has_custom_image ?? false}
                 imageVersion={imageInfo?.image_version ?? null}
                 accountKey={accountKey}
@@ -1286,7 +1380,8 @@ export default function Inventory() {
               <span className="inventory-category-card__action">Ver artigos <span aria-hidden="true">→</span></span>
             </button>;
           })}
-        </div>}
+          </div>
+        </>}
       </Card>
 
       <div className="section-gap" id="inventory-locations">
@@ -1370,6 +1465,19 @@ export default function Inventory() {
         >
           {itemDetailContent}
         </Modal>
+      )}
+      {creatingCategory && (
+        <CreateInventoryCategoryModal
+          onClose={() => setCreatingCategory(false)}
+          onCreated={(created) => {
+            setCreatingCategory(false);
+            setCategories((current) => current.includes(created.name) ? current : [...current, created.name]);
+            setCategoryImages((current) => current.some((detail) => detail.category_key === created.category_key)
+              ? current
+              : [...current, created]);
+            notify(`Categoria «${created.name}» criada.`, "success");
+          }}
+        />
       )}
       {creatingItem && (
         <ItemFormModal
