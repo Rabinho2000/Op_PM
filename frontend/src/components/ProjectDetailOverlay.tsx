@@ -25,7 +25,7 @@ export default function ProjectDetailOverlay() {
   }
 
   return (
-    <Modal title="Detalhe do projeto" onClose={close}>
+    <Modal title="Detalhe do projeto" size="xl" onClose={close}>
       <ProjectDetail />
     </Modal>
   );

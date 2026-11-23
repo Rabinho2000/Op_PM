@@ -36,6 +36,17 @@ describe("ProjectDetailOverlay", () => {
     document.body.style.overflow = "";
   });
 
+  it("abre o detalhe na variante larga do modal", () => {
+    render(
+      <MemoryRouter initialEntries={["/projects/p-1"]}>
+        <Routes>
+          <Route path="/projects/:projectId" element={<ProjectDetailOverlay />} />
+        </Routes>
+      </MemoryRouter>
+    );
+    expect(screen.getByRole("dialog", { name: "Detalhe do projeto" })).toHaveClass("modal--xl");
+  });
+
   it("fecha e regressa ao Works preservando filtros e janela", async () => {
     const refresh = vi.fn();
     window.addEventListener("op:works-project-refresh", refresh);
