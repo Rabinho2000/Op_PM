@@ -74,7 +74,7 @@ from sqlalchemy.schema import sort_tables_and_constraints
 EXCLUDED_TABLES = frozenset({"alembic_version"})
 # Tabelas que as próprias migrações Alembic semeiam (dados de referência).
 # Num destino acabado de migrar têm linhas, e isso não conta como "dados".
-SEEDED_TABLES = frozenset({"roles", "permissions", "role_permissions", "holidays"})
+SEEDED_TABLES = frozenset({"roles", "permissions", "role_permissions", "holidays", "inventory_categories"})
 SEEDED_SUFFIX = "_provisioning"
 
 DEFAULT_BATCH_SIZE = 1000

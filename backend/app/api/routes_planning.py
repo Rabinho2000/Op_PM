@@ -429,10 +429,8 @@ def update_event_endpoint(
             else update_calendar_event(db, event=event, changes=changes, ctx=ctx)
         )
     except PermissionError as exc:
-        db.rollback()
         raise HTTPException(status_code=403, detail=str(exc))
     except CalendarEventValidationError as exc:
-        db.rollback()
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     return _to_read(db, updated, ctx)
 
@@ -451,9 +449,7 @@ def cancel_event_endpoint(
     try:
         updated = cancel_calendar_event(db, event=event, ctx=ctx, whole_series=scope == "series")
     except PermissionError as exc:
-        db.rollback()
         raise HTTPException(status_code=403, detail=str(exc))
     except CalendarEventValidationError as exc:
-        db.rollback()
         raise HTTPException(status_code=exc.status_code, detail=str(exc))
     return _to_read(db, updated, ctx)
