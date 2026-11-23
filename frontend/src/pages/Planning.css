@@ -289,6 +289,57 @@
   white-space: nowrap;
 }
 
+.planning-event-chip__people {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 4px;
+}
+
+.planning-event-chip__avatar {
+  --avatar-hue: 210;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin-left: -6px;
+  /* O anel imita o fundo do chip para os avatares sobrepostos se separarem. */
+  border: 2px solid color-mix(in srgb, var(--planning-event-color, var(--surface)) 10%, var(--surface));
+  border-radius: 50%;
+  background: hsl(var(--avatar-hue) 55% 84%);
+  color: hsl(var(--avatar-hue) 60% 20%);
+  font-size: 0.58rem;
+  font-weight: 750;
+  line-height: 1;
+  box-sizing: border-box;
+}
+
+.planning-event-chip__avatar:first-child {
+  margin-left: 0;
+}
+
+.planning-event-chip__avatar--more {
+  --avatar-hue: 215;
+  width: auto;
+  min-width: 22px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-muted);
+}
+
+:root[data-theme="dark"] .planning-event-chip__avatar {
+  background: hsl(var(--avatar-hue) 38% 30%);
+  color: hsl(var(--avatar-hue) 70% 90%);
+}
+
+:root[data-theme="dark"] .planning-event-chip__avatar--more {
+  background: var(--surface-3);
+  color: var(--text-muted);
+}
+
 .planning-event-chip__source {
   display: inline-flex;
   align-items: center;

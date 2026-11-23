@@ -27,9 +27,10 @@ import {
 } from "../api/client";
 import Icon from "../components/Icon";
 import { useToast } from "../components/Toast";
-import { Alert, Avatar, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHeader, Tone } from "../components/ui";
+import { Alert, Avatar, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHeader, Tone, initials } from "../components/ui";
 import { useSession } from "../session/SessionContext";
 import { formatDatePt, lisbonWallClockToIso, todayIsoLisbon } from "../utils/dates";
+import { personHue } from "../utils/personColor";
 import { normalizeSearchText } from "../utils/text";
 import "./Planning.css";
 
@@ -437,6 +438,67 @@ function ParticipantSummary({ event, people }: { event: CalendarEvent; people: P
   );
 }
 
+export interface EventAssignee {
+  key: string;
+  name: string;
+}
+
+function pairPeople(ids: string[] | undefined, names: string[] | undefined): EventAssignee[] {
+  const cleanNames = (names ?? []).filter(Boolean);
+  const cleanIds = ids ?? [];
+  // O servidor devolve ids e nomes na mesma ordem; se o tamanho diferir (pessoa
+  // sem nome), a cor deriva do nome para não atribuir a pessoa errada.
+  return cleanNames.map((name, index) => ({
+    key: cleanIds.length === cleanNames.length ? cleanIds[index] : name,
+    name,
+  }));
+}
+
+// Responsáveis mostrados no chip: os participantes atribuídos; na falta deles,
+// os responsáveis do Processo (a visibilidade já foi aplicada pelo servidor).
+export function eventAssignees(event: CalendarEvent, people: Person[] = []): EventAssignee[] {
+  let result = pairPeople(event.assigned_to_person_ids, event.assigned_to_display_names);
+  if (result.length === 0 && event.assigned_to_display_name) {
+    result = [{ key: event.assigned_to_person_id ?? event.assigned_to_display_name, name: event.assigned_to_display_name }];
+  }
+  if (result.length === 0) {
+    result = dedupeIds([...(event.assigned_to_person_ids ?? []), event.assigned_to_person_id])
+      .map((id) => ({ key: id, name: people.find((person) => person.id === id)?.display_name ?? "" }))
+      .filter((entry) => entry.name);
+  }
+  if (result.length === 0) result = pairPeople(event.responsible_person_ids, event.responsible_display_names);
+  return result.filter((entry, index, all) => all.findIndex((other) => other.key === entry.key) === index);
+}
+
+const MAX_CHIP_AVATARS = 2;
+
+function EventAssigneeAvatars({ assignees }: { assignees: EventAssignee[] }) {
+  if (assignees.length === 0) return null;
+  const shown = assignees.slice(0, MAX_CHIP_AVATARS);
+  const extra = assignees.length - shown.length;
+  const label = `Responsáveis: ${assignees.map((assignee) => assignee.name).join(", ")}`;
+  return (
+    <span className="planning-event-chip__people" title={label} data-testid="planning-chip-people">
+      {shown.map((assignee) => (
+        <span
+          key={assignee.key}
+          className="planning-event-chip__avatar"
+          style={{ "--avatar-hue": personHue(assignee.key) } as CSSProperties}
+          title={assignee.name}
+          aria-hidden="true"
+        >
+          {initials(assignee.name)}
+        </span>
+      ))}
+      {extra > 0 && (
+        <span className="planning-event-chip__avatar planning-event-chip__avatar--more" title={label} aria-hidden="true">
+          {`+${extra}`}
+        </span>
+      )}
+    </span>
+  );
+}
+
 interface EventFormState {
   title: string;
   project_id: string;
@@ -826,22 +888,26 @@ function EventModal({
 function EventChip({
   event,
   categories,
+  people = [],
   onClick,
   as = "button",
 }: {
   event: CalendarEvent;
   categories: CalendarEventCategory[];
+  people?: Person[];
   onClick?: () => void;
   as?: "button" | "span";
 }) {
   const meta = eventCategoryMeta(event, categories);
-  const participants = event.assigned_to_display_names?.length ? event.assigned_to_display_names.join(", ") : event.assigned_to_display_name ?? "sem responsáveis";
+  const assignees = eventAssignees(event, people);
+  const participants = assignees.length > 0 ? assignees.map((assignee) => assignee.name).join(", ") : "sem responsáveis";
   const content = (
     <>
       <span className="planning-event-chip__dot" aria-hidden="true" />
       <span className="planning-event-chip__time">{formatTimePt(event.starts_at)}</span>
       {event.recurrence_rule === "weekly" && <span className="planning-event-chip__recurrence" aria-label="Série semanal">↻</span>}
       <span className="planning-event-chip__title">{event.title}</span>
+      <EventAssigneeAvatars assignees={assignees} />
     </>
   );
   const style = { "--planning-event-color": meta.color } as CSSProperties;
@@ -1204,20 +1270,20 @@ export default function Planning() {
             {visibleDays.filter((day) => (eventsByDay.get(day) ?? []).length > 0).map((day) => (
               <li key={day} className="list__item planning-list__day" data-testid="planning-day">
                 <div className="list__title">{formatDayHeaderPt(day)}</div>
-                <div className="planning-list__events">{(eventsByDay.get(day) ?? []).map((event) => <button key={event.id} type="button" className="planning-list__event" onClick={() => setDetailEvent(event)} onKeyDown={(keyboardEvent) => { if (keyboardEvent.key === "Enter") { keyboardEvent.preventDefault(); setDetailEvent(event); } }}><EventChip event={event} categories={categories} as="span" /><span className="planning-list__meta">{event.project_context_hidden ? "Projeto fora do seu âmbito" : event.project_name ?? "sem projeto"} · {eventCategoryMeta(event, categories).label} · <ParticipantSummary event={event} people={people} /></span></button>)}</div>
+                <div className="planning-list__events">{(eventsByDay.get(day) ?? []).map((event) => <button key={event.id} type="button" className="planning-list__event" onClick={() => setDetailEvent(event)} onKeyDown={(keyboardEvent) => { if (keyboardEvent.key === "Enter") { keyboardEvent.preventDefault(); setDetailEvent(event); } }}><EventChip event={event} categories={categories} people={people} as="span" /><span className="planning-list__meta">{event.project_context_hidden ? "Projeto fora do seu âmbito" : event.project_name ?? "sem projeto"} · {eventCategoryMeta(event, categories).label} · <ParticipantSummary event={event} people={people} /></span></button>)}</div>
               </li>
             ))}
           </ul>
         ) : view === "week" ? (
           <div className="planning-calendar-grid planning-calendar-grid--week" style={{ gridTemplateColumns: `repeat(${Math.max(visibleDays.length, 1)}, minmax(0, 1fr))` }}>
-            {visibleDays.map((day) => <div key={day} className="planning-calendar-day" data-testid="planning-day"><div className="planning-calendar-day__header"><span>{formatDayHeaderPt(day)}</span><button type="button" className="planning-day-add" aria-label={`Novo evento em ${day}`} onClick={() => setCreatingForDate(day)}><Icon name="plus" size={12} /></button></div><div className="planning-calendar-day__events">{(eventsByDay.get(day) ?? []).map((event) => <EventChip key={event.id} event={event} categories={categories} onClick={() => setDetailEvent(event)} />)}</div></div>)}
+            {visibleDays.map((day) => <div key={day} className="planning-calendar-day" data-testid="planning-day"><div className="planning-calendar-day__header"><span>{formatDayHeaderPt(day)}</span><button type="button" className="planning-day-add" aria-label={`Novo evento em ${day}`} onClick={() => setCreatingForDate(day)}><Icon name="plus" size={12} /></button></div><div className="planning-calendar-day__events">{(eventsByDay.get(day) ?? []).map((event) => <EventChip key={event.id} event={event} categories={categories} people={people} onClick={() => setDetailEvent(event)} />)}</div></div>)}
           </div>
         ) : (
           <div className="planning-calendar-grid planning-calendar-grid--month" style={{ gridTemplateColumns: `repeat(${hideWeekends ? 5 : 7}, minmax(0, 1fr))` }}>
             {visibleDays.map((day) => {
               const dayEvents = eventsByDay.get(day) ?? [];
               const inMonth = day.slice(0, 7) === anchorIso.slice(0, 7);
-              return <div key={day} className={`planning-calendar-day planning-calendar-day--month${inMonth ? "" : " planning-calendar-day--muted"}`} data-testid="planning-day"><div className="planning-calendar-day__header"><span>{Number(day.slice(8, 10))}</span><button type="button" className="planning-day-add" aria-label={`Novo evento em ${day}`} onClick={() => setCreatingForDate(day)}><Icon name="plus" size={12} /></button></div>{dayEvents.slice(0, 3).map((event) => <EventChip key={event.id} event={event} categories={categories} onClick={() => setDetailEvent(event)} />)}{dayEvents.length > 3 && <div className="planning-calendar-day__more">+{dayEvents.length - 3} mais</div>}</div>;
+              return <div key={day} className={`planning-calendar-day planning-calendar-day--month${inMonth ? "" : " planning-calendar-day--muted"}`} data-testid="planning-day"><div className="planning-calendar-day__header"><span>{Number(day.slice(8, 10))}</span><button type="button" className="planning-day-add" aria-label={`Novo evento em ${day}`} onClick={() => setCreatingForDate(day)}><Icon name="plus" size={12} /></button></div>{dayEvents.slice(0, 3).map((event) => <EventChip key={event.id} event={event} categories={categories} people={people} onClick={() => setDetailEvent(event)} />)}{dayEvents.length > 3 && <div className="planning-calendar-day__more">+{dayEvents.length - 3} mais</div>}</div>;
             })}
           </div>
         )}
