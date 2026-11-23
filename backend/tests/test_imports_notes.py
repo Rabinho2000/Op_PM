@@ -3318,3 +3318,83 @@ def test_v15_missing_inverter_quantity_is_a_400_through_real_route_and_writes_no
     assert resp.status_code == 400
     assert "quantidade em falta" in resp.json()["detail"]
     assert db_session.query(FieldImportBatch).count() == 0
+
+
+def _sem_paineis_bytes() -> bytes:
+    return (FIXTURES_DIR / "synthetic_notas_iniciais_v16_sem_paineis.html").read_bytes()
+
+
+def test_v16_zero_panels_quantity_and_power_is_accepted_as_no_panels():
+    payload = extract_payload(filename="notas-iniciais_sintetico.html", content=_sem_paineis_bytes())
+
+    assert validate_payload(payload) == "16"
+    assert payload["paineis"] == {"quantidade": 0, "potenciaWp": 0}
+    paineis = map_payload_to_fields(payload)
+    assert paineis["installation"].get("panel_count") is None
+    assert paineis["installation"].get("panel_power_wp") is None
+    assert "Inversor Híbrido Sintético E 8 kW" in paineis["installation"]["inverters"]
+
+
+def test_v16_zero_panels_preview_and_apply_create_no_panel_data(tmp_path):
+    engine, db = _isolated_import_db(tmp_path, "v16-sem-paineis.db")
+    batch = preview_notes_import(
+        db, filename="notas-iniciais_sintetico.html", content=_sem_paineis_bytes(), uploaded_by_person_id=None
+    )
+    db.commit()
+    assert batch.status == BATCH_STATUS_PENDING_CONFIRMATION
+    apply_notes_import(db, batch=batch, target_project_id=None, applied_by_person_id=None)
+    db.commit()
+
+    project = db.query(Project).one()
+    installation = db.query(ProjectInstallationData).filter_by(project_id=project.id).one()
+    assert installation.panel_count is None
+    assert installation.panel_power_wp is None
+    assert installation.batteries.startswith("Bateria Sintética 10 kWh")
+    db.close()
+
+
+def test_v16_zero_panels_json_pair_is_accepted():
+    payload = {
+        "formVersion": "16",
+        "cliente": "Cliente Sintético JSON Sem Painéis",
+        "paineis": {"quantidade": 0, "potenciaWp": 0},
+        "baterias": "Bateria Sintética",
+        "potenciaKwpCalculada": 0,
+    }
+    assert validate_payload(payload) == "16"
+    assert map_payload_to_fields(payload)["installation"].get("panel_count") is None
+
+
+@pytest.mark.parametrize(
+    "paineis",
+    [
+        {"quantidade": 0},
+        {"potenciaWp": 0},
+        {"quantidade": 0, "potenciaWp": 450},
+        {"quantidade": 10, "potenciaWp": 0},
+        {"quantidade": 0, "potenciaWp": 0.5},
+        {"quantidade": 0, "potenciaWp": 0, "quantidadeTexto": "A CONFIRMAR"},
+        {"quantidade": False, "potenciaWp": 0},
+    ],
+)
+def test_v16_zero_panels_only_accepts_the_exact_zero_pair(paineis):
+    payload = {
+        "formVersion": "16",
+        "cliente": "Cliente Sintético JSON Parcial",
+        "paineis": paineis,
+        "baterias": "Bateria Sintética",
+    }
+    with pytest.raises(NotesImportError):
+        validate_payload(payload)
+
+
+def test_v16_zero_pair_with_non_zero_calculated_power_is_rejected():
+    payload = {
+        "formVersion": "16",
+        "cliente": "Cliente Sintético Potência Incoerente",
+        "paineis": {"quantidade": 0, "potenciaWp": 0},
+        "potenciaKwpCalculada": 5,
+        "baterias": "Bateria Sintética",
+    }
+    with pytest.raises(NotesImportError, match="potenciaKwpCalculada"):
+        validate_payload(payload)

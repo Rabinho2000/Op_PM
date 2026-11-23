@@ -1725,11 +1725,15 @@ def _validate_structured_form_semantics(payload: dict, form_version: str) -> Non
         if paineis.get("descricaoTexto") is not None and not is_pending(paineis["descricaoTexto"]):
             raise fail("paineis.descricaoTexto", "esperado números ou 'A CONFIRMAR'")
         quantity = paineis.get("quantidade")
-        if quantity is not None and not (is_positive_number(quantity) and float(quantity).is_integer()):
-            raise fail("paineis.quantidade", "esperado inteiro positivo")
         power = paineis.get("potenciaWp")
-        if power is not None and not is_positive_number(power):
-            raise fail("paineis.potenciaWp", "esperado número positivo")
+        # O par 0/0 é o "sem painéis" do formulário (instalação sem fotovoltaico);
+        # um zero isolado, ou zero com o outro valor positivo, continua inválido.
+        no_panels = _is_zero_number(quantity) and _is_zero_number(power)
+        if not no_panels:
+            if quantity is not None and not (is_positive_number(quantity) and float(quantity).is_integer()):
+                raise fail("paineis.quantidade", "esperado inteiro positivo")
+            if power is not None and not is_positive_number(power):
+                raise fail("paineis.potenciaWp", "esperado número positivo")
         # Um valor não numérico só é aceite se for o marcador conhecido, e
         # nunca em simultâneo com o número: o marcador é preservado nas notas.
         for key in ("quantidade", "potenciaWp"):
@@ -1836,9 +1840,16 @@ def _normalize_phone(value: str | None) -> str | None:
     return digits or None
 
 
+def _is_zero_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value == 0
+
+
 def _panel_values(value: object) -> dict:
     if isinstance(value, dict):
         result = dict(value)
+        if _is_zero_number(result.get("quantidade")) and _is_zero_number(result.get("potenciaWp")):
+            # "Sem painéis" (quantidade 0 e potência unitária 0): não há dados de painéis.
+            return {}
         if result.get("quantidade") is not None and result.get("potenciaWp") is not None:
             return result
         description = result.get("descricao")
