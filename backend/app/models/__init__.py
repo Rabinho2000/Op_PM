@@ -5,7 +5,7 @@ from app.models.client_report import ClientReportConfig, ClientReportSend  # noq
 from app.models.absence import Absence  # noqa: F401
 from app.models.holiday import Holiday  # noqa: F401
 from app.models.ai import AiAuditLog  # noqa: F401
-from app.models.calendar import CalendarEvent, Visit  # noqa: F401
+from app.models.calendar import CalendarEvent, CalendarEventAudit, CalendarEventSeries, Visit  # noqa: F401
 from app.models.cable_designs import (  # noqa: F401
     CableDesign,
     CableDesignHistory,
@@ -35,6 +35,7 @@ from app.models.installer_access import (  # noqa: F401
 )
 from app.models.inventory import (  # noqa: F401
     InventoryCatalogHistory,
+    InventoryCategory,
     InventoryItem,
     InventoryLocation,
     InventoryMovement,

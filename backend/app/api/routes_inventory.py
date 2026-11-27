@@ -18,7 +18,6 @@ from app.models.inventory import (
     MOVEMENT_ENTRADA,
     MOVEMENT_TRANSITO_ENTRADA,
     MOVEMENT_TRANSITO_SAIDA,
-    INVENTORY_CATEGORIES,
     InventoryCatalogHistory,
     InventoryItem,
     InventoryLocation,
@@ -28,6 +27,7 @@ from app.models.inventory import (
 from app.models.people import Person
 from app.models.project import Project
 from app.schemas.inventory import (
+    InventoryCategoryImageRead,
     InventoryItemRead,
     InventoryLocationRead,
     InventoryLocationStockRead,
@@ -43,11 +43,15 @@ from app.schemas.inventory import (
 )
 from app.schemas.inventory_catalog import (
     InventoryCatalogHistoryRead,
+    InventoryCategoryCreate,
     InventoryItemCreate,
     InventoryItemUpdate,
     InventoryLocationCreate,
     InventoryLocationUpdate,
     OpeningStockCreate,
+    inventory_category_key_for_read,
+    inventory_category_slug,
+    normalize_inventory_category_for_read,
 )
 from app.security.current_user import get_auth_context
 from app.security.permissions import (
@@ -97,6 +101,12 @@ from app.services.inventory_catalog import (
     update_inventory_item_atomic,
     update_inventory_location_atomic,
 )
+from app.services.inventory_categories import (
+    DuplicateInventoryCategoryError,
+    InventoryCategoryKeyTooLongError,
+    create_inventory_category,
+    list_inventory_category_names,
+)
 from app.api.deps import (
     get_visible_project_or_404,
     require_inventory_catalog,
@@ -114,6 +124,8 @@ def _item_to_read(
     db: Session, item: InventoryItem, owner: Literal["solcor", "verde_milenar"] = "solcor"
 ) -> InventoryItemRead:
     data = InventoryItemRead.model_validate(item)
+    category = normalize_inventory_category_for_read(item.category)
+    data.category_key = inventory_category_key_for_read(category) if category else None
     data.section_label = inventory_item_section_label(item)
     data.has_photo = bool(item.photo_storage_name)
     balance = item_balance(db, item, owner)
@@ -190,9 +202,33 @@ def _filter_catalog_history_scope(query, db: Session, ctx: AuthContext):
 
 @router.get("/categories", response_model=list[str])
 def inventory_categories_endpoint(
+    db: Session = Depends(get_db),
     ctx: AuthContext = Depends(require_inventory_view),
 ) -> list[str]:
-    return list(INVENTORY_CATEGORIES)
+    return list_inventory_category_names(db)
+
+
+@router.post("/categories", response_model=InventoryCategoryImageRead, status_code=201)
+def create_inventory_category_endpoint(
+    body: InventoryCategoryCreate,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(require_inventory_catalog),
+) -> InventoryCategoryImageRead:
+    try:
+        category = create_inventory_category(db, name=body.name, actor_person_id=ctx.person_id)
+    except DuplicateInventoryCategoryError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InventoryCategoryKeyTooLongError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return InventoryCategoryImageRead(
+        name=category.name,
+        category_key=category.normalized_key,
+        slug=inventory_category_slug(category.name),
+        has_custom_image=False,
+        image_version=None,
+    )
 
 
 @router.get("/summary", response_model=list[InventoryItemRead])

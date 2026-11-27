@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.models.inventory import (
-    INVENTORY_CATEGORIES,
     InventoryCategoryImage,
     InventoryItem,
     InventoryItemDocument,
@@ -26,10 +25,16 @@ from app.schemas.inventory import (
     InventoryCategoryUnitStockRead,
     InventoryItemDocumentRead,
 )
-from app.schemas.inventory_catalog import normalize_inventory_category
+from app.schemas.inventory_catalog import (
+    InventoryCategoryError,
+    inventory_category_key_for_read,
+    inventory_category_slug,
+    normalize_inventory_category_for_read,
+)
 from app.security.permissions import AuthContext
 from app.services.file_storage import detect_image_type, safe_stored_file_path, write_private_file
 from app.services.inventory import item_balance
+from app.services.inventory_categories import list_inventory_category_names, resolve_category_name
 from app.api.deps import require_inventory_catalog, require_inventory_view
 
 router = APIRouter(prefix="/api/inventory", tags=["inventory-visual"])
@@ -102,31 +107,47 @@ def _remove_media(settings: Settings, folder: str, stored_name: str | None) -> N
     _unlink_media(_media_path(settings, folder, stored_name))
 
 
-def _canonical_category(value: str) -> str:
+def _canonical_category(value: str, db: Session) -> str:
+    """Nome canónico de uma categoria existente (422 se inválida ou inexistente)."""
     try:
-        category = normalize_inventory_category(value)
-    except ValueError as exc:
+        return resolve_category_name(db, value)
+    except InventoryCategoryError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if category is None:
-        raise HTTPException(status_code=422, detail="Categoria inválida.")
-    return category
+
+
+def _category_images_for_name(
+    images: list[InventoryCategoryImage], category: str
+) -> list[InventoryCategoryImage]:
+    key = inventory_category_key_for_read(category)
+    return [image for image in images if inventory_category_key_for_read(image.category) == key]
+
+
+def _preferred_category_image(
+    images: list[InventoryCategoryImage], category: str
+) -> InventoryCategoryImage | None:
+    """Imagem da categoria; se houver variantes legadas do nome, prefere a exata e a mais recente."""
+    matching = _category_images_for_name(images, category)
+    exact = next((image for image in matching if image.category == category), None)
+    if exact is not None:
+        return exact
+    return max(matching, key=lambda image: (image.updated_at, image.category), default=None)
 
 
 def _category_details(db: Session) -> list[InventoryCategoryImageRead]:
-    rows = {
-        image.category: image
-        for image in db.query(InventoryCategoryImage).filter(
-            InventoryCategoryImage.category.in_(INVENTORY_CATEGORIES)
-        ).all()
-    }
-    return [
-        InventoryCategoryImageRead(
-            name=category,
-            has_custom_image=category in rows,
-            image_version=rows[category].updated_at.isoformat() if category in rows else None,
+    images = db.query(InventoryCategoryImage).all()
+    details = []
+    for category in list_inventory_category_names(db):
+        image = _preferred_category_image(images, category)
+        details.append(
+            InventoryCategoryImageRead(
+                name=category,
+                category_key=inventory_category_key_for_read(category),
+                slug=inventory_category_slug(category),
+                has_custom_image=image is not None,
+                image_version=image.updated_at.isoformat() if image is not None else None,
+            )
         )
-        for category in INVENTORY_CATEGORIES
-    ]
+    return details
 
 
 @router.get("/categories/details", response_model=list[InventoryCategoryImageRead])
@@ -144,16 +165,17 @@ async def upload_inventory_category_image(
     ctx: AuthContext = Depends(require_inventory_catalog),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, str | bool]:
-    canonical = _canonical_category(category)
+    canonical = _canonical_category(category, db)
     content = await file.read(MAX_ITEM_PHOTO_BYTES + 1)
     content_type, extension = _upload_image(content, limit=MAX_ITEM_PHOTO_BYTES, label="A imagem")
     new_name = _stored_name(extension)
     new_path = _write_media(settings, "category_images", new_name, content)
-    old_name: str | None = None
+    old_names: list[str] = []
     updated_at = dt.datetime.now(dt.timezone.utc)
     try:
-        image = db.get(InventoryCategoryImage, canonical)
-        old_name = image.stored_name if image is not None else None
+        images = _category_images_for_name(db.query(InventoryCategoryImage).all(), canonical)
+        image = _preferred_category_image(images, canonical)
+        old_names = [existing.stored_name for existing in images]
         if image is None:
             image = InventoryCategoryImage(
                 category=canonical,
@@ -164,13 +186,19 @@ async def upload_inventory_category_image(
             )
             db.add(image)
         else:
+            image.category = canonical
             image.stored_name = new_name
             image.content_type = content_type
             image.updated_by_person_id = ctx.person_id
             image.updated_at = updated_at
+        for duplicate in images:
+            if duplicate is not image:
+                db.delete(duplicate)
         db.flush()
         result = {
             "name": canonical,
+            "category_key": inventory_category_key_for_read(canonical),
+            "slug": inventory_category_slug(canonical),
             "has_custom_image": True,
             "image_version": updated_at.isoformat(),
             "content_type": content_type,
@@ -180,7 +208,9 @@ async def upload_inventory_category_image(
         db.rollback()
         _unlink_media(new_path)
         raise
-    _remove_media(settings, "category_images", old_name)
+    for old_name in old_names:
+        if old_name != new_name:
+            _remove_media(settings, "category_images", old_name)
     return result
 
 
@@ -191,8 +221,8 @@ def get_inventory_category_image(
     ctx: AuthContext = Depends(require_inventory_view),
     settings: Settings = Depends(get_settings),
 ) -> Response:
-    canonical = _canonical_category(category)
-    image = db.get(InventoryCategoryImage, canonical)
+    canonical = _canonical_category(category, db)
+    image = _preferred_category_image(db.query(InventoryCategoryImage).all(), canonical)
     if image is None:
         raise HTTPException(status_code=404, detail="Imagem personalizada da categoria não encontrada.")
     content = _read_media(
@@ -213,14 +243,16 @@ def delete_inventory_category_image(
     ctx: AuthContext = Depends(require_inventory_catalog),
     settings: Settings = Depends(get_settings),
 ) -> Response:
-    canonical = _canonical_category(category)
-    image = db.get(InventoryCategoryImage, canonical)
-    if image is None:
+    canonical = _canonical_category(category, db)
+    images = _category_images_for_name(db.query(InventoryCategoryImage).all(), canonical)
+    if not images:
         raise HTTPException(status_code=404, detail="Imagem personalizada da categoria não encontrada.")
-    old_name = image.stored_name
-    db.delete(image)
+    old_names = [image.stored_name for image in images]
+    for image in images:
+        db.delete(image)
     db.commit()
-    _remove_media(settings, "category_images", old_name)
+    for old_name in old_names:
+        _remove_media(settings, "category_images", old_name)
     return Response(status_code=204)
 
 
@@ -230,13 +262,13 @@ def inventory_category_summary(
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(require_inventory_view),
 ) -> list[InventoryCategorySummaryRead]:
-    totals = {category: _InventoryCategoryTotals() for category in INVENTORY_CATEGORIES}
+    categories = list_inventory_category_names(db)
+    canonical_by_key = {inventory_category_key_for_read(name): name for name in categories}
+    totals = {category: _InventoryCategoryTotals() for category in categories}
     items = db.query(InventoryItem).filter(InventoryItem.is_active.is_(True)).all()
     for item in items:
-        try:
-            category = normalize_inventory_category(item.category)
-        except ValueError:
-            continue
+        value = normalize_inventory_category_for_read(item.category)
+        category = canonical_by_key.get(inventory_category_key_for_read(value)) if value else None
         if category is None:
             continue
         balance = item_balance(db, item, owner)
@@ -258,7 +290,7 @@ def inventory_category_summary(
             ],
             low_stock_count=totals[category].low_stock_count,
         )
-        for category in INVENTORY_CATEGORIES
+        for category in categories
     ]
 
 

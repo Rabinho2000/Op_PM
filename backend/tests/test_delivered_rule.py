@@ -212,3 +212,60 @@ def test_cli_refuses_production_bad_actor_and_unknown_stage(db_session, monkeypa
     assert cli.main(["--actor-email", "ninguem@example.invalid"]) == 1
     assert cli.main(["--except-stage", "etapa-99"]) == 1
     assert "desconhecida" in capsys.readouterr().err
+
+
+# --- certificado final: o processo fica todo concluído ------------------------------------------------
+
+
+def _to_certified(api_client, project, email=CHEFE):
+    return api_client.patch(
+        f"/api/projects/{project.id}/status", json={"lifecycle_status": "certificado_final"}, headers=_h(email)
+    )
+
+
+def test_moving_to_certified_completes_every_stage_including_the_certificate(db_session, api_client):
+    project = _project(db_session, state="entregue_cliente")
+    assert _to_certified(api_client, project).status_code == 200
+    body = _process(api_client, project)
+    assert all(s["status"] == "done" for s in _stages(body).values())
+    assert body["summary"]["done"] == 77 and body["summary"]["percent"] == 100
+    sub = _stages(body)["etapa-18"]["subtasks"][0]
+    assert (sub["done"], sub["source"], sub["done_at"]) == (True, "inferred", None)
+    entries = db_session.query(ProjectHistory).filter(
+        ProjectHistory.project_id == project.id, ProjectHistory.field_name == "processo:concluído por regra"
+    ).all()
+    assert [(e.new_value, e.source) for e in entries] == [("77 subtarefas, 12 contactos", "rule")]
+
+
+def test_moving_to_certified_never_overwrites_and_is_idempotent(db_session, api_client):
+    project = _project(db_session, state="entregue_cliente")
+    unmarked = _subtask(db_session, "etapa-05.1")
+    db_session.add(ProjectSubtaskProgress(project_id=project.id, subtask_id=unmarked.id, done=False, source="ui"))
+    db_session.flush()
+    _to_certified(api_client, project)
+    row = db_session.query(ProjectSubtaskProgress).filter_by(project_id=project.id, subtask_id=unmarked.id).one()
+    assert (row.done, row.source) == (False, "ui")  # o Op_PM manda
+    # sair e voltar a certificado final não duplica nada nem escreve outro histórico
+    api_client.patch(f"/api/projects/{project.id}/status", json={"lifecycle_status": "entregue_cliente"}, headers=_h(CHEFE))
+    _to_certified(api_client, project)
+    assert db_session.query(ProjectSubtaskProgress).filter_by(project_id=project.id).count() == 77
+    assert db_session.query(ProjectHistory).filter(
+        ProjectHistory.project_id == project.id, ProjectHistory.field_name == "processo:concluído por regra"
+    ).count() == 1
+
+
+@pytest.mark.parametrize("state", ["entregue_cliente", "construido", "on_hold_cliente"])
+def test_other_status_changes_do_not_touch_the_process(db_session, api_client, state):
+    project = _project(db_session, state="construcao")
+    resp = api_client.patch(f"/api/projects/{project.id}/status", json={"lifecycle_status": state}, headers=_h(CHEFE))
+    assert resp.status_code == 200
+    assert db_session.query(ProjectSubtaskProgress).filter_by(project_id=project.id).count() == 0
+
+
+def test_a_project_created_as_certified_starts_with_the_process_complete(db_session, api_client):
+    resp = api_client.post(
+        "/api/projects", json={"name": "Projeto Sintético Já Certificado", "lifecycle_status": "certificado_final"}, headers=_h(CHEFE)
+    )
+    assert resp.status_code in (200, 201), resp.text
+    project_id = resp.json()["id"]
+    assert db_session.query(ProjectSubtaskProgress).filter_by(project_id=project_id, done=True).count() == 77

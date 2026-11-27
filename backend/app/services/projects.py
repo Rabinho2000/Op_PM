@@ -37,6 +37,7 @@ from app.services.project_lifecycle import (
     status_change_warning,
 )
 from app.services.installers import derive_work_window
+from app.services.process_rules import complete_certified_project
 from app.security.project_fields import PM_EDITABLE_PROJECT_FIELDS
 from app.utils.text import normalize_key
 from app.security.perm import Perm
@@ -181,6 +182,7 @@ def create_project(db: Session, *, body: ProjectCreate, ctx: AuthContext, commit
             changed_by_person_id=ctx.person_id,
             note="Criação manual via API.",
         )
+        complete_certified_project(db, project, actor_person_id=ctx.person_id)
 
         if commit:
             db.commit()
@@ -594,6 +596,8 @@ def change_lifecycle_status(
         note=note.strip() or "Mudança de estado via API.",
     )
     project.lifecycle_status = new_status
+    # Certificado final: o processo fica todo concluído (pedido de Operações, 19/11/2026).
+    complete_certified_project(db, project, actor_person_id=ctx.person_id)
     db.commit()
     db.refresh(project)
     return project, status_change_warning(old_status, new_status)

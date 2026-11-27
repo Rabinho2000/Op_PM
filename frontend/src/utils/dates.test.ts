@@ -61,6 +61,11 @@ describe("lisbonWallClockToIso", () => {
     expect(lisbonWallClockToIso("2026-03-29T02:30")).toBe("2026-03-29T01:30:00.000Z");
   });
 
+  it("permite escolher a primeira ocorrência quando a hora local de outono se repete", () => {
+    expect(lisbonWallClockToIso("2026-10-25T01:30", "earlier")).toBe("2026-10-25T00:30:00.000Z");
+    expect(lisbonWallClockToIso("2026-10-25T01:30", "later")).toBe("2026-10-25T01:30:00.000Z");
+  });
+
   it("rejeita valores que não são datetime-local", () => {
     expect(() => lisbonWallClockToIso("amanhã")).toThrow();
   });

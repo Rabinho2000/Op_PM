@@ -65,7 +65,6 @@ from app.services.projects import (
     get_project_channel_project,
     get_visible_project,
     list_projects_channel,
-    list_projects,
     restore_project,
     visible_projects_query,
 )

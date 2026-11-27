@@ -4,10 +4,11 @@ import datetime as dt
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 PlanningView = Literal["month", "week", "list"]
+RecurrenceRule = Literal["weekly"]
 CalendarEventCategory = Literal[
     "meeting",
     "technical_visit",
@@ -80,6 +81,11 @@ class CalendarEventRead(BaseModel):
     category_label: str | None = None
     category_color: str | None = None
     can_manage: bool = False
+    recurrence_series_id: uuid.UUID | None = None
+    recurrence_rule: RecurrenceRule | None = None
+    recurrence_index: int | None = None
+    recurrence_count: int | None = None
+    recurrence_until: dt.date | None = None
 
     @field_validator("starts_at", "ends_at")
     @classmethod
@@ -100,6 +106,9 @@ class CalendarEventCreate(BaseModel):
     category: CalendarEventCategory = "other"
     process_stage_id: uuid.UUID | None = None
     process_subtask_id: uuid.UUID | None = None
+    recurrence: RecurrenceRule | None = None
+    recurrence_until: dt.date | None = None
+    idempotency_key: str | None = Field(default=None, min_length=16, max_length=128)
 
     @field_validator("assigned_to_person_ids")
     @classmethod
@@ -112,6 +121,17 @@ class CalendarEventCreate(BaseModel):
     @classmethod
     def normalize_input_instants(cls, value: dt.datetime) -> dt.datetime:
         return normalize_calendar_instant(value)
+
+    @model_validator(mode="after")
+    def validate_recurrence(self) -> CalendarEventCreate:
+        if self.recurrence == "weekly":
+            if self.recurrence_until is None:
+                raise ValueError("A data final é obrigatória para uma recorrência semanal.")
+            if self.idempotency_key is None:
+                raise ValueError("A recorrência semanal requer uma chave de idempotência.")
+        elif self.recurrence_until is not None or self.idempotency_key is not None:
+            raise ValueError("A data final e a chave de idempotência só se aplicam a séries semanais.")
+        return self
 
 
 class CalendarEventUpdate(BaseModel):

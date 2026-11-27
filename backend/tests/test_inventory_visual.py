@@ -182,7 +182,13 @@ def test_category_images_details_replace_remove_and_validate(tmp_path, make_api_
     details = client.get("/api/inventory/categories/details", headers=VIEWER)
     assert details.status_code == 200
     panels = next(row for row in details.json() if row["name"] == "Painéis")
-    assert panels == {"name": "Painéis", "has_custom_image": False, "image_version": None}
+    assert panels == {
+        "name": "Painéis",
+        "category_key": "paineis",
+        "slug": "paineis",
+        "has_custom_image": False,
+        "image_version": None,
+    }
     bad = client.post(
         "/api/inventory/categories/nao-existe/image",
         files={"file": ("x.png", PNG, "image/png")},

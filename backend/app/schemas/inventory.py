@@ -49,6 +49,7 @@ class InventoryItemRead(BaseModel):
     name: str
     unit: str
     category: str | None = None
+    category_key: str | None = None
     manufacturer: str | None = None
     model: str | None = None
     subcategory: str | None = None
@@ -86,6 +87,8 @@ class InventoryItemDocumentRead(BaseModel):
 
 class InventoryCategoryImageRead(BaseModel):
     name: str
+    category_key: str
+    slug: str
     has_custom_image: bool
     image_version: str | None = None
 

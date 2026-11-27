@@ -10,7 +10,8 @@ import type {
 import { makeMe, makeProject } from "../test/fixtures";
 import { renderWithProviders } from "../test/render";
 import { lisbonWallClockToIso, todayIsoLisbon } from "../utils/dates";
-import Planning from "./Planning";
+import { personHue } from "../utils/personColor";
+import Planning, { eventAssignees } from "./Planning";
 import type { Perm } from "../generated/permissions";
 
 const api = vi.hoisted(() => ({
@@ -329,6 +330,94 @@ describe("Planeamento", () => {
     );
   });
 
+  it("pede escolha explícita da recorrência semanal e envia data final e chave idempotente", async () => {
+    renderPlanning();
+    await screen.findByText("Visita técnica sintética");
+    fireEvent.click(screen.getByRole("button", { name: /^novo evento$/i }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByLabelText("Repetir até *")).not.toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Título *"), { target: { value: "Reunião semanal" } });
+    fireEvent.change(within(dialog).getByLabelText("Repetição semanal"), { target: { value: "weekly" } });
+    fireEvent.change(within(dialog).getByLabelText("Repetir até *"), { target: { value: "2026-10-29" } });
+
+    api.createCalendarEvent.mockResolvedValue(event({ id: "weekly-first" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /^guardar$/i }));
+    await waitFor(() =>
+      expect(api.createCalendarEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Reunião semanal",
+          recurrence: "weekly",
+          recurrence_until: "2026-10-29",
+          idempotency_key: expect.any(String),
+        })
+      )
+    );
+    const payload = api.createCalendarEvent.mock.calls[0]?.[0] as { idempotency_key?: string } | undefined;
+    expect(payload?.idempotency_key?.length).toBeGreaterThanOrEqual(16);
+  });
+
+  it("não envia uma série semanal sem data final nem com mais de 52 ocorrências", async () => {
+    renderPlanning();
+    await screen.findByText("Visita técnica sintética");
+    fireEvent.click(screen.getByRole("button", { name: /^novo evento$/i }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Título *"), { target: { value: "Reunião semanal" } });
+    fireEvent.change(within(dialog).getByLabelText("Repetição semanal"), { target: { value: "weekly" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^guardar$/i }));
+    expect(await within(dialog).findByText("Indique a data final da série semanal.")).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText("Repetir até *"), { target: { value: "2028-12-31" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^guardar$/i }));
+    expect(await within(dialog).findByText("Uma série semanal pode ter no máximo 52 ocorrências.")).toBeInTheDocument();
+    expect(api.createCalendarEvent).not.toHaveBeenCalled();
+  });
+
+  it("mostra o indicador de série semanal no chip", async () => {
+    api.listCalendarEvents.mockResolvedValue([
+      event({ recurrence_series_id: "series-1", recurrence_rule: "weekly", recurrence_index: 1, recurrence_count: 4, recurrence_until: "2026-11-05" }),
+    ]);
+    renderPlanning();
+    const chip = await screen.findByRole("button", { name: /Visita técnica sintética.*série semanal/i });
+    expect(within(chip).getByText("↻")).toBeInTheDocument();
+  });
+
+  it("permite editar uma ocorrência ou toda a série com âmbito explícito", async () => {
+    api.listCalendarEvents.mockResolvedValue([
+      event({ recurrence_series_id: "series-1", recurrence_rule: "weekly", recurrence_index: 2, recurrence_count: 4, recurrence_until: "2026-11-05" }),
+    ]);
+    renderPlanning();
+    fireEvent.click(await screen.findByRole("button", { name: /Visita técnica sintética.*série semanal/i }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Editar" }));
+    const editDialog = await screen.findByRole("dialog");
+    fireEvent.change(within(editDialog).getByLabelText("Aplicar alterações"), { target: { value: "series" } });
+    fireEvent.change(within(editDialog).getByLabelText("Título *"), { target: { value: "Reunião da série" } });
+
+    api.updateCalendarEvent.mockResolvedValue(event({ title: "Reunião da série" }));
+    fireEvent.click(within(editDialog).getByRole("button", { name: /^guardar$/i }));
+    await waitFor(() =>
+      expect(api.updateCalendarEvent).toHaveBeenCalledWith(
+        "evt-1",
+        expect.objectContaining({ title: "Reunião da série" }),
+        "series",
+      )
+    );
+  });
+
+  it("exige confirmação ao cancelar a série completa", async () => {
+    api.listCalendarEvents.mockResolvedValue([
+      event({ recurrence_series_id: "series-1", recurrence_rule: "weekly", recurrence_index: 1, recurrence_count: 4, recurrence_until: "2026-11-05" }),
+    ]);
+    api.cancelCalendarEvent.mockResolvedValue(event({ status: "cancelado" }));
+    renderPlanning();
+    fireEvent.click(await screen.findByRole("button", { name: /Visita técnica sintética.*série semanal/i }));
+    const detail = await screen.findByRole("dialog");
+    fireEvent.click(within(detail).getByRole("button", { name: "Cancelar série inteira" }));
+    expect(within(detail).getByText(/Todas as 4 ocorrências/)).toBeInTheDocument();
+    expect(api.cancelCalendarEvent).not.toHaveBeenCalled();
+    fireEvent.click(within(detail).getByRole("button", { name: "Confirmar" }));
+    await waitFor(() => expect(api.cancelCalendarEvent).toHaveBeenCalledWith("evt-1", "series"));
+  });
+
   it("deteta conflitos quando há qualquer participante e conserva a atribuição dos dois após confirmar", async () => {
     api.listCalendarEvents.mockResolvedValue([
       event({ assigned_to_person_ids: ["p-pm", "p-second"], assigned_to_display_names: ["PM Sintético Um", "Pessoa Dois"] }),
@@ -542,6 +631,125 @@ describe("Planeamento", () => {
     api.cancelCalendarEvent.mockResolvedValue(event({ status: "cancelado" }));
     fireEvent.click(within(detail).getByRole("button", { name: /cancelar evento/i }));
     await waitFor(() => expect(api.cancelCalendarEvent).toHaveBeenCalledWith("evt-1"));
+  });
+
+  describe("avatares dos responsáveis no chip", () => {
+    const TWO = {
+      assigned_to_person_id: "p-pm",
+      assigned_to_person_ids: ["p-pm", "p-second"],
+      assigned_to_display_name: "PM Sintético Um",
+      assigned_to_display_names: ["PM Sintético Um", "Pessoa Dois"],
+    };
+    const THREE = {
+      assigned_to_person_id: "p-pm",
+      assigned_to_person_ids: ["p-pm", "p-second", "p-third"],
+      assigned_to_display_name: "PM Sintético Um",
+      assigned_to_display_names: ["PM Sintético Um", "Pessoa Dois", "Pessoa Três"],
+    };
+
+    it("mostra as iniciais do responsável no mês, com nome no title e no aria-label", async () => {
+      renderPlanning();
+      const chip = await screen.findByRole("button", { name: /Visita técnica sintética/ });
+      const people = within(chip).getByTestId("planning-chip-people");
+      expect(people).toHaveAttribute("title", "Responsáveis: PM Sintético Um");
+      expect(within(people).getByText("PU")).toBeInTheDocument();
+      expect(chip).toHaveAttribute("aria-label", expect.stringContaining("responsáveis: PM Sintético Um"));
+    });
+
+    it("mostra até 2 avatares e resume os restantes em +N na vista de semana", async () => {
+      api.listCalendarEvents.mockResolvedValue([event(THREE)]);
+      renderPlanning();
+      await screen.findByText("Visita técnica sintética");
+      fireEvent.change(screen.getByLabelText("Vista"), { target: { value: "week" } });
+      await waitFor(() => expect(screen.getAllByTestId("planning-day")).toHaveLength(7));
+
+      const chip = screen.getByRole("button", { name: /Visita técnica sintética/ });
+      const people = within(chip).getByTestId("planning-chip-people");
+      expect(within(people).getByText("PU")).toBeInTheDocument();
+      expect(within(people).getByText("PD")).toBeInTheDocument();
+      expect(within(people).queryByText("PT")).not.toBeInTheDocument();
+      expect(within(people).getByText("+1")).toBeInTheDocument();
+      expect(people).toHaveAttribute("title", "Responsáveis: PM Sintético Um, Pessoa Dois, Pessoa Três");
+      expect(chip).toHaveAttribute("aria-label", expect.stringContaining("PM Sintético Um, Pessoa Dois, Pessoa Três"));
+    });
+
+    it("mostra os avatares também na vista de lista", async () => {
+      api.listCalendarEvents.mockResolvedValue([event(TWO)]);
+      renderPlanning();
+      await screen.findByText("Visita técnica sintética");
+      fireEvent.change(screen.getByLabelText("Vista"), { target: { value: "list" } });
+
+      const people = await screen.findByTestId("planning-chip-people");
+      expect(people).toHaveAttribute("title", "Responsáveis: PM Sintético Um, Pessoa Dois");
+      expect(within(people).getByText("PD")).toBeInTheDocument();
+      expect(within(people).queryByText(/^\+\d/)).not.toBeInTheDocument();
+    });
+
+    it("usa a mesma cor para a mesma pessoa em eventos diferentes", async () => {
+      api.listCalendarEvents.mockResolvedValue([
+        event({ id: "evt-a", title: "Evento A" }),
+        event({ id: "evt-b", title: "Evento B" }),
+      ]);
+      renderPlanning();
+      await screen.findByText("Evento A");
+      const avatars = screen.getAllByTestId("planning-chip-people").map((node) => node.querySelector<HTMLElement>(".planning-event-chip__avatar"));
+      expect(avatars).toHaveLength(2);
+      const hue = String(personHue("p-pm"));
+      expect(avatars[0]?.style.getPropertyValue("--avatar-hue")).toBe(hue);
+      expect(avatars[1]?.style.getPropertyValue("--avatar-hue")).toBe(hue);
+    });
+
+    it("não mostra avatares quando não há responsáveis", async () => {
+      api.listCalendarEvents.mockResolvedValue([
+        event({
+          assigned_to_person_id: null,
+          assigned_to_person_ids: [],
+          assigned_to_display_name: null,
+          assigned_to_display_names: [],
+        }),
+      ]);
+      renderPlanning();
+      const chip = await screen.findByRole("button", { name: /Visita técnica sintética/ });
+      expect(within(chip).queryByTestId("planning-chip-people")).not.toBeInTheDocument();
+      expect(chip).toHaveAttribute("aria-label", expect.stringContaining("sem responsáveis"));
+    });
+  });
+
+  describe("eventAssignees", () => {
+    it("recorre aos responsáveis do Processo quando ninguém está atribuído", () => {
+      const result = eventAssignees(
+        event({
+          assigned_to_person_id: null,
+          assigned_to_person_ids: [],
+          assigned_to_display_name: null,
+          assigned_to_display_names: [],
+          responsible_person_ids: ["p-second"],
+          responsible_display_names: ["Pessoa Dois"],
+        })
+      );
+      expect(result).toEqual([{ key: "p-second", name: "Pessoa Dois" }]);
+    });
+
+    it("não duplica pessoas e deriva a chave do nome quando os ids não coincidem", () => {
+      expect(
+        eventAssignees(event({ assigned_to_person_ids: ["p-pm", "p-pm"], assigned_to_display_names: ["PM Sintético Um", "PM Sintético Um"] }))
+      ).toEqual([{ key: "p-pm", name: "PM Sintético Um" }]);
+      expect(
+        eventAssignees(event({ assigned_to_person_ids: ["p-pm"], assigned_to_display_names: ["PM Sintético Um", "Pessoa Dois"] }))
+      ).toEqual([
+        { key: "PM Sintético Um", name: "PM Sintético Um" },
+        { key: "Pessoa Dois", name: "Pessoa Dois" },
+      ]);
+    });
+
+    it("resolve nomes em falta a partir da lista de pessoas", () => {
+      expect(
+        eventAssignees(
+          event({ assigned_to_person_ids: ["p-second"], assigned_to_person_id: "p-second", assigned_to_display_name: null, assigned_to_display_names: [] }),
+          [person({ id: "p-second", display_name: "Pessoa Dois" })]
+        )
+      ).toEqual([{ key: "p-second", name: "Pessoa Dois" }]);
+    });
   });
 
   it("identifica as ações acionáveis do mês por classe", async () => {

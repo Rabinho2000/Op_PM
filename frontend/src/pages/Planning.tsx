@@ -27,9 +27,10 @@ import {
 } from "../api/client";
 import Icon from "../components/Icon";
 import { useToast } from "../components/Toast";
-import { Alert, Avatar, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHeader, Tone } from "../components/ui";
+import { Alert, Avatar, Badge, Card, EmptyState, ErrorState, LoadingState, Modal, PageHeader, Tone, initials } from "../components/ui";
 import { useSession } from "../session/SessionContext";
-import { lisbonWallClockToIso, todayIsoLisbon } from "../utils/dates";
+import { formatDatePt, lisbonWallClockToIso, todayIsoLisbon } from "../utils/dates";
+import { personHue } from "../utils/personColor";
 import { normalizeSearchText } from "../utils/text";
 import "./Planning.css";
 
@@ -437,6 +438,67 @@ function ParticipantSummary({ event, people }: { event: CalendarEvent; people: P
   );
 }
 
+export interface EventAssignee {
+  key: string;
+  name: string;
+}
+
+function pairPeople(ids: string[] | undefined, names: string[] | undefined): EventAssignee[] {
+  const cleanNames = (names ?? []).filter(Boolean);
+  const cleanIds = ids ?? [];
+  // O servidor devolve ids e nomes na mesma ordem; se o tamanho diferir (pessoa
+  // sem nome), a cor deriva do nome para não atribuir a pessoa errada.
+  return cleanNames.map((name, index) => ({
+    key: cleanIds.length === cleanNames.length ? cleanIds[index] : name,
+    name,
+  }));
+}
+
+// Responsáveis mostrados no chip: os participantes atribuídos; na falta deles,
+// os responsáveis do Processo (a visibilidade já foi aplicada pelo servidor).
+export function eventAssignees(event: CalendarEvent, people: Person[] = []): EventAssignee[] {
+  let result = pairPeople(event.assigned_to_person_ids, event.assigned_to_display_names);
+  if (result.length === 0 && event.assigned_to_display_name) {
+    result = [{ key: event.assigned_to_person_id ?? event.assigned_to_display_name, name: event.assigned_to_display_name }];
+  }
+  if (result.length === 0) {
+    result = dedupeIds([...(event.assigned_to_person_ids ?? []), event.assigned_to_person_id])
+      .map((id) => ({ key: id, name: people.find((person) => person.id === id)?.display_name ?? "" }))
+      .filter((entry) => entry.name);
+  }
+  if (result.length === 0) result = pairPeople(event.responsible_person_ids, event.responsible_display_names);
+  return result.filter((entry, index, all) => all.findIndex((other) => other.key === entry.key) === index);
+}
+
+const MAX_CHIP_AVATARS = 2;
+
+function EventAssigneeAvatars({ assignees }: { assignees: EventAssignee[] }) {
+  if (assignees.length === 0) return null;
+  const shown = assignees.slice(0, MAX_CHIP_AVATARS);
+  const extra = assignees.length - shown.length;
+  const label = `Responsáveis: ${assignees.map((assignee) => assignee.name).join(", ")}`;
+  return (
+    <span className="planning-event-chip__people" title={label} data-testid="planning-chip-people">
+      {shown.map((assignee) => (
+        <span
+          key={assignee.key}
+          className="planning-event-chip__avatar"
+          style={{ "--avatar-hue": personHue(assignee.key) } as CSSProperties}
+          title={assignee.name}
+          aria-hidden="true"
+        >
+          {initials(assignee.name)}
+        </span>
+      ))}
+      {extra > 0 && (
+        <span className="planning-event-chip__avatar planning-event-chip__avatar--more" title={label} aria-hidden="true">
+          {`+${extra}`}
+        </span>
+      )}
+    </span>
+  );
+}
+
 interface EventFormState {
   title: string;
   project_id: string;
@@ -448,6 +510,9 @@ interface EventFormState {
   process_subtask_id: string;
   starts_at: string;
   ends_at: string;
+  recurrence: "none" | "weekly";
+  recurrence_until: string;
+  mutation_scope: "occurrence" | "series";
 }
 
 function initialEventForm(event: CalendarEvent | null, defaultDate: string | null, categories: CalendarEventCategory[]): EventFormState {
@@ -465,7 +530,15 @@ function initialEventForm(event: CalendarEvent | null, defaultDate: string | nul
     process_subtask_id: event?.process_subtask_id ?? "",
     starts_at: event ? toDatetimeLocalValue(event.starts_at) : defaultDate ? `${defaultDate}T09:00` : "",
     ends_at: event ? toDatetimeLocalValue(event.ends_at) : defaultDate ? `${defaultDate}T10:00` : "",
+    recurrence: event?.recurrence_rule === "weekly" ? "weekly" : "none",
+    recurrence_until: event?.recurrence_until ?? "",
+    mutation_scope: "occurrence",
   };
+}
+
+function newCalendarIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `weekly-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function EventModal({
@@ -490,6 +563,8 @@ function EventModal({
   onSaved: () => void;
 }) {
   const [form, setForm] = useState<EventFormState>(() => initialEventForm(event, defaultDate, categories));
+  // Uma chave por abertura do formulário: um retry do mesmo pedido não duplica a série.
+  const idempotencyKey = useRef<string>(newCalendarIdempotencyKey());
   const [tasks, setTasks] = useState<Task[]>([]);
   const [processOptions, setProcessOptions] = useState<PlanningProcessOption[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
@@ -538,6 +613,8 @@ function EventModal({
   }, [form.project_id]);
 
   const selectedStage = processOptions.find((option) => option.stage_id === form.process_stage_id);
+  // Numa hora repetida no outono, a série usa a primeira ocorrência (como o servidor).
+  const repeatedHourChoice = (event ? form.mutation_scope === "series" : form.recurrence === "weekly") ? "earlier" : "later";
   const conflicts = useMemo(() => {
     if (!form.starts_at || !form.ends_at) return [];
     try {
@@ -545,13 +622,13 @@ function EventModal({
         id: event?.id,
         assigned_to_person_id: form.assigned_to_person_id || null,
         assigned_to_person_ids: form.assigned_to_person_ids,
-        starts_at: lisbonWallClockToIso(form.starts_at),
-        ends_at: lisbonWallClockToIso(form.ends_at),
+        starts_at: lisbonWallClockToIso(form.starts_at, repeatedHourChoice),
+        ends_at: lisbonWallClockToIso(form.ends_at, repeatedHourChoice),
       });
     } catch {
       return [];
     }
-  }, [allEvents, event?.id, form.assigned_to_person_id, form.assigned_to_person_ids, form.starts_at, form.ends_at]);
+  }, [allEvents, event?.id, form.assigned_to_person_id, form.assigned_to_person_ids, form.starts_at, form.ends_at, repeatedHourChoice]);
 
   useEffect(() => {
     setConflictAcknowledged(false);
@@ -591,6 +668,30 @@ function EventModal({
       setError("A hora de fim tem de ser depois da hora de início.");
       return;
     }
+    if (!event && form.recurrence === "weekly") {
+      if (!form.recurrence_until) {
+        setError("Indique a data final da série semanal.");
+        return;
+      }
+      if (
+        toDatetimeLocalValue(lisbonWallClockToIso(form.starts_at, "earlier")) !== form.starts_at ||
+        toDatetimeLocalValue(lisbonWallClockToIso(form.ends_at, "earlier")) !== form.ends_at
+      ) {
+        setError("A hora escolhida não existe em Lisboa nessa data devido à mudança para o horário de verão.");
+        return;
+      }
+      const first = new Date(`${form.starts_at.slice(0, 10)}T00:00:00Z`);
+      const last = new Date(`${form.recurrence_until}T00:00:00Z`);
+      const occurrenceCount = Math.floor((last.getTime() - first.getTime()) / 86_400_000 / 7) + 1;
+      if (occurrenceCount < 1) {
+        setError("A data final não pode ser anterior à primeira ocorrência.");
+        return;
+      }
+      if (occurrenceCount > 52) {
+        setError("Uma série semanal pode ter no máximo 52 ocorrências.");
+        return;
+      }
+    }
     if (!form.category) {
       setError("Escolha uma categoria.");
       return;
@@ -603,8 +704,8 @@ function EventModal({
     try {
       const common = {
         title: form.title.trim(),
-        starts_at: lisbonWallClockToIso(form.starts_at),
-        ends_at: lisbonWallClockToIso(form.ends_at),
+        starts_at: lisbonWallClockToIso(form.starts_at, repeatedHourChoice),
+        ends_at: lisbonWallClockToIso(form.ends_at, repeatedHourChoice),
         project_id: form.project_id || null,
         task_id: form.task_id || null,
         assigned_to_person_id: form.assigned_to_person_id || null,
@@ -613,8 +714,17 @@ function EventModal({
         process_stage_id: form.process_stage_id || null,
         process_subtask_id: form.process_subtask_id || null,
       };
-      if (event) await updateCalendarEvent(event.id, common);
-      else await createCalendarEvent(common);
+      if (event) {
+        if (form.mutation_scope === "series") await updateCalendarEvent(event.id, common, "series");
+        else await updateCalendarEvent(event.id, common);
+      } else if (form.recurrence === "weekly") {
+        await createCalendarEvent({
+          ...common,
+          recurrence: "weekly",
+          recurrence_until: form.recurrence_until,
+          idempotency_key: idempotencyKey.current,
+        });
+      } else await createCalendarEvent(common);
       onSaved();
     } catch (saveError) {
       setError(errorMessage(saveError, "Não foi possível guardar o evento."));
@@ -672,6 +782,34 @@ function EventModal({
           <label htmlFor="e-ends">Fim *</label>
           <input id="e-ends" className="input" type="datetime-local" value={form.ends_at} onChange={(change) => setForm({ ...form, ends_at: change.target.value })} />
         </div>
+        {!event && (
+          <>
+            <div className="field">
+              <label htmlFor="e-recurrence">Repetição semanal</label>
+              <select id="e-recurrence" className="select" value={form.recurrence} onChange={(change) => setForm({ ...form, recurrence: change.target.value as EventFormState["recurrence"] })}>
+                <option value="none">Evento único</option>
+                <option value="weekly">Semanal</option>
+              </select>
+            </div>
+            {form.recurrence === "weekly" && (
+              <div className="field">
+                <label htmlFor="e-recurrence-until">Repetir até *</label>
+                <input id="e-recurrence-until" className="input" type="date" min={form.starts_at.slice(0, 10) || undefined} value={form.recurrence_until} onChange={(change) => setForm({ ...form, recurrence_until: change.target.value })} />
+                <span className="field__hint">Data final inclusive; máximo 52 ocorrências, sempre à hora local de Lisboa. Numa hora repetida no outono, usa-se a primeira ocorrência.</span>
+              </div>
+            )}
+          </>
+        )}
+        {event?.recurrence_series_id && (
+          <div className="field span-2">
+            <label htmlFor="e-mutation-scope">Aplicar alterações</label>
+            <select id="e-mutation-scope" className="select" value={form.mutation_scope} onChange={(change) => setForm({ ...form, mutation_scope: change.target.value as EventFormState["mutation_scope"] })}>
+              <option value="occurrence">Só esta ocorrência</option>
+              <option value="series">Toda a série ({event.recurrence_count ?? ""})</option>
+            </select>
+            <span className="field__hint">Ao aplicar à série, a data desloca todas as ocorrências pelo mesmo número de dias e a hora local é mantida em Lisboa.</span>
+          </div>
+        )}
         <div className="field">
           <label htmlFor="e-category">Categoria</label>
           <select id="e-category" className="select" value={form.category} onChange={(change) => setForm({ ...form, category: change.target.value })} disabled={categories.length === 0}>
@@ -750,21 +888,26 @@ function EventModal({
 function EventChip({
   event,
   categories,
+  people = [],
   onClick,
   as = "button",
 }: {
   event: CalendarEvent;
   categories: CalendarEventCategory[];
+  people?: Person[];
   onClick?: () => void;
   as?: "button" | "span";
 }) {
   const meta = eventCategoryMeta(event, categories);
-  const participants = event.assigned_to_display_names?.length ? event.assigned_to_display_names.join(", ") : event.assigned_to_display_name ?? "sem responsáveis";
+  const assignees = eventAssignees(event, people);
+  const participants = assignees.length > 0 ? assignees.map((assignee) => assignee.name).join(", ") : "sem responsáveis";
   const content = (
     <>
       <span className="planning-event-chip__dot" aria-hidden="true" />
       <span className="planning-event-chip__time">{formatTimePt(event.starts_at)}</span>
+      {event.recurrence_rule === "weekly" && <span className="planning-event-chip__recurrence" aria-label="Série semanal">↻</span>}
       <span className="planning-event-chip__title">{event.title}</span>
+      <EventAssigneeAvatars assignees={assignees} />
     </>
   );
   const style = { "--planning-event-color": meta.color } as CSSProperties;
@@ -779,7 +922,7 @@ function EventChip({
       className="planning-event-chip"
       style={style}
       onClick={onClick}
-      aria-label={`${event.title}, ${meta.label}, Manual, responsáveis: ${participants}`}
+      aria-label={`${event.title}, ${meta.label}, ${event.recurrence_rule === "weekly" ? "série semanal" : "manual"}, responsáveis: ${participants}`}
     >
       {content}
     </button>
@@ -807,6 +950,7 @@ function EventDetailModal({
   onClose,
   onEdit,
   onCancel,
+  onCancelSeries,
 }: {
   event: CalendarEvent;
   people: Person[];
@@ -814,7 +958,9 @@ function EventDetailModal({
   onClose: () => void;
   onEdit: () => void;
   onCancel: () => void;
+  onCancelSeries: () => void;
 }) {
+  const [confirmSeriesCancel, setConfirmSeriesCancel] = useState(false);
   const meta = eventCategoryMeta(event, categories);
   const projectUrl = projectUrlFor(event);
   return (
@@ -824,7 +970,8 @@ function EventDetailModal({
       footer={
         event.can_manage && event.status !== "cancelado" ? (
           <>
-            <button type="button" className="btn btn--danger" onClick={onCancel}>Cancelar evento</button>
+            <button type="button" className="btn btn--danger" onClick={onCancel}>{event.recurrence_series_id ? "Cancelar esta ocorrência" : "Cancelar evento"}</button>
+            {event.recurrence_series_id && <button type="button" className="btn btn--danger" onClick={() => setConfirmSeriesCancel(true)}>Cancelar série inteira</button>}
             <button type="button" className="btn btn--primary" onClick={onEdit}>Editar</button>
           </>
         ) : undefined
@@ -837,11 +984,22 @@ function EventDetailModal({
         </span>
         <Badge tone="neutral">Manual</Badge>
       </div>
+      {confirmSeriesCancel && (
+        <Alert tone="warning" title="Cancelar a série semanal?" action={<><button type="button" className="btn btn--danger btn--sm" onClick={onCancelSeries}>Confirmar</button><button type="button" className="btn btn--sm" onClick={() => setConfirmSeriesCancel(false)}>Voltar</button></>}>
+          Todas as {event.recurrence_count ?? ""} ocorrências serão marcadas como canceladas. Os registos serão mantidos.
+        </Alert>
+      )}
       <dl className="kv planning-event-detail">
         <dt>Início</dt>
         <dd>{formatDayHeaderPt(lisbonDateOf(event.starts_at))} · {formatTimePt(event.starts_at)}</dd>
         <dt>Fim</dt>
         <dd>{formatDayHeaderPt(lisbonDateOf(event.ends_at))} · {formatTimePt(event.ends_at)}</dd>
+        {event.recurrence_rule === "weekly" && (
+          <>
+            <dt>Série</dt>
+            <dd>Semanal · ocorrência {event.recurrence_index} de {event.recurrence_count} · até {formatDatePt(event.recurrence_until ?? null)}</dd>
+          </>
+        )}
         {(event.project_id || event.project_context_hidden) && (
           <>
             <dt>Projeto</dt>
@@ -1025,11 +1183,12 @@ export default function Planning() {
     }
   }
 
-  async function handleCancel(event: CalendarEvent) {
+  async function handleCancel(event: CalendarEvent, cancelScope: "occurrence" | "series" = "occurrence") {
     if (event.source === "process") return;
     try {
-      await cancelCalendarEvent(event.id);
-      notify("Evento cancelado.", "success");
+      if (cancelScope === "series") await cancelCalendarEvent(event.id, "series");
+      else await cancelCalendarEvent(event.id);
+      notify(cancelScope === "series" ? "Série cancelada." : "Evento cancelado.", "success");
       setDetailEvent(null);
       loadEvents();
     } catch (cancelError) {
@@ -1111,26 +1270,26 @@ export default function Planning() {
             {visibleDays.filter((day) => (eventsByDay.get(day) ?? []).length > 0).map((day) => (
               <li key={day} className="list__item planning-list__day" data-testid="planning-day">
                 <div className="list__title">{formatDayHeaderPt(day)}</div>
-                <div className="planning-list__events">{(eventsByDay.get(day) ?? []).map((event) => <button key={event.id} type="button" className="planning-list__event" onClick={() => setDetailEvent(event)} onKeyDown={(keyboardEvent) => { if (keyboardEvent.key === "Enter") { keyboardEvent.preventDefault(); setDetailEvent(event); } }}><EventChip event={event} categories={categories} as="span" /><span className="planning-list__meta">{event.project_context_hidden ? "Projeto fora do seu âmbito" : event.project_name ?? "sem projeto"} · {eventCategoryMeta(event, categories).label} · <ParticipantSummary event={event} people={people} /></span></button>)}</div>
+                <div className="planning-list__events">{(eventsByDay.get(day) ?? []).map((event) => <button key={event.id} type="button" className="planning-list__event" onClick={() => setDetailEvent(event)} onKeyDown={(keyboardEvent) => { if (keyboardEvent.key === "Enter") { keyboardEvent.preventDefault(); setDetailEvent(event); } }}><EventChip event={event} categories={categories} people={people} as="span" /><span className="planning-list__meta">{event.project_context_hidden ? "Projeto fora do seu âmbito" : event.project_name ?? "sem projeto"} · {eventCategoryMeta(event, categories).label} · <ParticipantSummary event={event} people={people} /></span></button>)}</div>
               </li>
             ))}
           </ul>
         ) : view === "week" ? (
           <div className="planning-calendar-grid planning-calendar-grid--week" style={{ gridTemplateColumns: `repeat(${Math.max(visibleDays.length, 1)}, minmax(0, 1fr))` }}>
-            {visibleDays.map((day) => <div key={day} className="planning-calendar-day" data-testid="planning-day"><div className="planning-calendar-day__header"><span>{formatDayHeaderPt(day)}</span><button type="button" className="planning-day-add" aria-label={`Novo evento em ${day}`} onClick={() => setCreatingForDate(day)}><Icon name="plus" size={12} /></button></div><div className="planning-calendar-day__events">{(eventsByDay.get(day) ?? []).map((event) => <EventChip key={event.id} event={event} categories={categories} onClick={() => setDetailEvent(event)} />)}</div></div>)}
+            {visibleDays.map((day) => <div key={day} className="planning-calendar-day" data-testid="planning-day"><div className="planning-calendar-day__header"><span>{formatDayHeaderPt(day)}</span><button type="button" className="planning-day-add" aria-label={`Novo evento em ${day}`} onClick={() => setCreatingForDate(day)}><Icon name="plus" size={12} /></button></div><div className="planning-calendar-day__events">{(eventsByDay.get(day) ?? []).map((event) => <EventChip key={event.id} event={event} categories={categories} people={people} onClick={() => setDetailEvent(event)} />)}</div></div>)}
           </div>
         ) : (
           <div className="planning-calendar-grid planning-calendar-grid--month" style={{ gridTemplateColumns: `repeat(${hideWeekends ? 5 : 7}, minmax(0, 1fr))` }}>
             {visibleDays.map((day) => {
               const dayEvents = eventsByDay.get(day) ?? [];
               const inMonth = day.slice(0, 7) === anchorIso.slice(0, 7);
-              return <div key={day} className={`planning-calendar-day planning-calendar-day--month${inMonth ? "" : " planning-calendar-day--muted"}`} data-testid="planning-day"><div className="planning-calendar-day__header"><span>{Number(day.slice(8, 10))}</span><button type="button" className="planning-day-add" aria-label={`Novo evento em ${day}`} onClick={() => setCreatingForDate(day)}><Icon name="plus" size={12} /></button></div>{dayEvents.slice(0, 3).map((event) => <EventChip key={event.id} event={event} categories={categories} onClick={() => setDetailEvent(event)} />)}{dayEvents.length > 3 && <div className="planning-calendar-day__more">+{dayEvents.length - 3} mais</div>}</div>;
+              return <div key={day} className={`planning-calendar-day planning-calendar-day--month${inMonth ? "" : " planning-calendar-day--muted"}`} data-testid="planning-day"><div className="planning-calendar-day__header"><span>{Number(day.slice(8, 10))}</span><button type="button" className="planning-day-add" aria-label={`Novo evento em ${day}`} onClick={() => setCreatingForDate(day)}><Icon name="plus" size={12} /></button></div>{dayEvents.slice(0, 3).map((event) => <EventChip key={event.id} event={event} categories={categories} people={people} onClick={() => setDetailEvent(event)} />)}{dayEvents.length > 3 && <div className="planning-calendar-day__more">+{dayEvents.length - 3} mais</div>}</div>;
             })}
           </div>
         )}
       </Card>
 
-      {detailEvent && <EventDetailModal event={detailEvent} people={people} categories={categories} onClose={() => setDetailEvent(null)} onCancel={() => handleCancel(detailEvent)} onEdit={() => { setEditingEvent(detailEvent); setDetailEvent(null); }} />}
+      {detailEvent && <EventDetailModal event={detailEvent} people={people} categories={categories} onClose={() => setDetailEvent(null)} onCancel={() => handleCancel(detailEvent)} onCancelSeries={() => handleCancel(detailEvent, "series")} onEdit={() => { setEditingEvent(detailEvent); setDetailEvent(null); }} />}
       {(creatingForDate !== null || editingEvent) && <EventModal event={editingEvent} defaultDate={creatingForDate} projects={orderedProjects} people={people} categories={categories} allEvents={events ?? []} projectRequired={projectRequired} onClose={() => { setCreatingForDate(null); setEditingEvent(null); }} onSaved={() => { notify(editingEvent ? "Evento atualizado." : "Evento criado.", "success"); setCreatingForDate(null); setEditingEvent(null); loadEvents(); }} />}
     </div>
   );

@@ -115,9 +115,10 @@ describe("API de imagens de inventário", () => {
 
     const blob = await getInventoryItemDocumentBlob("item-1", "doc-2");
 
-    // Sem `toBeInstanceOf(Blob)`: o Blob vem do realm do Node, não do jsdom.
+    // Sem `toBeInstanceOf(Blob)` nem `blob.text()`: conforme a versão do Node,
+    // o Blob vem do realm do Node ou do jsdom (este último sem `text()`).
     expect(blob.type).toBe("application/pdf");
-    expect(await blob.text()).toBe("pdf");
+    expect(blob.size).toBe(3);
     expect(fetchMock).toHaveBeenCalledWith(
       "http://localhost:8000/api/inventory/items/item-1/documents/doc-2/download",
       expect.objectContaining({
